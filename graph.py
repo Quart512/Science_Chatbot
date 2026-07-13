@@ -104,15 +104,15 @@ class State(BaseModel):
     limit: int = 4
     #arxiv_references: list[str]
     model: Literal["gemini", "claude"] = "gemini"
-    messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list[BaseMessage])  # 대화 이력 (reducer가 자동 누적 — 노드는 새 메시지만 반환)
+    messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)  # 대화 이력 (reducer가 자동 누적 — 노드는 새 메시지만 반환)
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
-    tool_failures: dict[str,int] = Field(default_factory=dict[str,int]) # tool별 연속 실패 횟수
-    disabled_tools: list[str] = Field(default_factory=list[str]) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
+    tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
+    disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
 
 # 에러나면 서브 모델로
 # 지정된 모델을 우선 호출하고, ResourceExhausted(rate limit) 발생 시
 # 다른 모델로 자동 전환해서 재시도
-def invoke_with_fallback(model, messages, use_tools=False, structured=None, sub_model=False, models_tried=None):
+def invoke_with_fallback(model, messages, tools: list | None=None, structured=None, sub_model=False, models_tried=None):
     if models_tried is None:
         models_tried=[]
 
@@ -127,10 +127,10 @@ def invoke_with_fallback(model, messages, use_tools=False, structured=None, sub_
         if secondary_name is None:  #다 돌아서 없어!
             raise RuntimeError(f"tried {models_tried} but all failed")
         else:
-            return invoke_with_fallback(secondary_name, messages, use_tools=use_tools, structured=structured, sub_model=False, models_tried=models_tried)
+            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
 
-    if use_tools:  # True(전체 바인딩) 또는 tool 객체 리스트(disabled 제외 목록)
-        primary = primary.bind_tools(use_tools if isinstance(use_tools, list) else tools)
+    if tools:  # tool 객체 리스트(disabled 제외 목록)
+        primary = primary.bind_tools(tools)
     
     if structured:
         primary = primary.with_structured_output(structured)
@@ -141,7 +141,7 @@ def invoke_with_fallback(model, messages, use_tools=False, structured=None, sub_
     except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError):
         print(f"모델 오류! fallback인 {secondary_name} 모델로 전환")
         models_tried.append(primary_name)
-        return invoke_with_fallback(secondary_name, messages, use_tools=use_tools, structured=structured, sub_model=False, models_tried=models_tried)
+        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
 
 
     
@@ -179,7 +179,7 @@ def generate(state: State) -> dict:
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
     response = invoke_with_fallback(state.model, [system] + history + new_msgs,
-                                    use_tools=active_tools if active_tools else False)
+                                    tools=active_tools)
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
     answer = response.content if isinstance(response.content, str) else "".join(

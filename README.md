@@ -23,35 +23,41 @@
 ## 현재 구현 — Self-RAG 에이전트
 
 ```
-START → retrieve → generate → verify →─── fix_needed=False ──→ final_answer → END
-                      ↑                ├── fix_needed=True, needs_more_context=False → generate (루프)
-                      └────────────────┘── fix_needed=True, needs_more_context=True  → retrieve (top_k+1)
+START → retrieve → generate ──(tool 요청)──→ run_tools ──→ generate (ReAct 루프)
+             ↑          └─(답변 완성)→ verify ──── 통과 ────→ final_answer → END
+             │                          ├── 수정 필요 → generate (재시도)
+             └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
 ```
 
-- **retrieve**: 벡터 검색 (기본 top_k=3). 컨텍스트 부족 판정으로 재진입 시 top_k를 1 늘려 재검색
-- **generate**: `bind_tools()`로 웹 검색 tool 전달 → LLM이 필요 시 호출 → 결과를 Document로 변환해 RAG context에 병합. 재시도 시 `what_to_fix` 반영
+- **retrieve**: 벡터 검색 (기본 top_k=3). 재검색 시 벡터DB 문서는 교체하되 tool로 수집한 증거는 보존
+- **generate**: 대화 이력(`add_messages` reducer) 기반 답변 생성. tool이 필요하면 `tool_calls`만 요청 — 실행은 run_tools 노드 담당. 재시도 시 verify의 지적사항을 대화 메시지로 반영
+- **run_tools**: tool 실행 + 예외처리. 모든 tool_call에 반드시 ToolMessage로 응답(실패 포함) → LLM이 다음 라운드에 에러를 읽고 자가수정. 빈 결과·호출 실패·미등록 tool을 구분해 다른 힌트 제공, **연속 2회 실패한 tool은 해당 런에서 자동 제외(서킷 브레이커)**. 성공 결과는 Document로 변환해 RAG context에 병합
 - **verify**: 구조화 출력(`fix_needed`, `what_to_fix`, `needs_more_context`)으로 답변 검증. **생성 모델과 다른 모델이 검증** (교차 검증)
 - **route_by_fix**: 3방향 분기. `try_count >= limit` 시 강제 종료 + 실패 사유 명시
+- **State**: Pydantic 모델 — 필드 기본값·타입 검증, `messages`는 `add_messages` reducer로 자동 누적
 
 ### 특징
 
 - **모델 선택 + fallback 체인**: `model_map`(gemini-2.5-flash / claude-haiku)에서 요청별 선택, rate limit 등 오류 시 남은 모델로 자동 전환. 모델 추가는 항목 한 줄 — 추후 개인 언어 모델(vLLM/Ollama, OpenAI 호환 API)도 같은 방식으로 연동 예정
 - **로컬 임베딩** (BAAI/bge-m3): 임베딩에 API rate limit·비용 없음, 검색 시 외부 의존 없음
-- **LangSmith tracing** + LLM-as-judge 평가 (`evaluate.py`, 질문·정답 10쌍)
+- **LangSmith tracing** + LLM-as-judge 평가 (`evaluate.py`, `docs/eval.json` 31문항 — 미해결 문제 포함)
 
 ## 파일 구조
 
 ```
 Science_Chatbot/
 ├── docs/
-│   ├── architecture.png  # 목표 아키텍처 다이어그램
-│   ├── feynman.txt       # 코퍼스: The Feynman Lectures on Physics
-│   └── README_08.md      # 개발 회고 (주차별)
+│   ├── architecture.png     # 목표 아키텍처 다이어그램
+│   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
+│   ├── README_08.md         # 개발 회고 (주차별)
+│   ├── eval.json            # 평가 데이터셋 (질문/정답/카테고리/난이도/unsolved)
+│   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
+│   └── generate_eval_md.py  # eval.json → eval.md 생성 스크립트
 ├── chroma_db/            # ChromaDB 영구 저장소
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── graph.py              # LangGraph StateGraph (에이전트 본체)
 ├── main.py               # FastAPI: POST /query
-├── evaluate.py           # LangSmith 평가
+├── evaluate.py           # docs/eval.json 로드 → LLM-as-judge 평가 (unsolved 문항 별도 채점)
 └── .env                  # API 키 (git 제외)
 ```
 
