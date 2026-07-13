@@ -10,7 +10,7 @@ class Query(BaseModel):
     prompt: str
     top_k: int = 3
     limit: int = 4
-    model: Literal["gemini", "claude"] = "gemini"
+    model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
 
 @app.post("/query")
 def query(request: Query):

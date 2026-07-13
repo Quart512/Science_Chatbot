@@ -1,3 +1,7 @@
+# Local model weights (수백 MB~GB — git에 올리지 않기)
+models/
+*.gguf
+
 # Python
 __pycache__/
 *.py[cod]

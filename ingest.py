@@ -4,6 +4,8 @@ import os
 import hashlib
 #from google import genai
 
+from retrieval import embeddings, persist_directory, collection_name
+
 #langchain
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -31,12 +33,11 @@ ids = [(f"{SOURCE}-{i}") for i in range(len(chunks))]
 
 # 로컬 임베딩 모델 사용 (BAAI/bge-m3, 다국어) — API 호출이 아니라 로컬에서 실행되므로
 # gemini rate limit과 무관하고, 검색 시점에도 외부 API 의존이 없어짐
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
 vectorstore = Chroma.from_texts(chunks, 
                                 embeddings, 
                                 ids=ids, 
-                                persist_directory="./chroma_db", 
-                                collection_name="feynman", 
+                                persist_directory=persist_directory, 
+                                collection_name=collection_name, 
                                 metadatas=[{"source": SOURCE} for i in range(len(chunks))]
                                 )
     

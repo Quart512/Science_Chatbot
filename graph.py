@@ -1,9 +1,6 @@
-from dotenv import load_dotenv
 #from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_anthropic import ChatAnthropic
-from langchain_chroma import Chroma
+
+
 
 from langgraph.graph import StateGraph, START, END  
 
@@ -13,22 +10,11 @@ from pydantic import BaseModel, Field
 from typing import Literal, Annotated
 from langgraph.graph.message import add_messages
 
-from langchain_community.tools import DuckDuckGoSearchRun
-#import wikipedia
-#wikipedia.set_user_agent("KTB4-jimmy-AI-feynman-agent/0.1 (student project)")
-#from langchain_community.tools import WikipediaQueryRun  #user_agent 설정해도 JSONDecodeError 재현됨 (search는 성공하지만 무관한 결과 반환 + 특정 페이지 fetch에서 크래시) — wikipedia 패키지 자체가 신뢰 못 할 수준. wikipedia-api 기반 커스텀 tool 필요 (나중에)
-#from langchain_community.utilities import WikipediaAPIWrapper
-#from langchain_community.tools.arxiv.tool import ArxivQueryRun
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
-from langchain_core.tools import StructuredTool
-
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage
 
-from google.api_core.exceptions import ResourceExhausted
-from anthropic import RateLimitError
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
-
-
+from models import invoke_with_fallback
+from tool import tools_list, tool_map
+from retrieval import vectorstore
 # =========================================================
 # Self-RAG 스타일 에이전틱 RAG 그래프
 #   retrieve(검색) -> generate(답변 생성) -(tool_calls 있으면)-> tools(실행) -> generate 루프
@@ -38,58 +24,6 @@ from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 #   에러를 읽고 자가수정. 연속 2회 실패한 tool은 disabled_tools로 이번 런에서 제외(서킷 브레이커)
 # =========================================================
 
-
-from typing import NamedTuple
-
-class SiteConfig(NamedTuple): # 수정 불가능하게+3개 변수 딕셔너리에
-    domain: str
-    description: str
-
-ddg_sites_map = {
-    "wikipedia": SiteConfig("en.wikipedia.org", "위키피디아에서 검색"),
-    "arxiv": SiteConfig("arxiv.org", "arXiv 논문 검색"),
-}
-# 팩토리 — 딱 한 번만 정의
-def make_search_tool(name: str, config: SiteConfig):
-    def search(query: str) -> str:
-        return DuckDuckGoSearchAPIWrapper().run(f"site:{config.domain} {query}")
-    return StructuredTool.from_function(
-        func=search,
-        name=f"search_{name}",
-        description=config.description,
-    )
-# .items()로 name과 config를 같이 꺼냄
-site_tools = [make_search_tool(name, config) for name, config in ddg_sites_map.items()]
-
-#bind tools
-tools = [DuckDuckGoSearchRun(description="일반 범용성 검색"),
-        #WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper()), #user_agent 설정해도 JSONDecodeError — wikipedia 패키지 자체 신뢰성 문제, 커스텀 tool 필요
-        #ArxivQueryRun(),  #arxiv.org 서버 자체 이슈 (2025-11 이후), langchain_community도 구버전 API 요구
-        *site_tools
-        ]
-tool_map = {tool.name: tool for tool in tools} #이름으로 검색할 수 있게
-
-
-#api key 가져오기
-load_dotenv()
-
-#모델 선택 기능을 위한 map 
-model_map = {
-    "gemini": ChatGoogleGenerativeAI(model="gemini-2.5-flash"),
-    "claude": ChatAnthropic(model="claude-haiku-4-5-20251001")
-    }
-
-
-    
-#chromadb 불러오기
-# 로컬 임베딩 모델 사용 (BAAI/bge-m3, 다국어) — ingest.py와 반드시 같은 모델이어야 함
-# (모델이 다르면 벡터 공간이 달라져서 유사도 검색이 무의미해짐)
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3") # 이건 모델 선택 불가-이미 임베딩함
-vectorstore = Chroma(
-    persist_directory="./chroma_db",
-    embedding_function=embeddings,
-    collection_name="feynman"
-)
 
 #LangGraph State 구성 - 그래프 전체 노드가 공유하는 상태
 class State(BaseModel):
@@ -103,46 +37,11 @@ class State(BaseModel):
     try_count: int = 0
     limit: int = 4
     #arxiv_references: list[str]
-    model: Literal["gemini", "claude"] = "gemini"
+    model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)  # 대화 이력 (reducer가 자동 누적 — 노드는 새 메시지만 반환)
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-
-# 에러나면 서브 모델로
-# 지정된 모델을 우선 호출하고, ResourceExhausted(rate limit) 발생 시
-# 다른 모델로 자동 전환해서 재시도
-def invoke_with_fallback(model, messages, tools: list | None=None, structured=None, sub_model=False, models_tried=None):
-    if models_tried is None:
-        models_tried=[]
-
-    if model is None:    #다 돌아서 없어!                   
-        raise RuntimeError(f"tried {models_tried} but all failed")
-    
-    primary_name = model
-    secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in models_tried),None)
-    primary = model_map[primary_name]
-
-    if sub_model == True or primary_name in models_tried:
-        if secondary_name is None:  #다 돌아서 없어!
-            raise RuntimeError(f"tried {models_tried} but all failed")
-        else:
-            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
-
-    if tools:  # tool 객체 리스트(disabled 제외 목록)
-        primary = primary.bind_tools(tools)
-    
-    if structured:
-        primary = primary.with_structured_output(structured)
-    
-    try:
-        print(f"LLM 모델 사용: {primary_name}")
-        return primary.invoke(messages)
-    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError):
-        print(f"모델 오류! fallback인 {secondary_name} 모델로 전환")
-        models_tried.append(primary_name)
-        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
-
 
     
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
@@ -175,7 +74,7 @@ def generate(state: State) -> dict:
         new_msgs.append(HumanMessage(content=f"이전 답변에서 고칠 부분: {state.what_to_fix}\n반영해서 다시 답해줘."))
 
     # 서킷 브레이커: disabled 제외한 tool만 바인딩
-    active_tools = [t for t in tools if t.name not in state.disabled_tools]
+    active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
     response = invoke_with_fallback(state.model, [system] + history + new_msgs,
