@@ -175,17 +175,27 @@ def verify(state: State) ->dict:
         문서에 근거가 없더라도 네 지식으로 판단해도 돼.
         문서: {state.context}
     """),
-    HumanMessage(content=state.question),
-    AIMessage(content=state.answer)
+    HumanMessage(f"질문: {state.question}\n\n답변: {state.answer}\n\n이 답변을 검증해줘."),
     ]
     try: # generated_by를 이미 써본 모델로 등록
         answer, verified_by, disabled_models = invoke_with_fallback(state.model, messages, structured=verified,  
                                                                     models_skip=[state.generated_by],
                                                                     disabled_models=state.disabled_models)
     except RuntimeError: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
-        answer, verified_by, disabled_models = invoke_with_fallback(state.generated_by, messages, structured=verified,
+        print("다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증")
+        try:
+            answer, verified_by, disabled_models = invoke_with_fallback(state.generated_by, messages, structured=verified,
                                                                     disabled_models=state.disabled_models)
-
+        except RuntimeError: # 차순위도 실패->검증 생략
+            print("차순위도 실패->검증 생략")
+            return {"fix_needed" : False,
+            "what_to_fix" : "",
+            "try_count" : state.try_count+1,
+            "needs_more_context" : False,
+            "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
+            "disabled_models" : state.disabled_models+ [state.generated_by]
+            }
+        
     print("verify에 사용된 모델:", verified_by)
     print("수정 필요한가: "+str(answer.fix_needed))
     print("고칠점: "+str(answer.what_to_fix))

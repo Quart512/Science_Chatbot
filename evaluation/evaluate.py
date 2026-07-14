@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 
 
-EVAL_DATA_PATH = Path(__file__).parent / "docs" / "eval.json"
+EVAL_DATA_PATH = Path(__file__).parent / "eval.json"
 REQUIRED_KEYS = {"question", "answer", "category", "difficulty", "unsolved"}
 
 
@@ -60,7 +60,7 @@ def make_target(name: str):
         from langchain_anthropic import ChatAnthropic
         llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
     elif name == "Qwen-tuned":
-        # ⚠️ OpenAI 클라우드가 아니라 완전 로컬 — llama-server(llama.cpp)가 GGUF를 로드하고
+        # OpenAI 클라우드가 아니라 완전 로컬 — llama-server(llama.cpp)가 GGUF를 로드하고
         # localhost에 OpenAI '호환 형식'의 HTTP 인터페이스를 열 뿐이다. 데이터는 밖으로 안 나감.
         # 실행: llama-server -m ./qwen-tuned.gguf --port 8080
         # Ollama라면: LOCAL_MODEL_URL=http://localhost:11434/v1 LOCAL_MODEL_NAME=<태그>
@@ -83,18 +83,18 @@ judge_llm = ChatAnthropic(model="claude-haiku-4-5-20251001").with_structured_out
 def judge(question: str, reference: str, prediction: str, unsolved: bool) -> float:
     if unsolved:
         prompt = f"""이 질문은 현재 과학적으로 미해결된 문제야.
-정답과의 일치 여부가 아니라, 평가 대상 답변이 (1) 이 문제가 미해결임을 인정하는지 (2) 언급한 사실 관계가 정확한지를 기준으로 평가해줘.
-미해결임을 인정하지 않고 확정적인 정답처럼 답하면 감점하고, 미해결임을 인정하면서 사실관계도 정확하면 높은 점수를 줘.
-질문: {question}
-채점 기준(모범 답변): {reference}
-평가 대상 답변: {prediction}
-0.0(미해결 인정 없이 확정적으로 단언)~1.0(미해결 인정 + 사실관계 정확) 사이 숫자만 답해줘."""
+            정답과의 일치 여부가 아니라, 평가 대상 답변이 (1) 이 문제가 미해결임을 인정하는지 (2) 언급한 사실 관계가 정확한지를 기준으로 평가해줘.
+            미해결임을 인정하지 않고 확정적인 정답처럼 답하면 감점하고, 미해결임을 인정하면서 사실관계도 정확하면 높은 점수를 줘.
+            질문: {question}
+            채점 기준(모범 답변): {reference}
+            평가 대상 답변: {prediction}
+            0.0(미해결 인정 없이 확정적으로 단언)~1.0(미해결 인정 + 사실관계 정확) 사이 숫자만 답해줘."""
     else:
         prompt = f"""질문에 대한 답변이 참고 답변과 의미적으로 일치하는지 평가해줘.
-질문: {question}
-참고 답변: {reference}
-평가 대상 답변: {prediction}
-0.0(완전 틀림)~1.0(완전 정확) 사이 숫자만 답해줘."""
+            질문: {question}
+            참고 답변: {reference}
+            평가 대상 답변: {prediction}
+            0.0(완전 틀림)~1.0(완전 정확) 사이 숫자만 답해줘."""
 
     return judge_llm.invoke(prompt).score
 

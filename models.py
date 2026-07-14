@@ -11,6 +11,7 @@ from anthropic import RateLimitError
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from openai import APIConnectionError  # 로컬 llama-server가 꺼져 있을 때 나는 접속 에러
 from openai import BadRequestError 
+from openai import LengthFinishReasonError
 
 import sys
 import traceback
@@ -70,7 +71,8 @@ def invoke_with_fallback(model,
     try:
         print(f"LLM 모델 사용: {primary_name}")
         return primary.invoke(messages), primary_name, disabled_models
-    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError, BadRequestError):
+    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError, 
+            BadRequestError, LengthFinishReasonError):
         exc_type, exc_value, _ = sys.exc_info()
         error_msg = traceback.format_exception_only(exc_type, exc_value)[0].strip()
         print(error_msg)

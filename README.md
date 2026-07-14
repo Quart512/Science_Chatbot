@@ -54,12 +54,15 @@ Science_Chatbot/
 │   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
 │   ├── README_08.md         # 개발 회고 (8주차: LangGraph 에이전트)
 │   ├── README_09.md         # 개발 회고 (9주차: QLoRA 파인튜닝·양자화·GGUF)
-│   ├── eval.json            # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
-│   ├── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
-│   ├── eval.md              # eval.json에서 자동 생성되는 카테고리별 표
-│   └── generate_eval_md.py  # eval.json → eval.md 생성 스크립트
+│   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
+├── evaluation/
+│   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
+│   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
+│   ├── generate_eval_md.py   # eval.json → eval.md 생성 스크립트
+│   ├── evaluate.py           # LLM-as-judge 평가 (--target으로 평가 대상 선택)
+│   ├── eval_avg.py           # results/의 실행별 평균 점수 요약
+│   └── results/               # evaluate.py 실행 결과 (모델별 JSON)
 ├── models/               # GGUF 모델 가중치 (git 제외)
-├── results/              # evaluate.py 실행 결과 (모델별 JSON)
 ├── chroma_db/            # ChromaDB 영구 저장소
 ├── graph.py              # LangGraph StateGraph — 에이전트 본체 (State, 노드, 배선)
 ├── models.py             # model_map + invoke_with_fallback (모델 등록·fallback 정책의 단일 지점)
@@ -67,7 +70,6 @@ Science_Chatbot/
 ├── retrieval.py          # 임베딩 + 벡터스토어 (ingest와 공유 — 임베딩 모델 불일치를 구조로 방지)
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── main.py               # FastAPI: POST /query
-├── evaluate.py           # LLM-as-judge 평가 (--target으로 평가 대상 선택)
 └── .env                  # API 키 (git 제외)
 ```
 
@@ -123,18 +125,19 @@ POST /query
 
 ## 평가
 
-`docs/eval.json` 31문항(7개 물리 카테고리 + 미해결 문제)을 LLM-as-judge로 채점한다. 채점자는 claude-haiku로 **전 실행에서 동일하게 고정** — 채점자가 바뀌면 실행 간 비교가 오염되기 때문. 미해결(unsolved) 문항은 "미해결임을 인정하는가 + 언급한 사실이 정확한가"를 별도 기준으로 채점한다.
+`evaluation/eval.json` 31문항(7개 물리 카테고리 + 미해결 문제)을 LLM-as-judge로 채점한다. 채점자는 claude-haiku로 **전 실행에서 동일하게 고정** — 채점자가 바뀌면 실행 간 비교가 오염되기 때문. 미해결(unsolved) 문항은 "미해결임을 인정하는가 + 언급한 사실이 정확한가"를 별도 기준으로 채점한다.
 
 ```bash
-uv run evaluate.py --target gemini                              # 모델 단독 (bare)
-uv run evaluate.py --target claude
-uv run evaluate.py --target Qwen-tuned --name qwen-tuned-q4     # llama-server 필요
-uv run evaluate.py --target graph                               # RAG+verify 전체 파이프라인
+uv run evaluation/evaluate.py --target gemini                              # 모델 단독 (bare)
+uv run evaluation/evaluate.py --target claude
+uv run evaluation/evaluate.py --target Qwen-tuned --name qwen-tuned-q4     # llama-server 필요
+uv run evaluation/evaluate.py --target graph                               # RAG+verify 전체 파이프라인
 ```
 
 - `--target`: 평가 대상. bare 모델끼리는 모델 역량 비교, graph vs bare는 파이프라인 기여도 비교
 - `--name`: 결과 저장 이름 (기본값 target) — 같은 모델의 변형(양자화 전/후 등) 구분용
-- 결과는 `results/eval_{name}.json`에 저장되어 실행 간 비교 가능
+- 결과는 `evaluation/results/eval_{name}.json`에 저장되어 실행 간 비교 가능
+- `uv run evaluation/eval_avg.py`: `evaluation/results/`의 모든 실행 파일별 평균 점수를 한눈에 비교
 
 ## 환경변수 (.env)
 

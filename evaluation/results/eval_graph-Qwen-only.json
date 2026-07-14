@@ -1,0 +1,281 @@
+[
+  {
+    "question": "원자란 무엇인가?",
+    "answer": "모든 물질을 구성하는 작은 입자로, 양성자와 중성자로 이루어진 핵과 그 주변의 전자로 구성됨",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "전자가 특정 위치에 있을 확률밀도의 집합",
+    "score": 0.35
+  },
+  {
+    "question": "원자의 화학적 정체성을 결정하는 것은?",
+    "answer": "핵 속의 양성자 수",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "원자의 화학적 정체성을 결정하는 것은 입자가 갖는 전자기파의 배열이 아니라 입자가 갖는 에너지의 배열(에너지 스펙트럼)으로 통합된다",
+    "score": 0.0
+  },
+  {
+    "question": "온도와 원자 운동의 관계는?",
+    "answer": "온도가 높을수록 원자가 더 빠르게 운동함",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "온도가 높을수록 원자의 운동이 가속해지고, 압력이 높을수록 더 강하게 압박해진다",
+    "score": 0.6
+  },
+  {
+    "question": "원자는 대부분 빈 공간인데, 왜 물체는 서로 통과하지 못하는가?",
+    "answer": "전자 구름 사이의 전자기적 반발과 파울리 배타 원리 때문에 원자들이 일정 거리 이하로 겹칠 수 없기 때문",
+    "category": "atomic",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "관찰자가 일정한 온도에 있는 화학원자 사이에서 일정한 에너지를 넘을 수 없는 최소 에너지 놓임새(단면)가 있어, 서로 통과되지 못하는 이유다",
+    "score": 0.65
+  },
+  {
+    "question": "원자핵의 질량은 왜 구성 핵자들의 질량 합보다 작은가?",
+    "answer": "핵자들이 결합할 때 결합에너지만큼 질량이 줄어들기 때문 (질량 결손, E=mc²). 이 차이가 핵융합·핵분열 에너지의 원천",
+    "category": "atomic",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "원자핵의 질량은 핵종(원자가 포함하는 핵)의 전자기장이 되는 전자가 축적되지 않는다는 점으로, 핵종이 더 작은 질량으로 측정된다",
+    "score": 0.0
+  },
+  {
+    "question": "뉴턴의 운동 제2법칙은 무엇인가?",
+    "answer": "물체에 작용하는 알짜힘은 질량과 가속도의 곱과 같다 (F = ma)",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "방향에 상관없이 물체가 받은 힘의 합이 작용하는 동안 각속도는 시간에 걸리게 된다",
+    "score": 0.1
+  },
+  {
+    "question": "에너지 보존 법칙이란?",
+    "answer": "고립계에서 에너지는 형태가 바뀔 뿐 총량은 변하지 않음",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "한 물질의 에너지 값은 시간에 따라 바뀔 수 있지만, 그 변화량은 운동의 양(운동에너지)과 열(열能)의 합으로 제한된다",
+    "score": 0.3
+  },
+  {
+    "question": "관성이란 무엇인가?",
+    "answer": "외부 힘이 없으면 물체가 현재의 운동 상태를 유지하려는 성질",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "관성은 물질이 광자로 파편화되는 정도를 나타내는 개념으로, 물질에 특정한 방향으로 파편화되는 것이 아니라 모두 다른 방향으로 파편화되는 현상",
+    "score": 0.0
+  },
+  {
+    "question": "무거운 물체와 가벼운 물체가 진공에서 같이 떨어지는 이유는?",
+    "answer": "중력은 질량에 비례하지만 가속도는 질량에 반비례하므로(a = F/m) 질량이 상쇄되어 모든 물체의 낙하 가속도가 같아짐. 관성질량과 중력질량이 같다는 등가원리의 표현",
+    "category": "mechanics",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "무거운 물체가 가벼운 물체보다 더 빨리 떨어지는 것은 힘이 작용하는 방향이 아니라, 물체가 가속도를 받아야 하는 시간이 더 길어진다는 이유로.",
+    "score": 0.05
+  },
+  {
+    "question": "뇌터 정리(Noether's theorem)가 말하는 것은?",
+    "answer": "물리계의 연속적인 대칭성마다 보존 법칙이 하나씩 대응됨. 시간 병진 대칭 → 에너지 보존, 공간 병진 대칭 → 운동량 보존, 회전 대칭 → 각운동량 보존",
+    "category": "mechanics",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "기하학적 속도의 속도를 기준으로 속도를 정의할 수 없는 물질(전하)이 운동할 때, 운동에너지의 합이 그 운동 방향으로 작용한다",
+    "score": 0.0
+  },
+  {
+    "question": "빛의 본질은 무엇인가?",
+    "answer": "전기장과 자기장이 서로를 유도하며 진행하는 전자기파이며, 동시에 광자라는 입자의 성질도 가짐",
+    "category": "electromagnetism",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "빛은 입자가 아니라 파동으로 분리되어, 입자가 아니라 물질로 결합되어, 입자가 아니라 에너지로 변모되는 것이 특징이다",
+    "score": 0.15
+  },
+  {
+    "question": "전하 사이에 작용하는 힘은?",
+    "answer": "같은 부호는 밀어내고 다른 부호는 끌어당기며, 거리의 제곱에 반비례함 (쿨롱 법칙)",
+    "category": "electromagnetism",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "전하 사이에 작용하는 힘은 전하의 합이 서로 반대的方向이고, 그 크기가 각 전하의 전기장을 상대적으로 줄이는 양의 제곱의 합으로 결정된다",
+    "score": 0.15
+  },
+  {
+    "question": "자기장은 어떻게 만들어지는가?",
+    "answer": "움직이는 전하(전류) 또는 시간에 따라 변하는 전기장에 의해 생성됨. 영구자석의 자성도 전자의 운동과 스핀에서 비롯됨",
+    "category": "electromagnetism",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "전류가 있는 금속 줄에 대한 세 가지 중요한 실험과 에르미트의 뛰어난 상상력이 합쳐져 만들어졌으며, 우리는 다음의 법칙을 얻었다.",
+    "score": 0.2
+  },
+  {
+    "question": "전자기 유도란 무엇이며 왜 중요한가?",
+    "answer": "자기장의 변화가 회로에 기전력을 유도하는 현상 (패러데이 법칙). 발전기, 변압기 등 현대 전력 기술의 물리적 기반",
+    "category": "electromagnetism",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "전하가 전자를 유도하는 방향을 가로등 방향으로 빛을 쬐면 전자기파가 형성되는 현상으로, 전자기파의 방향이 전하의 운동 방향과 같아져 서로 의존하는 특수한 상황으로, 중요한 이유는 전자가 빛에 반응함으로써 유도되는 전자의 운동이 전자의 운동을 형성하는 파동의 크기로 확장될 수 있다는 점으로, 그 크기는 빛의 파장과 같다",
+    "score": 0.05
+  },
+  {
+    "question": "열역학 제2법칙이란?",
+    "answer": "고립계의 엔트로피(무질서도)는 시간이 지나도 감소하지 않음",
+    "category": "thermodynamics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "열역학 제2법칙은 다음과 같이 정의된다: 특정 온도에 있는 물질을 둘러싼 열기관이 빠르게 작동할 수록 더 많은 에너지를 방출하는 것은 불가능하다",
+    "score": 0.1
+  },
+  {
+    "question": "절대영도란 무엇인가?",
+    "answer": "이론적으로 가능한 최저 온도(0 K, 약 -273.15°C)로, 입자의 열운동이 최소가 되는 상태",
+    "category": "thermodynamics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "특정 물질이 다른 물질에 대한 힘이 얼마나 큰지 나타내는 양으로, 그 물질의 밀도와 크기에 따라 커진다",
+    "score": 0.0
+  },
+  {
+    "question": "엔트로피의 미시적 의미는 무엇인가?",
+    "answer": "주어진 거시 상태에 대응하는 미시 상태의 수의 로그에 비례하는 양 (S = k ln W). 엔트로피 증가는 계가 확률적으로 더 많은 미시 상태를 가진 배열로 가는 경향",
+    "category": "thermodynamics",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "열을 가진 물질에 덜어진 열의 양이, 물질의 온도와 같으면 1도에서 0도로 줄 수록 작다는 의미로, 입자가 더 많은 열을 손상할 확률이 낮은 경우엔 더 작은熵이 나타나는 것으로 설명된다",
+    "score": 0.15
+  },
+  {
+    "question": "시간의 방향(화살)은 물리학에서 어디에서 오는가?",
+    "answer": "미시적 운동 법칙은 시간 반전에 대칭이지만, 거시적으로는 엔트로피 증가(열역학 제2법칙)가 과거와 미래를 구분함. 초기 우주가 매우 낮은 엔트로피 상태였다는 사실과 연결됨",
+    "category": "thermodynamics",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "각운동량 보존에 대한 법칙이란, 물체가 어떤 방향으로 움직이는지 그 방향대로 온도나 온도 변화량 등이 증가하지 않는다는 것이다",
+    "score": 0.05
+  },
+  {
+    "question": "특수상대성이론의 핵심 가정은?",
+    "answer": "물리 법칙은 모든 관성계에서 동일하며, 진공에서 빛의 속력은 관찰자와 무관하게 일정함",
+    "category": "relativity",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "특수상대성이론의 핵심 가정은 시간이 물질의 빠르게 움직이는 궤도를 초과하지 않는 한 변하지 않는다는 것이다",
+    "score": 0.1
+  },
+  {
+    "question": "E = mc²의 의미는?",
+    "answer": "질량과 에너지는 서로 변환될 수 있는 동등한 물리량임",
+    "category": "relativity",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "그 질량이 속한 화학-element의 핵의 질량과 같은 양의 에너지(태즈)를 나타낸다",
+    "score": 0.2
+  },
+  {
+    "question": "일반상대성이론에서 중력이란?",
+    "answer": "질량과 에너지가 시공간을 휘게 만들고, 그 곡률을 따라 물체가 움직이는 현상",
+    "category": "relativity",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "각질량 사이의 거리의 제곱에 비례하고 질량의 반비례로 작용하는 힘이라고 정의된다",
+    "score": 0.1
+  },
+  {
+    "question": "왜 어떤 물체도 빛보다 빠를 수 없는가?",
+    "answer": "속도가 빛의 속력에 가까워질수록 물체를 가속하는 데 필요한 에너지가 무한대로 발산하기 때문. 광속 불변과 인과율이 유지되기 위한 구조적 한계",
+    "category": "relativity",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "속력이最快的 물질(속도 186,000 미터/초)이 빛보다 느리게 가는 것은 불가능하기 때문.",
+    "score": 0.15
+  },
+  {
+    "question": "GPS 위성의 시계는 왜 보정이 필요한가?",
+    "answer": "위성의 빠른 속도로 인한 시간 지연(특수상대론)과 약한 중력에 의한 시간 가속(일반상대론)이 동시에 작용하기 때문. 보정하지 않으면 하루에 수 km의 위치 오차가 누적됨",
+    "category": "relativity",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "위성의 속도는 시간에 따라 조금씩 달라지는 문제가 생긴다. 이를 보정해주는 것은 각 지구 궤도위 GPS 위성을 지구의 궤도 기동력으로 보는 것과 같아진다",
+    "score": 0.1
+  },
+  {
+    "question": "불확정성 원리란?",
+    "answer": "입자의 위치와 운동량을 동시에 임의의 정밀도로 알 수 없다는 원리",
+    "category": "quantum",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "우수한 설명으로 Nature의 정확한 상태를 알 수 없는 대신 확률적 설명이 필요하다",
+    "score": 0.6
+  },
+  {
+    "question": "파동-입자 이중성이란?",
+    "answer": "전자나 광자 같은 양자적 대상이 실험 조건에 따라 파동성과 입자성을 모두 보이는 현상",
+    "category": "quantum",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "질문: 파동-입자 이중성이란?\n\n답변: 양자粒子이 동시에 입자가 아니라 파동으로 나타나는 것과 입자가 물질적으로 존재하는 것这两个性质를 동시에 가지는 현상",
+    "score": 0.65
+  },
+  {
+    "question": "파울리 배타 원리란?",
+    "answer": "동일한 페르미온 두 개는 같은 양자 상태를 동시에 점유할 수 없음 (원자의 전자 배치와 주기율표의 근거)",
+    "category": "quantum",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "양자계의 한 화학적 상태가 다른 화학적 상태를 대체하지 못하는 것은 그 에너지가 그 상태로 바뀔 때 필요한 에너지보다 큰 이상은 필요하지 않다는 데 대한 결론",
+    "score": 0.05
+  },
+  {
+    "question": "전자는 왜 원자핵으로 떨어지지 않는가?",
+    "answer": "전자를 좁은 공간에 가두려면 불확정성 원리에 의해 운동량(운동에너지)이 커져야 하므로, 에너지가 최소가 되는 안정한 바닥상태가 존재하기 때문",
+    "category": "quantum",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "전자가 중력에 대해 불안정해져야 하는데, 불안정성을 보완하는 것은 그 불안정성을 가중하는 방향으로 한 켤레의 에너지가 필요하다",
+    "score": 0.1
+  },
+  {
+    "question": "양자 얽힘이란 무엇이며, 빛보다 빠른 통신이 가능한가?",
+    "answer": "둘 이상의 입자가 개별적으로 기술될 수 없는 상관관계를 갖는 상태. 측정 결과는 즉각 상관되지만 결과 자체가 무작위이므로 정보 전달에는 사용할 수 없어 인과율을 위반하지 않음",
+    "category": "quantum",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "양자 얽이는 물질의 입자가 공간 위치나 운동 궤도 등을 나타내는 약 1 개 이상의 양자 기술로, 그 속도는 빛보다 빠르다",
+    "score": 0.15
+  },
+  {
+    "question": "암흑물질의 정체는 무엇인가?",
+    "answer": "미해결 문제. 은하 회전 곡선, 중력렌즈 등 중력적 증거는 명확하지만 구성 입자는 아직 확인되지 않았음. 좋은 답변은 미해결임을 인정하고 증거와 후보(WIMP, 액시온 등)를 구분해 설명해야 함",
+    "category": "open_problem",
+    "difficulty": "advanced",
+    "unsolved": true,
+    "prediction": "아이언 원이 진동하는 방향(열역학적 상황)에서 보이는 것처럼, 암흑은 물질이 아니라 열(특정한 종류의 파동)으로 이루어진다",
+    "score": 0.05
+  },
+  {
+    "question": "양자역학과 일반상대성이론은 어떻게 통합되는가?",
+    "answer": "미해결 문제. 끈이론, 루프 양자중력 등 후보 이론은 있으나 실험적으로 검증된 양자중력 이론은 아직 없음. 좋은 답변은 미해결임을 명시해야 함",
+    "category": "open_problem",
+    "difficulty": "advanced",
+    "unsolved": true,
+    "prediction": "양자역학은 일반상대성이론을 특수상대성이론에 대응하는 확률적 관찰법으로 통합할 수 있다",
+    "score": 0.05
+  },
+  {
+    "question": "양자역학의 측정 문제란 무엇인가?",
+    "answer": "미해결(해석의) 문제. 측정 시 파동함수가 왜, 어떻게 하나의 결과로 확정되는지에 대한 합의된 답이 없음. 코펜하겐 해석, 다세계 해석, 결어긋남 이론 등이 경쟁 중. 좋은 답변은 수학적 형식론과 해석 논쟁을 구분해야 함",
+    "category": "open_problem",
+    "difficulty": "advanced",
+    "unsolved": true,
+    "prediction": "양자역학의 측정 문제는 측정이란 것은 양자계의 상태를 확률적으로 변화하는 것임을 보여주는 문제로, 상대론적 측정에 대한 정확한 해석이 불투명했다.",
+    "score": 0.25
+  }
+]
