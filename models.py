@@ -40,7 +40,8 @@ def invoke_with_fallback(model,
         models_skip=[]
     if disabled_models is None:
         disabled_models=[]
-        disabled_models = list(disabled_models)   # 방어적 복사 — 호출자의 원본은 절대 건드리지 않는 경계
+        
+    disabled_models = list(disabled_models)   # 방어적 복사 — 호출자의 원본은 절대 건드리지 않는 경계
 
     temp_models_skip= models_skip+disabled_models
 
