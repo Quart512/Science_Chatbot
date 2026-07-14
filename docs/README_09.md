@@ -33,6 +33,11 @@
   | int4 | 13.9 | 19.1 | 1.26 | 0.025 |
 
 - GGUF(941MB)를 llama-server(llama.cpp, OpenAI 호환 로컬 서버)로 서빙하고 `model_map["Qwen-tuned"]`로 챗봇에 등록. 서버 접속 에러(`APIConnectionError`)도 fallback 체인에 포함 — 로컬 모델이 죽으면 API 모델로 자동 전환
+- **fallback 후 교차 검증이 깨지는 버그 수정**: verify는 원래 "생성 모델과 다른 모델이 검증"하도록 설계했는데, generate가 fallback으로 다른 모델로 갈아탄 경우 verify가 이를 몰라 `state.model`(요청 당시 모델) 기준으로만 회피해 생성자 본인이 검증하는 상황이 있었다. 이를 고치기 위해 State에 두 필드를 분리해 추가:
+  - `generated_by`: 실제로 이번 답변을 생성한 모델 (verify가 반드시 회피할 대상)
+  - `disabled_models`: 이번 요청 안에서 이미 실패한 모델 목록 (재탐색으로 인한 낭비 호출 방지, 노드 경계를 넘어 State로 추적)
+  - 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음
+  - 모든 fallback 후보가 소진되면 차순위로 생성자 본인이 검증 (교차 검증 > 없음)
 - evaluate.py에 평가 대상 선택(`--target graph|gemini|claude|Qwen-tuned`) + 저장 이름 분리(`--name`, 양자화 전/후 구분용) 추가. 채점자(judge)는 claude-haiku로 전 실행 고정 — 채점자가 바뀌면 실행 간 비교가 오염되기 때문 (처음엔 gemini judge였는데 무료 등급 쿼터 20회/일로는 31문항 채점이 불가능해서 교체)
 
 ## 평가 결과 — Qwen-tuned (Q4_K_M, held-out 31문항)
@@ -50,6 +55,16 @@
 | thermodynamics | 0.025 | 4 |
 
 일반 문항 0.13 / 미해결 문항 0.15. gemini·claude 베이스라인과 graph(RAG+verify) 구성 비교는 진행 예정 — 특히 "약한 모델을 파이프라인이 얼마나 구제하는가"(bare Qwen vs graph+Qwen)가 다음 실험의 핵심 질문.
+
+## 장애 복원력 테스트
+
+llama-server를 꺼둔 채(Qwen-tuned 접속 불가) + gemini 쿼터가 이미 소진된 상태에서 질문("what is gravity")을 던져 의도치 않게 이중 장애 시나리오가 만들어졌다. 로그로 확인된 동작:
+
+1. Qwen-tuned 접속 실패 → gemini 시도 → 쿼터 초과 → claude가 최종 생성 (2단 fallback)
+2. tool 호출(search_wikipedia) 왕복 후 재진입한 generate가 죽은 Qwen-tuned·gemini에 재요청 없이 곧장 claude로 — `disabled_models`가 State에 남아 있어 이미 죽은 모델을 다시 두드리지 않음
+3. verify가 [claude(생성자), Qwen-tuned(고장), gemini(고장)]를 모두 회피 대상으로 계산 → 후보 없음 → 설계한 차순위 경로대로 생성자(claude) 본인이 검증
+
+의도한 정상 경로(다른 모델이 교차 검증)가 아니라 최후 방어선(차순위: 생성자 자가 검증)이 발동한 것이지만, 정확히 설계한 대로 동작했다. fallback 체인·모델별 서킷 브레이커·교차 검증 우선순위가 실제 장애 조합에서 전부 검증된 사례.
 
 ## 통찰
 

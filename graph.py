@@ -1,7 +1,5 @@
 #from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
-
 from langgraph.graph import StateGraph, START, END  
 
 from langchain_core.documents import Document
@@ -38,11 +36,12 @@ class State(BaseModel):
     limit: int = 4
     #arxiv_references: list[str]
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
+    generated_by: str = ""
+    disabled_models: list[str] = Field(default_factory=list)
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)  # 대화 이력 (reducer가 자동 누적 — 노드는 새 메시지만 반환)
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-
     
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
@@ -77,8 +76,8 @@ def generate(state: State) -> dict:
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
-    response = invoke_with_fallback(state.model, [system] + history + new_msgs,
-                                    tools=active_tools)
+    response, generated_by, disabled_models= invoke_with_fallback(state.model, [system] + history + new_msgs,
+                                    tools=active_tools, disabled_models=state.disabled_models)
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
     answer = response.content if isinstance(response.content, str) else "".join(
@@ -92,7 +91,11 @@ def generate(state: State) -> dict:
         print(answer)
 
     # messages는 add_messages reducer가 누적하므로 새 메시지만 반환
-    return {"messages": new_msgs + [response], "answer": answer, "fix_needed": False}
+    return {"messages": new_msgs + [response], 
+            "answer": answer, 
+            "fix_needed": False, 
+            "generated_by": generated_by, 
+            "disabled_models": disabled_models}
 
 
 # generate가 tool을 요청했으면 tools 노드로, 아니면 verify로
@@ -175,9 +178,15 @@ def verify(state: State) ->dict:
     HumanMessage(content=state.question),
     AIMessage(content=state.answer)
     ]
+    try: # generated_by를 이미 써본 모델로 등록
+        answer, verified_by, disabled_models = invoke_with_fallback(state.model, messages, structured=verified,  
+                                                                    models_skip=[state.generated_by],
+                                                                    disabled_models=state.disabled_models)
+    except RuntimeError: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
+        answer, verified_by, disabled_models = invoke_with_fallback(state.generated_by, messages, structured=verified,
+                                                                    disabled_models=state.disabled_models)
 
-    answer = invoke_with_fallback(state.model, messages, structured=verified, sub_model=True)
-   
+    print("verify에 사용된 모델:", verified_by)
     print("수정 필요한가: "+str(answer.fix_needed))
     print("고칠점: "+str(answer.what_to_fix))
 
@@ -186,7 +195,8 @@ def verify(state: State) ->dict:
             "what_to_fix" : answer.what_to_fix,
             "try_count" : state.try_count+1,
             "needs_more_context" : answer.needs_more_context,
-            "tool_rounds" : 0  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
+            "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
+            "disabled_models" : disabled_models
             }
 
 

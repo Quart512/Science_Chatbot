@@ -30,33 +30,43 @@ model_map = {
 # 에러나면 서브 모델로
 # 지정된 모델을 우선 호출하고, ResourceExhausted(rate limit) 발생 시
 # 다른 모델로 자동 전환해서 재시도
-def invoke_with_fallback(model, messages, tools: list | None=None, structured=None, sub_model=False, models_tried=None):
-    if models_tried is None:
-        models_tried=[]
+def invoke_with_fallback(model, 
+                         messages, 
+                         tools: list | None=None, 
+                         structured=None, 
+                         models_skip: list[str] | None=None, #임의로 일시정지한 모델
+                         disabled_models: list[str] | None=None): #사용량 제한 등으로 세션 내에서 사용 중지할 모델
+    if models_skip is None:
+        models_skip=[]
+    if disabled_models is None:
+        disabled_models=[]
+        disabled_models = list(disabled_models)   # 방어적 복사 — 호출자의 원본은 절대 건드리지 않는 경계
 
-    if model is None:    #다 돌아서 없어!                   
-        raise RuntimeError(f"tried {models_tried} but all failed")
+    temp_models_skip= models_skip+disabled_models
+
     
     primary_name = model
-    secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in models_tried),None)
+    secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in temp_models_skip),None) #다음 모델 없는데?
     primary = model_map[primary_name]
 
-    if sub_model == True or primary_name in models_tried:
+    if primary_name in temp_models_skip:
         if secondary_name is None:  #다 돌아서 없어!
-            raise RuntimeError(f"tried {models_tried} but all failed")
+            raise RuntimeError(f"tried {temp_models_skip} but all failed")
         else:
-            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
+            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, models_skip=models_skip, disabled_models=disabled_models)
 
     if tools:  # tool 객체 리스트(disabled 제외 목록)
         primary = primary.bind_tools(tools)
-    
+
     if structured:
         primary = primary.with_structured_output(structured)
     
     try:
         print(f"LLM 모델 사용: {primary_name}")
-        return primary.invoke(messages)
+        return primary.invoke(messages), primary_name, disabled_models
     except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError):
         print(f"모델 오류! fallback인 {secondary_name} 모델로 전환")
-        models_tried.append(primary_name)
-        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, sub_model=False, models_tried=models_tried)
+        disabled_models.append(primary_name)
+        if secondary_name is None:    #다 돌아서 없어!                   
+            raise RuntimeError(f"tried {temp_models_skip} but all failed")
+        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, models_skip=models_skip, disabled_models=disabled_models)
