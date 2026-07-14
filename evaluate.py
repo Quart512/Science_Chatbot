@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 
+
 EVAL_DATA_PATH = Path(__file__).parent / "docs" / "eval.json"
 REQUIRED_KEYS = {"question", "answer", "category", "difficulty", "unsolved"}
 
@@ -44,7 +45,15 @@ def make_target(name: str):
     if name == "graph":
         from graph import app
         return lambda q: app.invoke({"question": q})["answer"]
-
+    
+    if name == "graph-Qwen":
+        from graph import app
+        return lambda q: app.invoke({"question": q, "model" : "Qwen-tuned"})["answer"]
+    
+    if name == "graph-Qwen-only":
+        from graph import app
+        return lambda q: app.invoke({"question": q, "model" : "Qwen-tuned", "disabled_models":["claude", "gemini"]})["answer"]
+        
     if name == "gemini":
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
     elif name == "claude":
@@ -129,7 +138,7 @@ def summarize(rows: list[dict]) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="모델/파이프라인 평가")
-    parser.add_argument("--target", choices=["graph", "gemini", "claude", "Qwen-tuned"],
+    parser.add_argument("--target", choices=["graph", "gemini", "claude", "Qwen-tuned", "graph-Qwen", "graph-Qwen-only"],
                         default="graph", help="평가 대상 (graph=전체 파이프라인, 나머지=모델 단독)")
     parser.add_argument("--name", default=None,
                         help="결과 저장 이름 (기본: target). 같은 target의 변형 비교용 — 예: --target Qwen-tuned --name qwen-tuned-q4")

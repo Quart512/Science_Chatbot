@@ -55,6 +55,62 @@
 | thermodynamics | 0.025 | 4 |
 
 일반 문항 0.13 / 미해결 문항 0.15. gemini·claude 베이스라인과 graph(RAG+verify) 구성 비교는 진행 예정 — 특히 "약한 모델을 파이프라인이 얼마나 구제하는가"(bare Qwen vs graph+Qwen)가 다음 실험의 핵심 질문.
+## 평가 결과 - graph(Qwen+verify as claude)
+
+1. graph-Qwen으로 돌리다가 흥미로운 버그 발견
+그 파동이 특정 빛의 색으로 인식되는 특수한 조건이 필요한 때문이 아니라, 그 파동이 특정 빛의 색으로 인식되는 특수한 조건이 필요한 때문이 아니라, 그 파동이 특정 빛의 색으로 인식되는 특수한 조건이 필요한 때문이 아니라, 그 파동이 특정 빛의 색으로 인식되는 특수한 조건이 필요한 때문이 아니라,
+
+이렇게 반복되는 루프가 걸리면서 Qwen이 지혼자 33K 반복. verify에서 claude가 이상함 확인하고 qwen에게 재생성 쿼리 넣었으나 그 과정에서 이전 응담(33k)이 AImessage로 들어감->llama server 다운, bad request 에러나면서 나머지는 fallback인 claude가 생성 후 gemini가 verify하는 것으로 의도와 다르게 진행됨(진행하면서 gemini의 사용량 제한으로 claude가 생성, claude가 verify하는 검증으로 나아감)
+
+이를 튜닝한 qwen의 과적합과 greedy decoding(temp=0) 때문이라고 분석, 때문이 아니라~ 다음에 그 파동이~ 이 순환구조로 연결되어버림.
+이를 고치기 위해 
+- 이미 나온 토큰의 확률을 깎는 frequency_penalty=0.3 openai api의 파라메터로 추가
+- max_token=10k로 제한함.
+
+2. 정상 평가 결과
+=== 평가 요약 ===
+전체: 평균 0.445 (n=31)
+일반 문항: 평균 0.430 (n=28)
+미해결 문항(인정+사실정확성): 평균 0.583 (n=3)
+
+카테고리별 평균:
+  atomic: 평균 0.410 (n=5)
+  electromagnetism: 평균 0.575 (n=4)
+  mechanics: 평균 0.720 (n=5)
+  open_problem: 평균 0.583 (n=3)
+  quantum: 평균 0.380 (n=5)
+  relativity: 평균 0.380 (n=5)
+  thermodynamics: 평균 0.075 (n=4)
+
+3. bare Qwen vs graph+Qwen 비교
+{'eval_qwen-tuned-q4.json': 0.13225806451612898, 'eval_claude.json': 0.9045161290322578, 'eval_graph-Qwen.json': 0.44516129032258067, 'eval_graph.json': 0.8135483870967742}
+
+0.132->0.445로 증가한 것으로 보임
+하지만 이건 Qwen 모델만 사용한 것이 아니라 verifier로서 claude를 사용했기 때문에 변인통제에 한계가 있다. 
+verify마저 qwen으로 진행하는 실험 진행중
+
+## 평가 결과 - Qwen-tuned, claude, graph(claude), graph(Qwen+verify as claude)
+gemini 2.5 flash는 사용량 제한으로 진행하지 못했음
+
+{'eval_qwen-tuned-q4.json': 0.13225806451612898, 
+'eval_claude.json': 0.9045161290322578, 
+'eval_graph-Qwen.json': 0.44516129032258067, 
+'eval_graph.json': 0.8135483870967742}
+
+주목할 점은 eval_claude.json 보다 eval_graph.json이 하락했다는 점이다.
+ReAct와 Evaluator-Optimizer 패턴을 거치면서 
+최종본에 이미 message에 있는 내용이 누락되거나, 퀄리티 낮은 rag나 웹 검색 툴의 결과가 참고되면서 garbage in-garbage out이 된것으로 보임
+프롬프트를 다듬어 자신이 알고있는것 중점으로 대답하고, 나머지는 참고할것을 강조하고, 주어진 맥락과 별개로 항상 최종 답변을 structured output으로 추출하는 방식으로 진행 후 latest version으로 재비교 해보기
+아래는 eval_graph의 예시
+  {
+    "question": "원자의 화학적 정체성을 결정하는 것은?",
+    "answer": "핵 속의 양성자 수",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "제공된 문서에서 답을 찾을 수 있습니다.\n\n문서의 내용에 따르면:\n\n**원자의 화학적 정체성(화학적 성질)을 결정하는 것은 전자(electrons)의 개수입니다.**\n\n문서에서 명시적으로 다음과 같이 설명하고 있습니다:\n\n> \"원자의 화학적 성질은 전자의 개수에 의해 결정되며, 핵의 질량에 의해 결정되지 않는다.\"\n\n이는 같은 원소라 하더라도 중성자의 개수가 다를 수 있다는 것을 의미합니다. 예를 들어, 탄소(carbon)의 경우 6개의 양성자는 동일하지만, 6개 또는 7개의 중성자를 가질 수 있습니다(이것이 동위원소). 하지만 전자의 개수(양성자와 같음)가 같기 때문에 화학적 성질은 동일합니다.",
+    "score": 0.0
+  }, 
 
 ## 장애 복원력 테스트
 

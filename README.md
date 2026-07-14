@@ -149,7 +149,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 - [x] Pydantic State 전환 + `messages`(add_messages) 필드 — 기반 리팩토링
 - [x] tool 노드 분리 (ReAct 표준 구조) + tool 예외처리·서킷 브레이커
 - [x] 모듈 분리 (models / tool / retrieval)
-- [x] 개인 언어 모델: Qwen2.5-1.5B QLoRA 파인튜닝 → PTQ → GGUF → llama.cpp 로컬 서빙 → `model_map` 등록
+- [x] 개인 언어 모델: Qwen2.5-1.5B QLoRA 파인튜닝 → PTQ → GGUF → llama.cpp 로컬 서빙 → `model_map` 등록, max_token, frequency_penalty 설정
 - [ ] 모델 비교 평가 완주 (bare 3종 + graph 구성별) 및 비교 리포트
 - [ ] 단기기억 + 쓰레드 (checkpointer, thread_id별 세션)
 - [ ] `interrupt_before`로 human-in-the-loop

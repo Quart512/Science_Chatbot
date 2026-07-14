@@ -10,7 +10,10 @@ from google.api_core.exceptions import ResourceExhausted
 from anthropic import RateLimitError
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from openai import APIConnectionError  # 로컬 llama-server가 꺼져 있을 때 나는 접속 에러
+from openai import BadRequestError 
 
+import sys
+import traceback
 #api key 가져오기
 load_dotenv()
 
@@ -23,6 +26,8 @@ model_map = {
     "Qwen-tuned": ChatOpenAI(
         base_url=os.getenv("LOCAL_MODEL_URL", "http://localhost:8080/v1"),
         api_key="not-needed",  # 로컬 서버는 키 검사 안 함 (필드가 필수라 더미값)
+        max_tokens=10000,
+        frequency_penalty=0.3,
         model=os.getenv("LOCAL_MODEL_NAME", "qwen-tuned"),
     ),
     }
@@ -40,7 +45,7 @@ def invoke_with_fallback(model,
         models_skip=[]
     if disabled_models is None:
         disabled_models=[]
-        
+
     disabled_models = list(disabled_models)   # 방어적 복사 — 호출자의 원본은 절대 건드리지 않는 경계
 
     temp_models_skip= models_skip+disabled_models
@@ -65,8 +70,12 @@ def invoke_with_fallback(model,
     try:
         print(f"LLM 모델 사용: {primary_name}")
         return primary.invoke(messages), primary_name, disabled_models
-    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError):
+    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError, BadRequestError):
+        exc_type, exc_value, _ = sys.exc_info()
+        error_msg = traceback.format_exception_only(exc_type, exc_value)[0].strip()
+        print(error_msg)
         print(f"모델 오류! fallback인 {secondary_name} 모델로 전환")
+
         disabled_models.append(primary_name)
         if secondary_name is None:    #다 돌아서 없어!                   
             raise RuntimeError(f"tried {temp_models_skip} but all failed")
