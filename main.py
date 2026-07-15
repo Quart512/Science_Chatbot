@@ -14,9 +14,10 @@ class Query(BaseModel):
 
 @app.post("/query")
 def query(request: Query):
-
-    return {"answer": app_graph.invoke({"question": request.prompt, 
+    app_result = app_graph.invoke({"question": request.prompt, 
                                         "top_k": request.top_k,
                                         "limit": request.limit,
                                         "model": request.model
-                                        })["answer"]}
+                                        })
+    return {"answer": app_result["answer"], 
+            "comment" : app_result["comment"]}

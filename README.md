@@ -34,6 +34,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - **run_tools**: tool 실행 + 예외처리. 모든 tool_call에 반드시 ToolMessage로 응답(실패 포함) → LLM이 다음 라운드에 에러를 읽고 자가수정. 빈 결과·호출 실패·미등록 tool을 구분해 다른 힌트 제공, **연속 2회 실패한 tool은 해당 런에서 자동 제외(서킷 브레이커)**. 성공 결과는 Document로 변환해 RAG context에 병합
 - **verify**: 구조화 출력(`fix_needed`, `what_to_fix`, `needs_more_context`)으로 답변 검증. **생성 모델과 다른 모델이 검증** (교차 검증) — generate가 fallback으로 갈아탄 경우에도 실제 생성 모델(`generated_by`)을 기준으로 회피하며, 가용 모델이 하나도 안 남으면 차순위로 생성자 본인이 검증
 - **route_by_fix**: 3방향 분기. `try_count >= limit` 시 강제 종료 + 실패 사유 명시
+- **final_answer — 출력 이원화**: `answer`(답변 본문, 평가 대상)와 `comment`(부가 정보, 사용자 전용)를 분리. 재시도를 거친 답변만 structured output으로 본문/메타를 분리하고(평시 추가 호출 0), limit 도달·fallback 발생 같은 시스템 고지는 코드가 comment에 작성 — 실패해도 사용자에게 정직하게 알린다
 - **State**: Pydantic 모델 — 필드 기본값·타입 검증, `messages`는 `add_messages` reducer로 자동 누적
 
 ### 특징
@@ -116,12 +117,13 @@ POST /query
   "model": "gemini"
 }
 
-→ {"answer": "..."}
+→ {"answer": "...", "comment": "..."}
 ```
 
 - `model`: `"gemini"` (기본값) / `"claude"` / `"Qwen-tuned"` (로컬 llama-server 필요)
 - `top_k`: 검색 문서 수 (기본값 3)
 - `limit`: 최대 verify 루프 횟수 (기본값 4)
+- 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지 등. 정상 처리 시 comment는 비어 있을 수 있음
 
 ## 평가
 
@@ -149,17 +151,11 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 
 ## 로드맵
 
-- [x] Pydantic State 전환 + `messages`(add_messages) 필드 — 기반 리팩토링
-- [x] tool 노드 분리 (ReAct 표준 구조) + tool 예외처리·서킷 브레이커
-- [x] 모듈 분리 (models / tool / retrieval)
-- [x] 개인 언어 모델: Qwen2.5-1.5B QLoRA 파인튜닝 → PTQ → GGUF → llama.cpp 로컬 서빙 → `model_map` 등록, max_token, frequency_penalty 설정
-- [ ] 모델 비교 평가 완주 (bare 3종 + graph 구성별) 및 비교 리포트
-- [ ] 단기기억 + 쓰레드 (checkpointer, thread_id별 세션)
-- [ ] `interrupt_before`로 human-in-the-loop
-- [ ] 프론트엔드 (Streamlit)
-- [ ] 멀티 에이전트 전환: 현 그래프를 물리 지식 에이전트로 포장 → 오케스트레이터 → 문헌·조달·가설·실험 설계·번역 레이어
-- [ ] 장기기억 유저별 분리 (VDB 메타데이터 필터링)
-- [ ] 실험: verify 구성 비교 (self / 교차 / 무 verify / 다중 모델 앙상블 — correctness·토큰·지연 지표)
+날짜별 상세 이력·계획은 **[RoadMap.md](RoadMap.md)** 참고. 요약:
+
+- **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 평가 시스템 + 비교 실험 (bare Qwen 0.132 → graph+Qwen 0.445 등)
+- **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선
+- **예정**: 단기기억·쓰레드 → HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 학습 데이터 확장·2차 파인튜닝
 
 ## 데이터 & 감사
 

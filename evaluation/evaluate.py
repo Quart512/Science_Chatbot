@@ -115,7 +115,7 @@ def make_target(name: str):
 
 # judge는 항상 claude-haiku로 고정 — 평가 대상(gemini/claude/Qwen-tuned)과 겹치면
 # 자기 자신이 낸 답을 자기가 채점하는 경우가 생길 수 있긴 함.
-judge_llm = ChatAnthropic(model="claude-haiku-4-5-20251001").with_structured_output(evaluated)
+judge_llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0).with_structured_output(evaluated)
 
 
 # unsolved(미해결 문제)는 "정답과 얼마나 같은가"가 아니라 "모른다는 걸 인정하는가"가
@@ -161,10 +161,10 @@ def run_evaluation(target_fn, save_name: str) -> list[dict]:
         with out_path.open("w", encoding="utf-8") as f:
             json.dump(rows, f, ensure_ascii=False, indent=2)
 
-    # 실질적으로 일을 하는 핵심 파트
+    # 핵심 파트
     for i, item in enumerate(dataset, 1):
         if item["question"] in done_questions:
-            continue
+            continue #건너뛰기
         try:
             prediction, meta = target_fn(item["question"])
             score = judge(item["question"], item["answer"], prediction, item["unsolved"])
@@ -204,7 +204,7 @@ def summarize(rows: list[dict]) -> None:
         print(f"  {category}: 평균 {avg([r['score'] for r in cat_rows]):.3f} (n={len(cat_rows)})")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": # 직접 실행할때만 동작
     parser = argparse.ArgumentParser(description="모델/파이프라인 평가")
     parser.add_argument("--target", choices=["graph", "gemini", "claude", "Qwen-tuned", "graph-Qwen", "graph-Qwen-only", "graph-gemini-only","graph-claude-only"],
                         default="graph", help="평가 대상 (graph=전체 파이프라인, 나머지=모델 단독)")

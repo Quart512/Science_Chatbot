@@ -5,8 +5,9 @@
     "category": "atomic",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "전자가 특정 위치에 있을 확률밀도의 집합",
-    "score": 0.35
+    "prediction": "원자가 물질의 성질을 결정하는 핵과 그 핵속에서 흩어진 전자가 하나의 물질로 볼 수 있는 균일한 입자를 나타내는 개념으로, 원자가 되는 핵과 전자가 서로 결합되어 형성된다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.65
   },
   {
     "question": "원자의 화학적 정체성을 결정하는 것은?",
@@ -14,7 +15,8 @@
     "category": "atomic",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "원자의 화학적 정체성을 결정하는 것은 입자가 갖는 전자기파의 배열이 아니라 입자가 갖는 에너지의 배열(에너지 스펙트럼)으로 통합된다",
+    "prediction": "limit:4 내에 적합한 답변 도출 불가능 \n 문서는 물리학자 펠릭스 루트가 쓴 책에서 온다 \n 발견된 문제점: 원자의 화학적 정체성을 결정하는 것은? 물리학자 펠릭스 루트가 쓴 책에서 온다",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -23,8 +25,9 @@
     "category": "atomic",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "온도가 높을수록 원자의 운동이 가속해지고, 압력이 높을수록 더 강하게 압박해진다",
-    "score": 0.6
+    "prediction": "양성자와 중성자의 운동 방향이 반대인 원자가 빛을 방해하지 않는 이상, 빛의 파동성이 온도에 상관없이 작용한다는 것이 보존 법칙 때문.",
+    "generated_by": "Qwen-tuned",
+    "score": 0.05
   },
   {
     "question": "원자는 대부분 빈 공간인데, 왜 물체는 서로 통과하지 못하는가?",
@@ -32,8 +35,9 @@
     "category": "atomic",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "관찰자가 일정한 온도에 있는 화학원자 사이에서 일정한 에너지를 넘을 수 없는 최소 에너지 놓임새(단면)가 있어, 서로 통과되지 못하는 이유다",
-    "score": 0.65
+    "prediction": "질량이 큰 물체는 빛나는 입자가 통과하지 못하는 이유는 입자가 공간에서 서로 축적되지 않아, 그 사이에 빛나는 입자가 통과할 수 없기 때문이다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "원자핵의 질량은 왜 구성 핵자들의 질량 합보다 작은가?",
@@ -41,7 +45,8 @@
     "category": "atomic",
     "difficulty": "advanced",
     "unsolved": false,
-    "prediction": "원자핵의 질량은 핵종(원자가 포함하는 핵)의 전자기장이 되는 전자가 축적되지 않는다는 점으로, 핵종이 더 작은 질량으로 측정된다",
+    "prediction": "원자핵의 질량은 원자핵에 포함된 중성 입자가 전체적인 질량을 대표하지만, 원자가 빛나는 것보다 덜 빛나는 원자가 더 작다",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -50,8 +55,9 @@
     "category": "mechanics",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "방향에 상관없이 물체가 받은 힘의 합이 작용하는 동안 각속도는 시간에 걸리게 된다",
-    "score": 0.1
+    "prediction": "관성 운동(변속) 법칙인 동시에 방향에 관계 없이 물체의 운동에 대해 상황에 따라 다르지 않게 나타나는 특수한 성질",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "에너지 보존 법칙이란?",
@@ -59,8 +65,9 @@
     "category": "mechanics",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "한 물질의 에너지 값은 시간에 따라 바뀔 수 있지만, 그 변화량은 운동의 양(운동에너지)과 열(열能)의 합으로 제한된다",
-    "score": 0.3
+    "prediction": "에너지 보존 법칙은 자연 현상이 어떻게 변할지에 대해 정량적으로 제시하지는 못했지만, 그 변화는 특정한 물리량(에너지)이 전체 변화량과 같을 수 있다는 것을 보여준다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.35
   },
   {
     "question": "관성이란 무엇인가?",
@@ -68,7 +75,8 @@
     "category": "mechanics",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "관성은 물질이 광자로 파편화되는 정도를 나타내는 개념으로, 물질에 특정한 방향으로 파편화되는 것이 아니라 모두 다른 방향으로 파편화되는 현상",
+    "prediction": "관성이란 물질이 온도 변화에 반응해 힘을 exert하는 특수한 방향으로 작용하는 현상",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -77,8 +85,9 @@
     "category": "mechanics",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "무거운 물체가 가벼운 물체보다 더 빨리 떨어지는 것은 힘이 작용하는 방향이 아니라, 물체가 가속도를 받아야 하는 시간이 더 길어진다는 이유로.",
-    "score": 0.05
+    "prediction": "물체의 가속도는 무게에 비례한다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "뇌터 정리(Noether's theorem)가 말하는 것은?",
@@ -86,8 +95,9 @@
     "category": "mechanics",
     "difficulty": "advanced",
     "unsolved": false,
-    "prediction": "기하학적 속도의 속도를 기준으로 속도를 정의할 수 없는 물질(전하)이 운동할 때, 운동에너지의 합이 그 운동 방향으로 작용한다",
-    "score": 0.0
+    "prediction": "물리적 보존 법칙이 물리적 운동의 원인이 아니라, 반대인 측면에서 그 원인이 물리적 보존이라는 것을 보여준다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "빛의 본질은 무엇인가?",
@@ -95,8 +105,9 @@
     "category": "electromagnetism",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "빛은 입자가 아니라 파동으로 분리되어, 입자가 아니라 물질로 결합되어, 입자가 아니라 에너지로 변모되는 것이 특징이다",
-    "score": 0.15
+    "prediction": "빛은 물질과 상호 작용해 파동의 경향성을 나타내는 것으로 본다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.3
   },
   {
     "question": "전하 사이에 작용하는 힘은?",
@@ -104,8 +115,9 @@
     "category": "electromagnetism",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "전하 사이에 작용하는 힘은 전하의 합이 서로 반대的方向이고, 그 크기가 각 전하의 전기장을 상대적으로 줄이는 양의 제곱의 합으로 결정된다",
-    "score": 0.15
+    "prediction": "전하 사이의 힘은 전하 사이의 전기장을 통과한 데어트 힘이 되며, 그 크기는 전하의 곱과 거리의 제곱으로 비례한다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.35
   },
   {
     "question": "자기장은 어떻게 만들어지는가?",
@@ -113,8 +125,9 @@
     "category": "electromagnetism",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "전류가 있는 금속 줄에 대한 세 가지 중요한 실험과 에르미트의 뛰어난 상상력이 합쳐져 만들어졌으며, 우리는 다음의 법칙을 얻었다.",
-    "score": 0.2
+    "prediction": "전자가 전하를 빼앗아 쌓아올리는 데 필요한 에너지로 만들어진다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.1
   },
   {
     "question": "전자기 유도란 무엇이며 왜 중요한가?",
@@ -122,8 +135,9 @@
     "category": "electromagnetism",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "전하가 전자를 유도하는 방향을 가로등 방향으로 빛을 쬐면 전자기파가 형성되는 현상으로, 전자기파의 방향이 전하의 운동 방향과 같아져 서로 의존하는 특수한 상황으로, 중요한 이유는 전자가 빛에 반응함으로써 유도되는 전자의 운동이 전자의 운동을 형성하는 파동의 크기로 확장될 수 있다는 점으로, 그 크기는 빛의 파장과 같다",
-    "score": 0.05
+    "prediction": "전자기 유도란 전하를 가진 입자가 자기장을 생성하는 현상으로, 전자가 입자 사이에서 교차할 때 그 사이隙에 형성된 자기장을 억압하는 효과로 중요한",
+    "generated_by": "Qwen-tuned",
+    "score": 0.1
   },
   {
     "question": "열역학 제2법칙이란?",
@@ -131,8 +145,9 @@
     "category": "thermodynamics",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "열역학 제2법칙은 다음과 같이 정의된다: 특정 온도에 있는 물질을 둘러싼 열기관이 빠르게 작동할 수록 더 많은 에너지를 방출하는 것은 불가능하다",
-    "score": 0.1
+    "prediction": "열을 특정한 온도에서 축적할 때, 그 온도로 낮은 열을 축적할 수 없으며, 열을 특정한 온도에서 분리할 때, 그 온도로 높은 열을 분리할 수 없다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.2
   },
   {
     "question": "절대영도란 무엇인가?",
@@ -140,7 +155,8 @@
     "category": "thermodynamics",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "특정 물질이 다른 물질에 대한 힘이 얼마나 큰지 나타내는 양으로, 그 물질의 밀도와 크기에 따라 커진다",
+    "prediction": "물체 하나만 있는 공간(전체계)의 운동은 다른 물체가 공간을 지나는 운동에 영향을 미치지 않는다",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -149,8 +165,9 @@
     "category": "thermodynamics",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "열을 가진 물질에 덜어진 열의 양이, 물질의 온도와 같으면 1도에서 0도로 줄 수록 작다는 의미로, 입자가 더 많은 열을 손상할 확률이 낮은 경우엔 더 작은熵이 나타나는 것으로 설명된다",
-    "score": 0.15
+    "prediction": "열이 물질을 일정한 온도에서 하나 더 가열할 때, 그 온도하의熵는 일정한 양의 열로 같다는 것",
+    "generated_by": "Qwen-tuned",
+    "score": 0.05
   },
   {
     "question": "시간의 방향(화살)은 물리학에서 어디에서 오는가?",
@@ -158,7 +175,8 @@
     "category": "thermodynamics",
     "difficulty": "advanced",
     "unsolved": false,
-    "prediction": "각운동량 보존에 대한 법칙이란, 물체가 어떤 방향으로 움직이는지 그 방향대로 온도나 온도 변화량 등이 증가하지 않는다는 것이다",
+    "prediction": "지름길이 가장 빠르게 향하는 물체는 더 길을 덜 지나는 것처럼, 시간이 가속도를 가진 궤도를 지나는 태양은 더 빨라져야 하나 보인다",
+    "generated_by": "Qwen-tuned",
     "score": 0.05
   },
   {
@@ -167,8 +185,9 @@
     "category": "relativity",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "특수상대성이론의 핵심 가정은 시간이 물질의 빠르게 움직이는 궤도를 초과하지 않는 한 변하지 않는다는 것이다",
-    "score": 0.1
+    "prediction": "물리량이 시간에 따라 변화하지 않는 특정 관찰자에 대해 다른 특정 관찰자로 바뀌어도 같은 값을 보여주는 것.",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "E = mc²의 의미는?",
@@ -176,8 +195,9 @@
     "category": "relativity",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "그 질량이 속한 화학-element의 핵의 질량과 같은 양의 에너지(태즈)를 나타낸다",
-    "score": 0.2
+    "prediction": "제2의 운동량(전체 에너지)은 질량(m)과 속도(c의 제곱)의 곱으로 나타난다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "일반상대성이론에서 중력이란?",
@@ -185,8 +205,9 @@
     "category": "relativity",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "각질량 사이의 거리의 제곱에 비례하고 질량의 반비례로 작용하는 힘이라고 정의된다",
-    "score": 0.1
+    "prediction": "중력은 특정 양의 질량을 가진 물체가 다른 물체를 힘이 미치는 방향으로 끊임없이 추拉하는 힘이라고 이해할 수 있다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "왜 어떤 물체도 빛보다 빠를 수 없는가?",
@@ -194,7 +215,8 @@
     "category": "relativity",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "속력이最快的 물질(속도 186,000 미터/초)이 빛보다 느리게 가는 것은 불가능하기 때문.",
+    "prediction": "속력이最快的 것은 빛이고, 그 다음은 물질의 크기 때문에 물체는 빛보다 느리게 움직인다",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -203,8 +225,9 @@
     "category": "relativity",
     "difficulty": "advanced",
     "unsolved": false,
-    "prediction": "위성의 속도는 시간에 따라 조금씩 달라지는 문제가 생긴다. 이를 보정해주는 것은 각 지구 궤도위 GPS 위성을 지구의 궤도 기동력으로 보는 것과 같아진다",
-    "score": 0.1
+    "prediction": "limit:4 내에 적합한 답변 도출 불가능 \n 기계는 시간에 따라 조금씩 빨라져야 하며, 이를 방사성 보정이 해결해주어야 한다 \n 발견된 문제점: 기계는 시간에 따라 조금씩 빨라져야 하며, 이를 방사성 보정이 해결해주어야 한다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "불확정성 원리란?",
@@ -212,8 +235,9 @@
     "category": "quantum",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "우수한 설명으로 Nature의 정확한 상태를 알 수 없는 대신 확률적 설명이 필요하다",
-    "score": 0.6
+    "prediction": "문서에 따르면, 불확정성 원리는 물질의 입자성을 측정할수록 온도를 높이는 것과 같다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "파동-입자 이중성이란?",
@@ -221,8 +245,9 @@
     "category": "quantum",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "질문: 파동-입자 이중성이란?\n\n답변: 양자粒子이 동시에 입자가 아니라 파동으로 나타나는 것과 입자가 물질적으로 존재하는 것这两个性质를 동시에 가지는 현상",
-    "score": 0.65
+    "prediction": "관찰에 따라 입자가 입자가 파동성을 띠는가, 파동이 파동성을 띠는가의 불확실성을 제기한 제1의 이중성, 확률적 운동 방정식을 통해 입자가 동시에 입자와 파동을 나타내는 제2의 이중성을 묘사",
+    "generated_by": "Qwen-tuned",
+    "score": 0.3
   },
   {
     "question": "파울리 배타 원리란?",
@@ -230,8 +255,9 @@
     "category": "quantum",
     "difficulty": "basic",
     "unsolved": false,
-    "prediction": "양자계의 한 화학적 상태가 다른 화학적 상태를 대체하지 못하는 것은 그 에너지가 그 상태로 바뀔 때 필요한 에너지보다 큰 이상은 필요하지 않다는 데 대한 결론",
-    "score": 0.05
+    "prediction": "양성자와 중성자가 서로 가까워져 결합하는 것은 불가능하다.",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "전자는 왜 원자핵으로 떨어지지 않는가?",
@@ -239,8 +265,9 @@
     "category": "quantum",
     "difficulty": "intermediate",
     "unsolved": false,
-    "prediction": "전자가 중력에 대해 불안정해져야 하는데, 불안정성을 보완하는 것은 그 불안정성을 가중하는 방향으로 한 켤레의 에너지가 필요하다",
-    "score": 0.1
+    "prediction": "전자가 원자핵으로 떨어지는 것은 전자의 불확실성 상황에 따라 그 안쪽 공간에 더 높은 에너지가 필요하다",
+    "generated_by": "Qwen-tuned",
+    "score": 0.65
   },
   {
     "question": "양자 얽힘이란 무엇이며, 빛보다 빠른 통신이 가능한가?",
@@ -248,7 +275,8 @@
     "category": "quantum",
     "difficulty": "advanced",
     "unsolved": false,
-    "prediction": "양자 얽이는 물질의 입자가 공간 위치나 운동 궤도 등을 나타내는 약 1 개 이상의 양자 기술로, 그 속도는 빛보다 빠르다",
+    "prediction": "양자 얽힘이란 물질의 입자가 특정한 상황(상대론적 관성 등)을 나타내는 양자 기술로서, 빛보다 빠르게 통신할 수 있다는 의미인 것으로 이해된다",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -257,8 +285,9 @@
     "category": "open_problem",
     "difficulty": "advanced",
     "unsolved": true,
-    "prediction": "아이언 원이 진동하는 방향(열역학적 상황)에서 보이는 것처럼, 암흑은 물질이 아니라 열(특정한 종류의 파동)으로 이루어진다",
-    "score": 0.05
+    "prediction": "전자기파는 원자·분자 운동에 등속 운동으로 대응된다.",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "양자역학과 일반상대성이론은 어떻게 통합되는가?",
@@ -266,8 +295,9 @@
     "category": "open_problem",
     "difficulty": "advanced",
     "unsolved": true,
-    "prediction": "양자역학은 일반상대성이론을 특수상대성이론에 대응하는 확률적 관찰법으로 통합할 수 있다",
-    "score": 0.05
+    "prediction": "limit:4 내에 적합한 답변 도출 불가능 \n 문서에 따르면 양자역학과 일반상대성이론은 통합될 수 없다. \n 발견된 문제점: 주어진 문서의 내용이 필요한 부분을 채우는 것",
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "양자역학의 측정 문제란 무엇인가?",
@@ -275,7 +305,8 @@
     "category": "open_problem",
     "difficulty": "advanced",
     "unsolved": true,
-    "prediction": "양자역학의 측정 문제는 측정이란 것은 양자계의 상태를 확률적으로 변화하는 것임을 보여주는 문제로, 상대론적 측정에 대한 정확한 해석이 불투명했다.",
-    "score": 0.25
+    "prediction": "limit:4 내에 적합한 답변 도출 불가능 \n 양자역학의 측정 문제는 어떤 물질에 대해 측정할 때 측정하는 방법에 따라 그 양이 불규칙하게 나타나는 것 \n 발견된 문제점: The given answer is not related to the question.",
+    "generated_by": "Qwen-tuned",
+    "score": 0.1
   }
 ]

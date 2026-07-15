@@ -1,0 +1,12 @@
+[
+  {
+    "question": "원자란 무엇인가?",
+    "answer": "모든 물질을 구성하는 작은 입자로, 양성자와 중성자로 이루어진 핵과 그 주변의 전자로 구성됨",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "원자는 중심에 양전하를 띠는 무거운 핵이 있고, 그 주위를 가볍고 음전하를 띠는 전자가 둘러싸고 있는 구조이다. 핵은 양성자와 중성자로 이루어져 있다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  }
+]

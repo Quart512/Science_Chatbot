@@ -6,6 +6,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "전하를 하나의 단위로 나타내는 양으로, 원자의 중력과 합성자가 아닌 분자로 이루어진 화학적 성질을 나타내는 양으로 정의된다",
+    "generated_by": "Qwen-tuned",
     "score": 0.1
   },
   {
@@ -15,6 +16,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "원자의 입자가 특정 전자기파를 화학적 성질(질량, 중성итет, 전하수술)으로 나타내는 것",
+    "generated_by": "Qwen-tuned",
     "score": 0.1
   },
   {
@@ -24,7 +26,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "원자의/분자의 온도는 그 수축·확장량(운동량)의 평균에 비례한다",
-    "score": 0.7
+    "generated_by": "Qwen-tuned",
+    "score": 0.75
   },
   {
     "question": "원자는 대부분 빈 공간인데, 왜 물체는 서로 통과하지 못하는가?",
@@ -33,7 +36,8 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "질량으로 가득 찬 물체가 빈 공간을 통과할 수 없기 때문",
-    "score": 0.1
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "원자핵의 질량은 왜 구성 핵자들의 질량 합보다 작은가?",
@@ -42,6 +46,7 @@
     "difficulty": "advanced",
     "unsolved": false,
     "prediction": "원자핵의 질량은 핵의 중성자 수(원자핵 내에 들어 있는 입자가 되는 중성자의 수)의 질량 합보다 작은 이유는 핵의 중성자 수보다 전자가 들어가지 않는 핵하드(core)의 질량이 크다는 것",
+    "generated_by": "Qwen-tuned",
     "score": 0.05
   },
   {
@@ -51,7 +56,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "질량과 속도의 곱이 각운동량의 변화 rate로 같다는 뜻인",
-    "score": 0.6
+    "generated_by": "Qwen-tuned",
+    "score": 0.3
   },
   {
     "question": "에너지 보존 법칙이란?",
@@ -60,7 +66,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "변화하는 운동에너지와 방사성 에너지를 보존한다는 의미로, 물리상이 아닌 다른 방법으로 얻은 에너지를 물리적으로 증명할 수 없다",
-    "score": 0.05
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "관성이란 무엇인가?",
@@ -69,6 +76,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "양자계의 상태가 시간에 따라 어떻게 변화하는지를 예측할 수 있는 방법으로, 입자가 특정 상태로 나타나는 확률밀도 함수의 partial derivative로 정의된다",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -78,6 +86,7 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "접촉 없이 물체의 가벼움이나 무게는 무意义인 이유를 설명한 것으로, 중요한 개념 형식화에 기여한 것으로 볼 수 있다",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -87,6 +96,7 @@
     "difficulty": "advanced",
     "unsolved": false,
     "prediction": "역변화 보존 법칙이 기술하는 물리적 법칙으로, 보존량이 운동 법칙을 정의하는 데 필요한 조건을 나타내는 것",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -96,6 +106,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "질량과 전자가 동시에 존재하지 않는 유일한 물질 속자体는 빛이다",
+    "generated_by": "Qwen-tuned",
     "score": 0.1
   },
   {
@@ -105,7 +116,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "전하 사이에 작용하는 힘은 전하의 질량을 가속하는 데 필요한 힘으로, 크기는 전하의 곱으로 정의된다",
-    "score": 0.3
+    "generated_by": "Qwen-tuned",
+    "score": 0.2
   },
   {
     "question": "자기장은 어떻게 만들어지는가?",
@@ -114,6 +126,7 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "전하가 전자를 흡수하거나 방출함으로써 만들어진다",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -123,6 +136,7 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "유도란 전자가 전자를 유도하는 과정으로, 전자가 특정 전하를 한 번에 한 번씩만 유도하지만, 여러 번에 여러 번씩 유도할 수 있어 전자가 특정 위치로 이동하는 방향성을 결정하는 현상",
+    "generated_by": "Qwen-tuned",
     "score": 0.05
   },
   {
@@ -132,6 +146,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "열을 전도로 분리하지 못하는 물질(전도체)에서 전류가 흐를 수 없음을 나타내는 법칙",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -141,6 +156,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "관찰자에 대해 가속도가 같고 방향이 반대인 운동을 받는 물체가 원운동의 질량을 대신 받는 현상",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -150,6 +166,7 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "질량이 한 단위 증가할 때 에너지 증가량과 그 에너지 증가량에 해당하는 온도 차의 합",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -159,6 +176,7 @@
     "difficulty": "advanced",
     "unsolved": false,
     "prediction": "열역학 제1법칙이 시간의 방향(화살)을 정의한다",
+    "generated_by": "Qwen-tuned",
     "score": 0.1
   },
   {
@@ -168,7 +186,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "질량과 전자의 운동속도의 합이 상대적으로 느리게 보이는 효과는 실제 없으며, 운동속도에 비례하게 압박이 작용한다는 것",
-    "score": 0.05
+    "generated_by": "Qwen-tuned",
+    "score": 0.0
   },
   {
     "question": "E = mc²의 의미는?",
@@ -177,6 +196,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "단위 масс가 속도의 제곱을 곱한 값과 같을 때 그 에너지增加值는 상대론적 에너지-속도 상승 법칙",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -186,7 +206,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "관찰자에 대한 물체의 속도의 속도로 측정되는 힘이 물체를 빨아 up하는 현상",
-    "score": 0.05
+    "generated_by": "Qwen-tuned",
+    "score": 0.1
   },
   {
     "question": "왜 어떤 물체도 빛보다 빠를 수 없는가?",
@@ -195,7 +216,8 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "속도로 빠르다는 것은 빛이 물체를 향해 진동하는 것보다 더 빠르다는 뜻이 아니라, 물체 자체가 빛을 받는 데 필요한 시간보다 더 빠르다는 뜻而已",
-    "score": 0.1
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "GPS 위성의 시계는 왜 보정이 필요한가?",
@@ -204,7 +226,8 @@
     "difficulty": "advanced",
     "unsolved": false,
     "prediction": "위성의 속도는 지구의 공전 속도보다 느리므로, 지구에 가까울수록 시간이 지나는 빠르게 보인다",
-    "score": 0.1
+    "generated_by": "Qwen-tuned",
+    "score": 0.15
   },
   {
     "question": "불확정성 원리란?",
@@ -213,6 +236,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "계측하려는 양의 값이 불확실성의限界로 제한되며, 동시에 값이 나타나는 확률밀도 함수가 파동함수가 된다",
+    "generated_by": "Qwen-tuned",
     "score": 0.35
   },
   {
@@ -222,6 +246,7 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "질량 없이도 물체는 운동하다.",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -231,7 +256,8 @@
     "difficulty": "basic",
     "unsolved": false,
     "prediction": "양자계의 한 상태를 다른 상태로 바꾸는 것은 에너지 변화량이 반드시 파동함수가 반대 방향으로 전파되는 양을 초과하는 양 이상을 초과해야 하는데, 이는 불가능하다",
-    "score": 0.0
+    "generated_by": "Qwen-tuned",
+    "score": 0.05
   },
   {
     "question": "전자는 왜 원자핵으로 떨어지지 않는가?",
@@ -240,6 +266,7 @@
     "difficulty": "intermediate",
     "unsolved": false,
     "prediction": "전자가 원자핵으로 떨어지는 것은 가능하지만, 상대적으로 불안정한 상태이므로 빠르게 원자핵으로 합류하는 억압력(원자력)으로 인해 빠르게 합류된다",
+    "generated_by": "Qwen-tuned",
     "score": 0.1
   },
   {
@@ -249,7 +276,8 @@
     "difficulty": "advanced",
     "unsolved": false,
     "prediction": "양자 얽힘이란 물질의 입자가 양성자와 중성자의 조합으로 분리되지 않는 양이란 의미로, 빛보다 빠른 통신이 가능하다",
-    "score": 0.05
+    "generated_by": "Qwen-tuned",
+    "score": 0.1
   },
   {
     "question": "암흑물질의 정체는 무엇인가?",
@@ -258,6 +286,7 @@
     "difficulty": "advanced",
     "unsolved": true,
     "prediction": "관성파로 정리되었다",
+    "generated_by": "Qwen-tuned",
     "score": 0.0
   },
   {
@@ -267,6 +296,7 @@
     "difficulty": "advanced",
     "unsolved": true,
     "prediction": "양자역학은 작은 시간尺度에서 상대성이론과 일치하지만, 큰 시간尺度에서는 확률적 운동을 설명하는 것이 불편해져, 상대성이론을 더 복잡하게 해소해야 하는 문제를 해결하기 위해 복잡한 통합이 이루어진다",
+    "generated_by": "Qwen-tuned",
     "score": 0.15
   },
   {
@@ -276,6 +306,7 @@
     "difficulty": "advanced",
     "unsolved": true,
     "prediction": "양자기기에서 양자기체의 상태를 측정할 때 측정 결과는 확률적으로 나타나는 문제",
-    "score": 0.3
+    "generated_by": "Qwen-tuned",
+    "score": 0.2
   }
 ]

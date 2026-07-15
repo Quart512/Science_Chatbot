@@ -28,6 +28,7 @@ class State(BaseModel):
     question: str 
     context: list[Document] = Field(default_factory=list)
     answer: str = Field(default="")
+    comment: str = ""
     fix_needed: bool = False
     what_to_fix: str = ""
     needs_more_context: bool = False
@@ -42,7 +43,8 @@ class State(BaseModel):
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-    
+
+
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
     if state.try_count==0:
@@ -56,6 +58,7 @@ def retrieve(state: State) -> dict:
 
 # 문서 기반으로 답변 생성. tool 실행은 별도 tools 노드가 담당 (ReAct 루프를 그래프 구조로).
 # system prompt는 state에 안 쌓고 매번 최신 context로 새로 조립 — messages에는 Human/AI/Tool만 쌓인다
+
 def generate(state: State) -> dict:
     print("---"+str(state.try_count+1)+"번째 시도---")
 
@@ -64,10 +67,11 @@ def generate(state: State) -> dict:
         아래 문서와 tool 결과는 참고 자료일 뿐이다 — 네 지식이 확실하면 그대로 답하고,
         문서 내용이 틀렸거나 질문과 무관하면 무시해라. 네 지식만으로 부족하거나
         최신·구체적 사실 확인이 필요할 때만 검색 tool을 사용해라.
+        문서가 질문과 아예 무관하지는 않지만 질문의 핵심 쟁점(예: 여러 해석·이론이 경쟁 중인지,
+        아직 결론이 나지 않은 문제인지)까지는 다루지 않는다면, 문서에 없는 내용이라도
+        네 지식으로 그 핵심 쟁점을 보완해서 답에 반드시 포함시켜라 — 문서가 다루는 인접 주제만
+        답하고 정작 질문이 묻는 핵심을 빠뜨리면 안 된다.
         {"(지금은 사용 가능한 검색 tool이 없다. 네 지식만으로 답해.)" if len(state.disabled_tools) >= len(tool_map) else ""}
-
-        최종 답변에는 "문서에 따르면", "제공된 자료에서" 같은 출처 언급이나 판단 과정 설명 없이,
-        질문에 대한 답만 간결하게 제시해라.
 
         참고 문서: {state.context}
     """)
@@ -82,8 +86,10 @@ def generate(state: State) -> dict:
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
-    response, generated_by, disabled_models= invoke_with_fallback(state.model, [system] + history + new_msgs,
-                                    tools=active_tools, disabled_models=state.disabled_models)
+    response, generated_by, disabled_models= invoke_with_fallback(state.model, 
+                                                                [system] + history + new_msgs,
+                                                                tools=active_tools, 
+                                                                disabled_models=state.disabled_models)
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
     answer = response.content if isinstance(response.content, str) else "".join(
@@ -101,7 +107,13 @@ def generate(state: State) -> dict:
             "answer": answer, 
             "fix_needed": False, 
             "generated_by": generated_by, 
-            "disabled_models": disabled_models}
+            "disabled_models": disabled_models,
+            "comment" : state.comment+
+            f"""------
+                \n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}
+                {f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}
+            """ 
+            }
 
 
 # generate가 tool을 요청했으면 tools 노드로, 아니면 verify로
@@ -155,20 +167,29 @@ def run_tools(state: State) -> dict:
         failures[name] = 0  # 연속 실패 카운트 리셋
         tool_msgs.append(ToolMessage(content=result, tool_call_id=tid))
         tool_docs.append(Document(page_content=result, metadata={"source": name}))
+        
         print(f"tool 사용: {name}{tc['args']} → {result[:80]}...")
+
 
     return {"messages": tool_msgs,
             "context": state.context + tool_docs,  # verify가 tool 근거를 보도록 병합
             "tool_failures": failures,
             "disabled_tools": disabled,
-            "tool_rounds": rounds + 1}
+            "tool_rounds": rounds + 1,
+            "comment" : state.comment+
+            f"""------
+            \n {tool_msgs}
+            \n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}
+            """}
 
 
 # verify 단계에서 모델이 이 스키마 형태(structured output)로 답변을 채워서 반환
 class verified(BaseModel):
-    fix_needed: bool = Field(description="answer가 수정이 필요한지 여부. what_to_fix에 뭔가 적었다면 반드시 True여야 한다.")
+    fix_needed: bool = Field(description="answer가 수정이 필요한지 여부. what_to_fix에 뭔가 적었다면 반드시 True여야 한다." \
+    "fix_needed는 사실 오류, 질문과 불일치일 때만 True. 문서에 근거가 없어도 내용이 정확하면 False. 문서 연결 제안은 what_to_fix가 아니라 무시하라")
     what_to_fix: str = Field(description="고쳐야 하는 부분들. 문제가 없으면 반드시 빈 문자열로 남겨라 — 사소한 코멘트라도 여기 적으면 fix_needed는 True로 간주된다.")
     needs_more_context: bool = Field(description="수정할 때 추가 정보가 필요한지 여부")
+    comment: str = Field(description=  "사용자가 알아야 할 주의점이 있을 때만 적어라(답변의 한계, 확인 권장 사항 등). 검증 과정이나 판정 근거 설명은 적지 마라. 없으면 빈 문자열." )
 
 # self-RAG 스타일 자체 검증: 문서+모델 지식으로 answer가 맞는지 판단하고
 # 수정 필요 여부/이유/추가 컨텍스트 필요 여부를 structured output으로 받는다
@@ -180,15 +201,17 @@ def verify(state: State) ->dict:
         다음 문서와 네가 알고 있는 지식을 종합해서 답이 맞는지 확인해줘.
         문서에 근거가 없더라도 네 지식으로 판단해도 돼.
         문서: {state.context}
+        fix_needed는 사실 오류, 질문과 불일치일 때만 True. 문서에 근거가 없어도 내용이 정확하면 False. 문서 연결 제안은 what_to_fix가 아니라 무시하라
     """),
     HumanMessage(f"질문: {state.question}\n\n답변: {state.answer}\n\n이 답변을 검증해줘."),
     ]
-    try: # generated_by를 이미 써본 모델로 등록
+    try: # generated_by를 이미 써본 모델로 등록, 다른 모델 시도
         answer, verified_by, disabled_models = invoke_with_fallback(state.model, messages, structured=verified,  
                                                                     models_skip=[state.generated_by],
                                                                     disabled_models=state.disabled_models)
     except RuntimeError: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
         print("다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증")
+
         try:
             answer, verified_by, disabled_models = invoke_with_fallback(state.generated_by, messages, structured=verified,
                                                                     disabled_models=state.disabled_models)
@@ -199,7 +222,12 @@ def verify(state: State) ->dict:
             "try_count" : state.try_count+1,
             "needs_more_context" : False,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
-            "disabled_models" : state.disabled_models+ [state.generated_by]
+            "disabled_models" : state.disabled_models+ [state.generated_by],
+            "comment" : state.comment+
+            f"""------
+                \n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략
+            """
+
             }
         
     # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
@@ -210,13 +238,19 @@ def verify(state: State) ->dict:
     print("수정 필요한가: "+str(fix_needed))
     print("고칠점: "+str(answer.what_to_fix))
 
-
     return {"fix_needed" : fix_needed,
             "what_to_fix" : answer.what_to_fix,
             "try_count" : state.try_count+1,
             "needs_more_context" : answer.needs_more_context,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
-            "disabled_models" : disabled_models
+            "disabled_models" : disabled_models,
+            "comment" : state.comment+
+            f"""------
+                \n {state.try_count+1}번째 verify 결과: {fix_needed}
+                {f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}
+                \n {verified_by} 모델로 verify됨
+                \n {answer.comment} 
+                """
             }
 
 
@@ -234,18 +268,46 @@ def route_by_fix(state: State) -> Literal["final_answer", "retrieve","generate"]
     else:
         return "generate"
 
-# 그래프의 종료 노드. limit에 걸려 강제 종료된 경우 실패 사유를 답변에 덧붙인다
+# 그래프의 종료 노드. 답변을 정리하고 limit에 걸려 강제 종료된 경우 실패 사유를 답변에 덧붙인다
+class final_answer_structure(BaseModel):
+    final_answer: str = Field(description=(
+        "질문에 대한 완결된 답변 본문. 사용자가 이것만 읽어도 충분한 최종 결과물이다."
+        "초안의 내용을 수정하거나 요약하지 말 것 — 분리만 하라." 
+        "판단 과정, 답변에 대한 자기 평가, 이전 답변·수정에 대한 언급, 문서/검색 출처 언급은 "
+        "절대 여기 넣지 마라 — 그런 내용은 전부 comment에 적어라."
+        "세계의 불확실성(미해결·논쟁)은 본문에, 너 자신의 불확실성(확신 부족·판단 과정)은 comment에"))
+    comment: str = Field(default="", description=(
+        "답변 본문이 아닌 모든 말을 적는 곳. 예: 확신이 낮은 부분과 그 이유, "
+        "검증 지적을 반영했는지/기각했는지와 그 판단, 참고 자료의 한계, 사용자가 알아야 할 주의점. "
+        "이 내용은 버려지지 않고 답변과 함께 사용자에게 별도 표시된다. 적을 것이 없으면 빈 문자열."))
+    
 def final_answer(state: State) ->dict:
     print("-----최종답변-----")
-    if state.fix_needed:
-        answer_f=f"limit:{state.try_count} 내에 적합한 답변 도출 불가능 \n {state.answer} \n 발견된 문제점: {state.what_to_fix}"
-        print("최종답변: "+answer_f)
-        return {"answer" : answer_f}
+    if state.try_count == 1:  #final answer 분리할 필요 없음
+        return {"answer": state.answer, "comment" : state.comment}
+    
+    messages = [
+        SystemMessage(content=
+            "너는 답변 편집자다. 주어진 초안을 두 부분으로 분리해라: "
+            "final_answer는 질문에 대한 완결된 답변 본문, "
+            "comment는 본문이 아닌 모든 말(자기 평가, 판단 과정, 수정 이력 언급, 주의사항). "
+            "문장을 수정·요약·재작성하지 말고 그대로 옮겨 담기만 해라. 질문에 새로 답하지 마라."),
+        HumanMessage(content=f"질문: {state.question}\n\n초안:\n{state.answer}"),
+    ]
 
-    else:
-        print("최종답변: "+state.answer)
-        return {"answer": state.answer}
-
+    try:
+        answer, _, _ = invoke_with_fallback(state.generated_by, messages, structured=final_answer_structure,  
+                                                                    disabled_models=state.disabled_models)
+        if state.fix_needed:
+            answer_f=f"\nlimit:{state.try_count} 내에 적합한 답변 도출 불가능 \n 남은 문제점: {state.what_to_fix} \n limit/top_k 증가나 다른 모델 재시도 권장"
+            print("최종답변: "+ answer.final_answer)
+            return {"answer": answer.final_answer, "comment" : answer.comment+answer_f}
+        
+        else:
+            print("최종답변: "+ answer.final_answer)
+            return {"answer": answer.final_answer, "comment" : answer.comment}
+    except RuntimeError:
+        return {"answer": state.answer, "comment" : state.comment}
       
 # === 그래프 빌더 생성 === <-langchain의 chain과 동격
 graph = StateGraph(State) # 상태 스키마를 기반으로 그래프 빌더 생성
@@ -282,13 +344,15 @@ graph.add_edge("final_answer", END)
 # === 컴파일 ===
 app = graph.compile()    # 빌더를 실행 가능한 그래프로 변환
 
-# === 실행 ===
-#end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"})["answer"]
-#print(end_answer)
+if __name__ == "__main__":
+    # === 실행 ===
+    end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"})["answer"]
+    print(end_answer)
 
-# === 시각화용 그래프 구조 객체 가져오기 ===
-#graph_view = app.get_graph()
+    # === 시각화용 그래프 구조 객체 가져오기 ===
+    print("----------")
+    graph_view = app.get_graph()
 
-# === 형식 1: Mermaid 텍스트 출력 ===
-#mermaid_text = graph_view.draw_mermaid()
-#print(mermaid_text)
+    # === 형식 1: Mermaid 텍스트 출력 ===
+    mermaid_text = graph_view.draw_mermaid()
+    print(mermaid_text)
