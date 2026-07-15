@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
-from google.api_core.exceptions import ResourceExhausted
+from google.api_core.exceptions import ResourceExhausted, PermissionDenied  # PermissionDenied: 결제 계정 정지 등으로 403 뜰 때
 from anthropic import RateLimitError
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from openai import APIConnectionError  # 로컬 llama-server가 꺼져 있을 때 나는 접속 에러
@@ -71,7 +71,7 @@ def invoke_with_fallback(model,
     try:
         print(f"LLM 모델 사용: {primary_name}")
         return primary.invoke(messages), primary_name, disabled_models
-    except (ResourceExhausted, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError, 
+    except (ResourceExhausted, PermissionDenied, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError,
             BadRequestError, LengthFinishReasonError):
         exc_type, exc_value, _ = sys.exc_info()
         error_msg = traceback.format_exception_only(exc_type, exc_value)[0].strip()

@@ -60,9 +60,16 @@ def generate(state: State) -> dict:
     print("---"+str(state.try_count+1)+"번째 시도---")
 
     system = SystemMessage(content=f"""
-        다음 문서를 참고해서 답해줘. 문서에 없는 내용은 검색 tool을 사용해.
-        {"(지금은 사용 가능한 검색 tool이 없다. 문서와 네 지식만으로 답해.)" if len(state.disabled_tools) >= len(tool_map) else ""}
-        문서: {state.context}
+        너는 물리학 지식을 갖춘 어시스턴트다. 질문에는 네가 이미 알고 있는 지식을 우선으로 답해라.
+        아래 문서와 tool 결과는 참고 자료일 뿐이다 — 네 지식이 확실하면 그대로 답하고,
+        문서 내용이 틀렸거나 질문과 무관하면 무시해라. 네 지식만으로 부족하거나
+        최신·구체적 사실 확인이 필요할 때만 검색 tool을 사용해라.
+        {"(지금은 사용 가능한 검색 tool이 없다. 네 지식만으로 답해.)" if len(state.disabled_tools) >= len(tool_map) else ""}
+
+        최종 답변에는 "문서에 따르면", "제공된 자료에서" 같은 출처 언급이나 판단 과정 설명 없이,
+        질문에 대한 답만 간결하게 제시해라.
+
+        참고 문서: {state.context}
     """)
 
     history = state.messages  # 메세지 불러오기
@@ -70,8 +77,7 @@ def generate(state: State) -> dict:
     if not history:  # 첫 진입: 질문을 이력에 등록
         new_msgs.append(HumanMessage(content=state.question))
     if state.fix_needed and state.what_to_fix:  # verify가 되돌린 재시도: 지적사항을 대화로 전달
-        new_msgs.append(HumanMessage(content=f"이전 답변에서 고칠 부분: {state.what_to_fix}\n반영해서 다시 답해줘."))
-
+        new_msgs.append(HumanMessage(content=f"참고: 이전 답변에 대한 검증 의견 — {state.what_to_fix}\n타당하면 반영하고, 아니면 네 판단을 유지해도 된다. 최종 답변만 다시 제시해."))
     # 서킷 브레이커: disabled 제외한 tool만 바인딩
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
@@ -160,8 +166,8 @@ def run_tools(state: State) -> dict:
 
 # verify 단계에서 모델이 이 스키마 형태(structured output)로 답변을 채워서 반환
 class verified(BaseModel):
-    fix_needed: bool = Field(description="answer가 수정이 필요한지 여부")
-    what_to_fix: str = Field(description="고쳐야 하는 부분들")
+    fix_needed: bool = Field(description="answer가 수정이 필요한지 여부. what_to_fix에 뭔가 적었다면 반드시 True여야 한다.")
+    what_to_fix: str = Field(description="고쳐야 하는 부분들. 문제가 없으면 반드시 빈 문자열로 남겨라 — 사소한 코멘트라도 여기 적으면 fix_needed는 True로 간주된다.")
     needs_more_context: bool = Field(description="수정할 때 추가 정보가 필요한지 여부")
 
 # self-RAG 스타일 자체 검증: 문서+모델 지식으로 answer가 맞는지 판단하고
@@ -196,12 +202,16 @@ def verify(state: State) ->dict:
             "disabled_models" : state.disabled_models+ [state.generated_by]
             }
         
+    # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
+    # 필드 간 불일치에 대한 안전망 — false negative(고칠 게 있는데 통과)가 false positive보다 위험
+    fix_needed = answer.fix_needed or bool(answer.what_to_fix.strip())
+
     print("verify에 사용된 모델:", verified_by)
-    print("수정 필요한가: "+str(answer.fix_needed))
+    print("수정 필요한가: "+str(fix_needed))
     print("고칠점: "+str(answer.what_to_fix))
 
 
-    return {"fix_needed" : answer.fix_needed,
+    return {"fix_needed" : fix_needed,
             "what_to_fix" : answer.what_to_fix,
             "try_count" : state.try_count+1,
             "needs_more_context" : answer.needs_more_context,
