@@ -153,7 +153,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 
 날짜별 상세 이력·계획은 **[RoadMap.md](RoadMap.md)** 참고. 요약:
 
-- **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 평가 시스템 + 비교 실험 (bare Qwen 0.132 → graph+Qwen 0.445 등)
+- **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 출력 이원화(answer/comment), 평가 시스템 + 비교 실험 — 약한 모델은 3.4배 구제(0.132→0.445), **강한 모델도 개선(bare claude 0.915 → graph 0.926, 단일 실행)**
 - **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선
 - **예정**: 단기기억·쓰레드 → HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 학습 데이터 확장·2차 파인튜닝
 
