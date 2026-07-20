@@ -66,11 +66,21 @@ def invoke_with_fallback(model,
         primary = primary.bind_tools(tools)
 
     if structured:
-        primary = primary.with_structured_output(structured)
-    
+        # include_raw=True가 없으면 파싱된 스키마 객체만 돌아와서 usage_metadata(토큰 수)에
+        # 접근할 방법이 없어짐 — raw(AIMessage)도 같이 받아서 토큰만 뽑아내고, 호출부에는
+        # 기존처럼 파싱된 객체만 넘겨 구조 변경이 새지 않게 한다 (generated_by와 같은 패턴)
+        primary = primary.with_structured_output(structured, include_raw=True)
+
     try:
         print(f"LLM 모델 사용: {primary_name}")
-        return primary.invoke(messages), primary_name, disabled_models
+        result = primary.invoke(messages)
+        if structured:
+            response = result["parsed"]
+            tokens_used = result["raw"].usage_metadata
+        else:
+            response = result
+            tokens_used = result.usage_metadata
+        return response, primary_name, disabled_models, tokens_used
     except (ResourceExhausted, PermissionDenied, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError,
             BadRequestError, LengthFinishReasonError):
         exc_type, exc_value, _ = sys.exc_info()

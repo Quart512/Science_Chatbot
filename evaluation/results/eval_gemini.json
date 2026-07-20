@@ -1,0 +1,185 @@
+[
+  {
+    "question": "원자란 무엇인가?",
+    "answer": "모든 물질을 구성하는 작은 입자로, 양성자와 중성자로 이루어진 핵과 그 주변의 전자로 구성됨",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "원자는 물질을 구성하는 가장 기본적인 단위로, 원자핵(양성자와 중성자로 구성)과 그 주위를 도는 전자로 이루어져 있습니다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "원자의 화학적 정체성을 결정하는 것은?",
+    "answer": "핵 속의 양성자 수",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "원자핵 속 양성자의 수, 즉 **원자 번호**입니다.",
+    "generated_by": "gemini",
+    "score": 1.0
+  },
+  {
+    "question": "온도와 원자 운동의 관계는?",
+    "answer": "온도가 높을수록 원자가 더 빠르게 운동함",
+    "category": "atomic",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "온도는 원자(또는 분자)의 **평균 운동 에너지**의 척도입니다.\n\n*   **온도가 높을수록** 원자 운동이 **활발해지고** (더 빠르고 격렬하게 움직임).\n*   **온도가 낮을수록** 원자 운동이 **둔해집니다** (더 느리고 약하게 움직임).",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "원자는 대부분 빈 공간인데, 왜 물체는 서로 통과하지 못하는가?",
+    "answer": "전자 구름 사이의 전자기적 반발과 파울리 배타 원리 때문에 원자들이 일정 거리 이하로 겹칠 수 없기 때문",
+    "category": "atomic",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "원자는 대부분 빈 공간이지만, 물체가 서로 통과하지 못하는 것은 **원자 바깥의 전자들이 강한 전자기력으로 서로 밀어내기 때문**입니다. 이 전자기적 반발력이 물리적인 장벽 역할을 합니다.",
+    "generated_by": "gemini",
+    "score": 0.75
+  },
+  {
+    "question": "원자핵의 질량은 왜 구성 핵자들의 질량 합보다 작은가?",
+    "answer": "핵자들이 결합할 때 결합에너지만큼 질량이 줄어들기 때문 (질량 결손, E=mc²). 이 차이가 핵융합·핵분열 에너지의 원천",
+    "category": "atomic",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "**질량 결손** 때문입니다.\n\n핵자들이 결합하여 원자핵을 형성할 때, 일부 질량이 **결합 에너지**로 변환되어 방출되기 때문입니다. 이 질량 감소는 아인슈타인의 질량-에너지 등가원리(E=mc²)에 따라 핵을 묶어주는 에너지로 나타납니다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "뉴턴의 운동 제2법칙은 무엇인가?",
+    "answer": "물체에 작용하는 알짜힘은 질량과 가속도의 곱과 같다 (F = ma)",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "뉴턴의 운동 제2법칙은 **물체의 가속도가 그 물체에 작용하는 알짜힘에 비례하고 물체의 질량에 반비례하며, 가속도의 방향은 알짜힘의 방향과 같다**는 것입니다.\n\n수식으로는 **F=ma**로 표현됩니다.\n(F: 힘, m: 질량, a: 가속도)",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "에너지 보존 법칙이란?",
+    "answer": "고립계에서 에너지는 형태가 바뀔 뿐 총량은 변하지 않음",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "에너지 보존 법칙은 **에너지가 생성되거나 소멸되지 않고, 단지 한 형태에서 다른 형태로 전환될 뿐**이라는 원리입니다.\n\n따라서 **고립계(외부와 에너지 교환이 없는 계) 내의 총 에너지 양은 항상 일정하게 보존**됩니다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "관성이란 무엇인가?",
+    "answer": "외부 힘이 없으면 물체가 현재의 운동 상태를 유지하려는 성질",
+    "category": "mechanics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "관성은 물체가 외부 힘이 작용하지 않는 한, 현재의 운동 상태(정지 또는 등속 직선 운동)를 그대로 유지하려는 성질입니다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "무거운 물체와 가벼운 물체가 진공에서 같이 떨어지는 이유는?",
+    "answer": "중력은 질량에 비례하지만 가속도는 질량에 반비례하므로(a = F/m) 질량이 상쇄되어 모든 물체의 낙하 가속도가 같아짐. 관성질량과 중력질량이 같다는 등가원리의 표현",
+    "category": "mechanics",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "진공에서는 공기 저항이 없으므로, 질량과 관계없이 모든 물체에 작용하는 중력 가속도가 동일하기 때문입니다.",
+    "generated_by": "gemini",
+    "score": 0.75
+  },
+  {
+    "question": "뇌터 정리(Noether's theorem)가 말하는 것은?",
+    "answer": "물리계의 연속적인 대칭성마다 보존 법칙이 하나씩 대응됨. 시간 병진 대칭 → 에너지 보존, 공간 병진 대칭 → 운동량 보존, 회전 대칭 → 각운동량 보존",
+    "category": "mechanics",
+    "difficulty": "advanced",
+    "unsolved": false,
+    "prediction": "뇌터 정리는 **물리계의 연속적인 대칭성(continuous symmetry)마다 그에 상응하는 보존량(conserved quantity)이 존재한다**는 것을 말합니다.\n\n예를 들어:\n*   **시간 대칭성** (시간이 흘러도 물리 법칙이 변하지 않음)은 **에너지 보존**과 연결됩니다.\n*   **공간 대칭성** (공간의 위치가 바뀌어도 물리 법칙이 변하지 않음)은 **운동량 보존**과 연결됩니다.\n*   **회전 대칭성** (회전해도 물리 법칙이 변하지 않음)은 **각운동량 보존**과 연결됩니다.",
+    "generated_by": "gemini",
+    "score": 0.95
+  },
+  {
+    "question": "빛의 본질은 무엇인가?",
+    "answer": "전기장과 자기장이 서로를 유도하며 진행하는 전자기파이며, 동시에 광자라는 입자의 성질도 가짐",
+    "category": "electromagnetism",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "빛의 본질은 **파동과 입자의 이중성**을 지닌다는 것입니다.\n\n전자기파의 일종으로 파동처럼 행동하면서도, 동시에 **광자(photon)**라는 양자화된 에너지 덩어리(입자)의 흐름으로도 존재합니다.",
+    "generated_by": "gemini",
+    "score": 0.85
+  },
+  {
+    "question": "전하 사이에 작용하는 힘은?",
+    "answer": "같은 부호는 밀어내고 다른 부호는 끌어당기며, 거리의 제곱에 반비례함 (쿨롱 법칙)",
+    "category": "electromagnetism",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "정전기력 (또는 쿨롱 힘)",
+    "generated_by": "gemini",
+    "score": 0.7
+  },
+  {
+    "question": "자기장은 어떻게 만들어지는가?",
+    "answer": "움직이는 전하(전류) 또는 시간에 따라 변하는 전기장에 의해 생성됨. 영구자석의 자성도 전자의 운동과 스핀에서 비롯됨",
+    "category": "electromagnetism",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "자기장은 주로 두 가지 방식으로 만들어집니다.\n\n1.  **전하의 움직임 (전류):** 전기가 흐르는 도선 주변에 자기장이 생성됩니다. 이것이 전자기장의 기본 원리입니다.\n2.  **기본 입자의 고유 자기 모멘트:** 전자와 같은 기본 입자는 자체적으로 작은 자석처럼 행동하는 '스핀'이라는 고유한 자기 모멘트를 가집니다. 특정 물질 내에서 이 스핀들이 정렬될 때 영구 자석이 됩니다.",
+    "generated_by": "gemini",
+    "tokens_used": {
+      "input_tokens": 23,
+      "output_tokens": 1038,
+      "total_tokens": 1061,
+      "input_token_details": {
+        "cache_read": 0
+      },
+      "output_token_details": {
+        "reasoning": 925
+      }
+    },
+    "score": 0.85
+  },
+  {
+    "question": "전자기 유도란 무엇이며 왜 중요한가?",
+    "answer": "자기장의 변화가 회로에 기전력을 유도하는 현상 (패러데이 법칙). 발전기, 변압기 등 현대 전력 기술의 물리적 기반",
+    "category": "electromagnetism",
+    "difficulty": "intermediate",
+    "unsolved": false,
+    "prediction": "**전자기 유도**는 자기장의 변화가 도체에 전압(기전력)이나 전류를 유도하는 현상입니다.\n\n**중요성**은 현대 전력 생산의 핵심 원리이며, 발전기, 변압기 등 대부분의 전기 장치의 기반이 되어 현대 문명을 가능하게 하는 근본적인 현상이기 때문입니다.",
+    "generated_by": "gemini",
+    "tokens_used": {
+      "input_tokens": 27,
+      "output_tokens": 1203,
+      "total_tokens": 1230,
+      "input_token_details": {
+        "cache_read": 0
+      },
+      "output_token_details": {
+        "reasoning": 1125
+      }
+    },
+    "score": 0.95
+  },
+  {
+    "question": "열역학 제2법칙이란?",
+    "answer": "고립계의 엔트로피(무질서도)는 시간이 지나도 감소하지 않음",
+    "category": "thermodynamics",
+    "difficulty": "basic",
+    "unsolved": false,
+    "prediction": "열역학 제2법칙은 **고립계의 총 엔트로피는 항상 증가하거나 일정하게 유지되며, 결코 감소하지 않는다**는 법칙입니다.",
+    "generated_by": "gemini",
+    "tokens_used": {
+      "input_tokens": 25,
+      "output_tokens": 888,
+      "total_tokens": 913,
+      "input_token_details": {
+        "cache_read": 0
+      },
+      "output_token_details": {
+        "reasoning": 852
+      }
+    },
+    "score": 0.95
+  }
+]

@@ -23,12 +23,25 @@ from retrieval import vectorstore
 # =========================================================
 
 
+# 여러 노드에 걸쳐 tokens_used를 계속 더해 넣을 때 쓰는 헬퍼.
+# current(state.tokens_used)는 Pydantic default_factory가 키를 보장해주지만,
+# new(LLM provider가 반환한 usage_metadata)는 우리가 통제 못 하는 외부 값이라
+# 키가 다르거나 없을 수 있음 — 그래서 new 쪽을 위해 .get(...,0)으로 방어.
+# 합집합이 아니라 이 세 스칼라 키만 골라서 더한다 — provider별로 딸려오는
+# input_token_details(dict) 같은 중첩 세부 항목까지 합치려 하면 int+dict로 터짐
+TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
+
+def _add_tokens(current: dict, new: dict) -> dict:
+    return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
+
+
 #LangGraph State 구성 - 그래프 전체 노드가 공유하는 상태
 class State(BaseModel):
-    question: str 
+    question: str
     context: list[Document] = Field(default_factory=list)
     answer: str = Field(default="")
     comment: str = ""
+    tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     fix_needed: bool = False
     what_to_fix: str = ""
     needs_more_context: bool = False
@@ -43,7 +56,6 @@ class State(BaseModel):
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-
 
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
@@ -86,9 +98,9 @@ def generate(state: State) -> dict:
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
-    response, generated_by, disabled_models= invoke_with_fallback(state.model, 
+    response, generated_by, disabled_models, tokens_used = invoke_with_fallback(state.model,
                                                                 [system] + history + new_msgs,
-                                                                tools=active_tools, 
+                                                                tools=active_tools,
                                                                 disabled_models=state.disabled_models)
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
@@ -106,13 +118,14 @@ def generate(state: State) -> dict:
     return {"messages": new_msgs + [response], 
             "answer": answer, 
             "fix_needed": False, 
-            "generated_by": generated_by, 
+            "generated_by": generated_by,
             "disabled_models": disabled_models,
+            "tokens_used": _add_tokens(state.tokens_used, tokens_used),
             "comment" : state.comment+
             f"""------
                 \n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}
                 {f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}
-            """ 
+            """
             }
 
 
@@ -206,14 +219,14 @@ def verify(state: State) ->dict:
     HumanMessage(f"질문: {state.question}\n\n답변: {state.answer}\n\n이 답변을 검증해줘."),
     ]
     try: # generated_by를 이미 써본 모델로 등록, 다른 모델 시도
-        answer, verified_by, disabled_models = invoke_with_fallback(state.model, messages, structured=verified,  
+        answer, verified_by, disabled_models, tokens_used = invoke_with_fallback(state.model, messages, structured=verified,
                                                                     models_skip=[state.generated_by],
                                                                     disabled_models=state.disabled_models)
     except RuntimeError: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
         print("다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증")
 
         try:
-            answer, verified_by, disabled_models = invoke_with_fallback(state.generated_by, messages, structured=verified,
+            answer, verified_by, disabled_models, tokens_used = invoke_with_fallback(state.generated_by, messages, structured=verified,
                                                                     disabled_models=state.disabled_models)
         except RuntimeError: # 차순위도 실패->검증 생략
             print("차순위도 실패->검증 생략")
@@ -244,6 +257,7 @@ def verify(state: State) ->dict:
             "needs_more_context" : answer.needs_more_context,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : disabled_models,
+            "tokens_used": _add_tokens(state.tokens_used, tokens_used),
             "comment" : state.comment+
             f"""------
                 \n {state.try_count+1}번째 verify 결과: {fix_needed}
@@ -296,16 +310,17 @@ def final_answer(state: State) ->dict:
     ]
 
     try:
-        answer, _, _ = invoke_with_fallback(state.generated_by, messages, structured=final_answer_structure,  
+        answer, _, _, tokens_used = invoke_with_fallback(state.generated_by, messages, structured=final_answer_structure,
                                                                     disabled_models=state.disabled_models)
+        total_tokens = _add_tokens(state.tokens_used, tokens_used)
         if state.fix_needed:
             answer_f=f"\nlimit:{state.try_count} 내에 적합한 답변 도출 불가능 \n 남은 문제점: {state.what_to_fix} \n limit/top_k 증가나 다른 모델 재시도 권장"
             print("최종답변: "+ answer.final_answer)
-            return {"answer": answer.final_answer, "comment" : answer.comment+answer_f}
-        
+            return {"answer": answer.final_answer, "comment" : answer.comment+answer_f, "tokens_used": total_tokens}
+
         else:
             print("최종답변: "+ answer.final_answer)
-            return {"answer": answer.final_answer, "comment" : answer.comment}
+            return {"answer": answer.final_answer, "comment" : answer.comment, "tokens_used": total_tokens}
     except RuntimeError:
         return {"answer": state.answer, "comment" : state.comment}
       

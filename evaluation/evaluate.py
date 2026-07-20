@@ -65,7 +65,7 @@ def _graph_target(invoke_kwargs: dict):
     from graph import app
     def _run(q: str):
         result = app.invoke({"question": q, **invoke_kwargs})
-        return result["answer"], {"generated_by": result.get("generated_by", "")}
+        return result["answer"], {"generated_by": result.get("generated_by", ""), "tokens_used": result.get("tokens_used")}
     return _run
 
 
@@ -110,8 +110,12 @@ def make_target(name: str):
     else:
         raise ValueError(f"알 수 없는 target: {name}")
 
-    return lambda q: (llm.invoke(f"질문에 간결하고 정확하게 답해줘.\n질문: {q}").content, {"generated_by": name})
+    #질문 주면 LLM 돌려서 답변 등 주는 함수 반환
+    def _run(q):
+        response = llm.invoke(f"질문에 간결하고 정확하게 답해줘.\n질문: {q}")
+        return response.content, {"generated_by": name, "tokens_used": response.usage_metadata}
 
+    return _run
 
 # judge는 항상 claude-haiku로 고정 — 평가 대상(gemini/claude/Qwen-tuned)과 겹치면
 # 자기 자신이 낸 답을 자기가 채점하는 경우가 생길 수 있긴 함.
@@ -166,6 +170,7 @@ def run_evaluation(target_fn, save_name: str) -> list[dict]:
         if item["question"] in done_questions:
             continue #건너뛰기
         try:
+            #실제 함수 돌리기
             prediction, meta = target_fn(item["question"])
             score = judge(item["question"], item["answer"], prediction, item["unsolved"])
         except QUOTA_ERRORS as e:
@@ -214,7 +219,8 @@ if __name__ == "__main__": # 직접 실행할때만 동작
     save_name = args.name or args.target  # --name 생략 시 target 이름으로 저장
 
     print(f"=== 평가 대상: {args.target} (저장: {save_name}) ===")
-    rows = run_evaluation(make_target(args.target), save_name)
+    target = make_target(args.target) #target = 질문 주면 llm을 실행해서 정보를 받을 함수
+    rows = run_evaluation(target, save_name)
 
     dataset_len = len(load_eval_dataset())
     if len(rows) < dataset_len:
