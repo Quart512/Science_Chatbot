@@ -26,6 +26,8 @@
 | 07-15 | verify 판정 기준 수정 | fix_needed는 사실 오류만(문서 근거성 아님), verify에 comment 배출구 추가 — "정확하다면서 반려"로 3라운드 낭비 + 프리앰블 유발하던 연쇄 차단 |
 | 07-15 | 출력 이원화 (answer/comment) | 사용자에겐 둘 다, 평가는 answer만. final_answer 노드에서 재시도 케이스만 structured 분리(평시 추가 호출 0), 시스템 comment(limit 도달·fallback 고지)는 코드가 작성. limit 실패 실전 케이스에서 "정직한 실패" 고지 확인. 추출자는 generated_by 유지 결정(토큰 절약 목적 존중) |
 | 07-15 | **최종 재평가 — bare 역전** | 수정 전부 반영한 graph(claude 고정) **0.926 > bare claude 0.915** — 파이프라인이 강한 모델도 개선함을 최초 확인 (electromagnetism 0.700→0.943, open_problem 0.707→0.907). 단일 실행이라 신뢰도 단서 있음, 반복 실험은 예정 |
+| ~07-19 | 10주차 과제 — 서버 관찰 | 유닉스 명령어로 서버 프로세스·스레드·메모리 분석 + WireShark로 /query HTTP 통신 캡처 — 평문 노출 직접 확인 (docs/README_10.md) |
+| 07-20 | **단기기억 + 쓰레드** | MemorySaver checkpointer + thread_id(FastAPI 필드, 미지정 시 uuid). **reset_turn 노드**로 턴 경계 확립(messages만 보존, 임시 상태 전부 초기화) + generate 질문 등록 조건을 try_count 기준으로 교체. verify에 모호 질문 명확화 기준 추가, tokens_used 추적 추가 |
 
 ## 🔄 진행 중
 
@@ -40,7 +42,9 @@
 |---|---|---|
 |  | 동일 답 조기 종료 | 재시도 답변이 이전과 같으면 verify 재호출 없이 final_answer 직행 — 지적을 반영 못 하는 모델(Qwen 4연속 동일 답)에서 verify 쿼터 낭비 방지 |
 |  | model_map temperature=0 고정 | verify 판정 비결정성(동일 입력에 판정 뒤집힘) 대응 — 실험 재현성 |
-|  | 단기기억 + 쓰레드 | `MemorySaver` checkpointer, thread_id를 FastAPI 요청 필드로 — 유저별 세션 분리. messages 필드가 이미 준비되어 있어 진입 비용 낮음 |
+|  | 메시지 트리밍 | 멀티턴에서 messages 무한 성장 → 긴 대화의 generate 비용 관리 (tokens_used로 성장 측정 가능) |
+|  | 후속 질문 재작성 | "그거 더 자세히" 같은 후속 질문이 그대로 벡터 검색어가 되는 문제 — 대화 맥락 기반 검색 질의 재작성 |
+|  | SqliteSaver 영속화 | MemorySaver는 프로세스 메모리(재시작 시 소멸) → 디스크 영속화 |
 |  | HITL | `interrupt_before=["run_tools"]` — 안전 가드레일·논문 구매 승인 메커니즘의 예행연습 |
 |  | 프론트엔드 | Streamlit 등 간이 UI (단기기억+쓰레드 안정화 후) |
 |  | tool 정비 | wikipedia-api 기반 커스텀 tool(wikipedia 패키지 신뢰성 문제 대체), WolframAlpha 수식 검증 tool, arxiv API 이슈 해결 |

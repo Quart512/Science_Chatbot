@@ -13,6 +13,9 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from models import invoke_with_fallback
 from tool import tools_list, tool_map
 from retrieval import vectorstore
+
+from langgraph.checkpoint.memory import MemorySaver
+
 # =========================================================
 # Self-RAG 스타일 에이전틱 RAG 그래프
 #   retrieve(검색) -> generate(답변 생성) -(tool_calls 있으면)-> tools(실행) -> generate 루프
@@ -57,6 +60,24 @@ class State(BaseModel):
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
 
+#멀티턴 대비 초기화(messages 제외)
+def reset_turn(state: State) -> dict:
+    return{
+        "context": [],
+        "answer": "",
+        "comment": "",
+        "tokens_used": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "fix_needed": False,
+        "what_to_fix": "",
+        "needs_more_context": False,
+        "try_count": 0,
+        "generated_by": "",
+        "disabled_models": [],
+        "tool_rounds": 0, # 이번 답변 시도에서 tools 노드를 돈 횟수
+        "tool_failures": {}, # tool별 연속 실패 횟수
+        "disabled_tools":[] # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
+        }
+
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
     if state.try_count==0:
@@ -90,7 +111,7 @@ def generate(state: State) -> dict:
 
     history = state.messages  # 메세지 불러오기
     new_msgs = []
-    if not history:  # 첫 진입: 질문을 이력에 등록
+    if state.try_count==0:  # 첫 진입: 질문을 이력에 등록
         new_msgs.append(HumanMessage(content=state.question))
     if state.fix_needed and state.what_to_fix:  # verify가 되돌린 재시도: 지적사항을 대화로 전달
         new_msgs.append(HumanMessage(content=f"참고: 이전 답변에 대한 검증 의견 — {state.what_to_fix}\n타당하면 반영하고, 아니면 네 판단을 유지해도 된다. 최종 답변만 다시 제시해."))
@@ -215,6 +236,7 @@ def verify(state: State) ->dict:
         문서에 근거가 없더라도 네 지식으로 판단해도 돼.
         문서: {state.context}
         fix_needed는 사실 오류, 질문과 불일치일 때만 True. 문서에 근거가 없어도 내용이 정확하면 False. 문서 연결 제안은 what_to_fix가 아니라 무시하라
+        질문이 대화 맥락상 답할 수 없을 만큼 불완전하거나 모호하고(예: 요약할 대상이 이 대화에 없음), 답변이 그 점을 지적하며 명확화를 요청했다면 이는 정확한 대응이므로 fix_needed는 False.
     """),
     HumanMessage(f"질문: {state.question}\n\n답변: {state.answer}\n\n이 답변을 검증해줘."),
     ]
@@ -328,7 +350,8 @@ def final_answer(state: State) ->dict:
 graph = StateGraph(State) # 상태 스키마를 기반으로 그래프 빌더 생성
 
 # === 노드 등록 ===
-graph.add_node("retrieve", retrieve) # 이름, 함수
+graph.add_node("reset_turn", reset_turn) # 이름, 함수
+graph.add_node("retrieve", retrieve)
 graph.add_node("generate", generate)
 graph.add_node("run_tools", run_tools)
 graph.add_node("verify", verify)
@@ -336,7 +359,8 @@ graph.add_node("final_answer", final_answer)
 
 
 # === 엣지 연결 ===
-graph.add_edge(START, "retrieve")
+graph.add_edge(START, "reset_turn")
+graph.add_edge("reset_turn", "retrieve")
 graph.add_edge("retrieve", "generate")
 graph.add_conditional_edges(   # generate → tool 요청 있으면 tools, 없으면 verify
 	"generate",
@@ -357,11 +381,12 @@ graph.add_edge("final_answer", END)
 
 
 # === 컴파일 ===
-app = graph.compile()    # 빌더를 실행 가능한 그래프로 변환
+memory = MemorySaver()
+app = graph.compile(checkpointer=memory) # 빌더를 실행 가능한 그래프로 변환
 
 if __name__ == "__main__":
     # === 실행 ===
-    end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"})["answer"]
+    end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"}, config={"configurable": {"thread_id": "test"}})["answer"]
     print(end_answer)
 
     # === 시각화용 그래프 구조 객체 가져오기 ===

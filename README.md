@@ -23,12 +23,13 @@
 ## 현재 구현 — Self-RAG 에이전트
 
 ```
-START → retrieve → generate ──(tool 요청)──→ run_tools ──→ generate (ReAct 루프)
-             ↑          └─(답변 완성)→ verify ──── 통과 ────→ final_answer → END
-             │                          ├── 수정 필요 → generate (재시도)
-             └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
+START → reset_turn → retrieve → generate ──(tool 요청)──→ run_tools ──→ generate (ReAct 루프)
+                          ↑          └─(답변 완성)→ verify ──── 통과 ────→ final_answer → END
+                          │                          ├── 수정 필요 → generate (재시도)
+                          └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
 ```
 
+- **reset_turn — 멀티턴 경계**: 매 요청 진입 시 임시 상태(try_count, fix_needed, comment, 서킷 브레이커 등)를 전부 초기화하되 **대화 이력(messages)만 보존** — checkpointer로 살아남은 이전 턴의 잔여 상태가 새 턴을 오염시키지 않게 하는 턴 경계선
 - **retrieve**: 벡터 검색 (기본 top_k=3). 재검색 시 벡터DB 문서는 교체하되 tool로 수집한 증거는 보존
 - **generate**: 대화 이력(`add_messages` reducer) 기반 답변 생성. tool이 필요하면 `tool_calls`만 요청 — 실행은 run_tools 노드 담당. 재시도 시 verify의 지적사항을 대화 메시지로 반영
 - **run_tools**: tool 실행 + 예외처리. 모든 tool_call에 반드시 ToolMessage로 응답(실패 포함) → LLM이 다음 라운드에 에러를 읽고 자가수정. 빈 결과·호출 실패·미등록 tool을 구분해 다른 힌트 제공, **연속 2회 실패한 tool은 해당 런에서 자동 제외(서킷 브레이커)**. 성공 결과는 Document로 변환해 RAG context에 병합
@@ -39,6 +40,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 
 ### 특징
 
+- **단기기억 (멀티턴 대화)**: `MemorySaver` checkpointer + `thread_id` — 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. (MemorySaver는 프로세스 메모리라 서버 재시작 시 소멸 — 영속화는 SqliteSaver로 예정)
 - **모델 선택 + fallback 체인**: `model_map`(gemini-2.5-flash / claude-haiku / **Qwen-tuned**)에서 요청별 선택, rate limit·접속 오류 시 남은 모델로 자동 전환. 실패한 모델은 `disabled_models`로 State에 기록되어 같은 요청 안에서는 재시도하지 않음 (노드를 넘나드는 모델 서킷 브레이커). 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음.
 
 2개 모델이 동시에 장애여도 3번째로 정상 응답 — 상세 로그: [docs/README_09.md](docs/README_09.md#장애-복원력-테스트)
@@ -114,7 +116,8 @@ POST /query
   "prompt": "파인만이 설명한 원자가 뭐야?",
   "top_k": 3,
   "limit": 4,
-  "model": "gemini"
+  "model": "gemini",
+  "thread_id": "user-123"
 }
 
 → {"answer": "...", "comment": "..."}
@@ -123,6 +126,7 @@ POST /query
 - `model`: `"gemini"` (기본값) / `"claude"` / `"Qwen-tuned"` (로컬 llama-server 필요)
 - `top_k`: 검색 문서 수 (기본값 3)
 - `limit`: 최대 verify 루프 횟수 (기본값 4)
+- `thread_id`: 대화 세션 식별자 — 같은 값으로 요청하면 이전 대화 맥락이 이어짐(단기기억). 생략 시 uuid 자동 발급(맥락 없는 단발 요청)
 - 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지 등. 정상 처리 시 comment는 비어 있을 수 있음
 
 ## 평가
@@ -155,7 +159,8 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 
 - **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 출력 이원화(answer/comment), 평가 시스템 + 비교 실험 — 약한 모델은 3.4배 구제(0.132→0.445), **강한 모델도 개선(bare claude 0.915 → graph 0.926, 단일 실행)**
 - **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선
-- **예정**: 단기기억·쓰레드 → HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 학습 데이터 확장·2차 파인튜닝
+- **완료(추가)**: 단기기억·쓰레드 — MemorySaver checkpointer + thread_id + reset_turn 턴 경계, 토큰 사용량 추적(tokens_used)
+- **예정**: 메시지 트리밍(긴 대화 토큰 관리) → 후속 질문 재작성(대화형 RAG 검색 품질) → SqliteSaver 영속화 → HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 학습 데이터 확장·2차 파인튜닝
 
 ## 데이터 & 감사
 
