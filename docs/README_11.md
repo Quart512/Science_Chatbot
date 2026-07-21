@@ -234,12 +234,17 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
       - name: 이미지 빌드 + push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: quart512/science-chatbot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: EC2 배포
         uses: appleboy/ssh-action@v1
@@ -265,6 +270,8 @@ jobs:
 
 - **워크플로우 파일 push 거부** (`refusing to allow a Personal Access Token to create or update workflow ... without workflow scope`): `.github/workflows/` 안의 파일은 자동 코드 실행이 가능하므로, 일반 코드 push 권한과 별도로 PAT에 `workflow` 스코프가 명시적으로 필요함 — 스코프 추가한 새 토큰 발급 후 재인증
 - **EC2 배포 단계 `dial tcp ***:22: i/o timeout`**: 인증 실패(`refused`)가 아니라 연결 자체가 안 된 것 — 원인은 보안 그룹 SSH(22) 소스를 "내 IP"로만 제한해뒀기 때문. GitHub Actions 호스티드 러너는 매번 다른(예측 불가능한) IP에서 접속하므로 특정 IP 화이트리스트로는 대응 불가 → SSH 소스를 Anywhere(0.0.0.0/0)로 변경. SSH는 비밀번호 인증이 꺼져있고 키 기반 인증만 허용되므로(무차별 대입 사실상 불가능), 소스 IP를 넓혀도 실질적 위험은 낮다고 판단(포트 8000의 앱 API는 반대로 자체 인증이 없어 IP 제한이 유일한 방어선이라 그대로 유지)
+- **이미지 빌드가 매번 의존성 전체(torch·nvidia-cuda 등 5GB+)를 처음부터 재설치**: 로컬(맥)에서 Dockerfile의 레이어 캐싱이 잘 작동했던 건 **같은 머신, 같은 Docker 데몬**이 이전 빌드의 레이어를 디스크에 들고 있었기 때문. 반면 GitHub 호스티드 러너는 워크플로우 실행마다 **완전히 새 가상머신**을 띄웠다가 종료 후 통째로 버림 — 이 머신 입장에선 "이전 빌드"라는 게 아예 존재한 적이 없어 캐시를 재사용할 대상 자체가 없음(`actions/checkout`을 매번 새로 해야 하는 것과 같은 이유). 해결책은 캐시를 GitHub 쪽에 영속적으로 저장해두는 것 — `build-push-action`에 `cache-from: type=gha` / `cache-to: type=gha,mode=max` 추가
+  - 부수적으로 발생한 에러: `Cache export is not supported for the docker driver` — 캐시 export는 기본 `docker` 드라이버가 아니라 `docker-container` 드라이버에서만 지원되므로, `docker/setup-buildx-action`으로 그 드라이버의 빌더 인스턴스를 먼저 만들어줘야 함(이 설정 단계 자체도 러너가 매번 새 VM이라 매 실행마다 반복되지만, 몇 초 내로 끝나는 가벼운 작업이라 캐시 저장/복원이 주는 이득에 비하면 무시할 만한 비용)
 
 ### 5.3 검증
 
