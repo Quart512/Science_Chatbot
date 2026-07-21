@@ -160,9 +160,10 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 날짜별 상세 이력·계획은 **[RoadMap.md](RoadMap.md)** 참고. 요약:
 
 - **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 출력 이원화(answer/comment), 평가 시스템 + 비교 실험 — 약한 모델은 3.4배 구제(0.132→0.445), **강한 모델도 개선(bare claude 0.915 → graph 0.926, 단일 실행)**
-- **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선, 11-1 Docker 패키징+Compose(science-chatbot/llama-server 분리, 로컬 검증 중)
 - **완료(추가)**: 단기기억·쓰레드 — MemorySaver checkpointer + thread_id + reset_turn 턴 경계, 토큰 사용량 추적(tokens_used)
-- **예정**: EC2 배포(11-2) → GitHub Actions CI/CD(11-3) → HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 메시지 트리밍 → 후속 질문 재작성 → SqliteSaver 영속화 → tool 정비 → 학습 데이터 확장·2차 파인튜닝
+- **완료(11주차)**: Docker 패키징+Compose(11-1, science-chatbot/llama-server 분리+profiles) → EC2 배포+외부 접근 검증(11-2) → GitHub Actions CI/CD(11-3, push 시 자동 빌드+배포) — 상세: [docs/README_11.md](docs/README_11.md), [DEPLOY.md](DEPLOY.md)
+- **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선
+- **예정**: HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 메시지 트리밍 → 후속 질문 재작성 → SqliteSaver 영속화 → tool 정비 → 학습 데이터 확장·2차 파인튜닝
 
 ## 데이터 & 감사
 

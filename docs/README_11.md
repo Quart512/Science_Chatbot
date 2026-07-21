@@ -4,7 +4,7 @@
 
 대상 프로젝트: `Science_Chatbot` — FastAPI(`science-chatbot`) + 파인튜닝 Qwen 모델 서빙(`llama-server`, 선택적 컨테이너)
 
-진행 상황: **(1) 완료** / **(2) 완료** — EC2 배포 + 외부 접근 검증까지 마침 / (3) 예정
+진행 상황: **(1) 완료** / **(2) 완료** — EC2 배포 + 외부 접근 검증까지 마침 / **(3) 완료** — GitHub Actions CI/CD 파이프라인 구축 및 검증까지 마침
 
 ---
 
@@ -211,10 +211,66 @@ science-chatbot-1  | INFO:     211.244.225.211:58866 - "POST /query HTTP/1.1" 20
 
 **AWS 콘솔에서 메모리·스왑 사용량이 안 보이는 이유**: EC2 기본 모니터링(CloudWatch)은 하이퍼바이저 바깥에서 관찰 가능한 지표(CPU, 네트워크, EBS I/O)만 기본 제공 — RAM·스왑 사용량은 게스트 OS 내부 상태라 별도 CloudWatch Agent 설치 없이는 AWS 쪽에서 안 보임. 지금처럼 SSH로 `free -h` 직접 확인하는 게 가장 간단한 방법.
 
-## 5. (예정) GitHub Actions CI/CD
+## 5. GitHub Actions CI/CD — 완료
 
-- [ ] push 시 이미지 빌드 → 레지스트리 push → EC2 배포(SSH) 워크플로우
-- [ ] `.env`/API 키는 GitHub Secrets로 관리, 절대 커밋 금지
+`.github/workflows/deploy.yml` — `main` push 시 자동으로 빌드→push→EC2 배포까지 실행:
+
+```yaml
+name: Deploy Science Chatbot
+
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Docker Hub 로그인
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 이미지 빌드 + push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: quart512/science-chatbot:latest
+
+      - name: EC2 배포
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/science-chatbot
+            docker compose pull
+            docker compose up -d
+```
+
+### 5.1 설계 포인트
+
+| 결정 | 이유 |
+|---|---|
+| `runs-on: ubuntu-24.04-arm` | 로컬 이미지가 Apple Silicon 맥에서 arm64로 빌드됐던 것과 동일하게, EC2(`t4g.micro`, arm64)와 아키텍처를 맞춰야 함. GitHub 기본 러너(`ubuntu-latest`)는 amd64라 그대로 쓰면 EC2에서 pull 후 실행 불가 — Public 저장소는 arm64 호스티드 러너가 무료(2025-08 GA)라 에뮬레이션(QEMU) 없이 네이티브로 빌드 |
+| `docker/build-push-action`에 `tags:` 명시 | `docker-compose.yml`의 `image:`는 `docker compose` 전용 설정이라, 이 액션(내부적으로 일반 `docker build`)은 compose 파일을 아예 읽지 않음 — 별도로 태그를 알려줘야 함 |
+| `secrets.*` | Docker Hub 인증정보·EC2 SSH 키를 코드에 직접 적지 않고 저장소 Settings → Secrets에 등록해 참조 |
+
+### 5.2 트러블슈팅
+
+- **워크플로우 파일 push 거부** (`refusing to allow a Personal Access Token to create or update workflow ... without workflow scope`): `.github/workflows/` 안의 파일은 자동 코드 실행이 가능하므로, 일반 코드 push 권한과 별도로 PAT에 `workflow` 스코프가 명시적으로 필요함 — 스코프 추가한 새 토큰 발급 후 재인증
+- **EC2 배포 단계 `dial tcp ***:22: i/o timeout`**: 인증 실패(`refused`)가 아니라 연결 자체가 안 된 것 — 원인은 보안 그룹 SSH(22) 소스를 "내 IP"로만 제한해뒀기 때문. GitHub Actions 호스티드 러너는 매번 다른(예측 불가능한) IP에서 접속하므로 특정 IP 화이트리스트로는 대응 불가 → SSH 소스를 Anywhere(0.0.0.0/0)로 변경. SSH는 비밀번호 인증이 꺼져있고 키 기반 인증만 허용되므로(무차별 대입 사실상 불가능), 소스 IP를 넓혀도 실질적 위험은 낮다고 판단(포트 8000의 앱 API는 반대로 자체 인증이 없어 IP 제한이 유일한 방어선이라 그대로 유지)
+
+### 5.3 검증
+
+`deploy.yml` push 자체가 트리거가 되어 워크플로우 실행 → 체크아웃/로그인/빌드+push/EC2 배포 4단계 전부 성공(`succeeded ... 4m 26s`). 이제 `main`에 push할 때마다 자동으로 EC2에 최신 이미지가 반영됨.
+
+![GitHub Actions 배포 성공](deploy_capture.png)
 
 ---
 
@@ -224,3 +280,4 @@ science-chatbot-1  | INFO:     211.244.225.211:58866 - "POST /query HTTP/1.1" 20
 - 다음 단계(EC2 배포)부터는 10주차에 직접 확인한 "HTTP는 평문"이라는 사실이 로컬 실습이 아니라 실제 공인망 노출 문제로 이어짐 — Security Group 설정 시 이 부분을 실질적 리스크로 다뤄야 함.
 - To Do List에 미리 적어뒀던 "프리티어 RAM 1GB — bge-m3 로드 위험"이 추측이 아니라 실제로 재현됨(`Exited 137`, OOM Killer). 사전에 위험을 문서화해뒀던 덕분에 원인 파악이 빨랐음 — 스왑 2GB 추가로 해결, 상세는 [DEPLOY.md](../DEPLOY.md) 2.2.1 참고.
 - EC2 실제 쿼리 로그를 들여다보다 `graph.py`의 사소한 로깅 버그 발견: `final_answer()`가 `try_count==1`(재시도 없이 첫 시도 통과)일 때는 지름길로 바로 `return`해서 `최종답변: ...` print가 없는 분기를 탐 — 재시도가 있었던 경우(else 분기)에만 그 print가 있었던 비일관성. RuntimeError 등 실제 오류는 아니었고(응답은 200 OK로 정상), 그 분기에도 print 추가해 수정.
+- 과제 11 세 항목(Docker 패키징, EC2 배포, CI/CD) 전부 완료. 두 번의 실패(EC2 배포 SSH timeout, PAT workflow scope 거부) 모두 "에러 메시지를 정확히 읽고 원인을 좁혀가는" 과정이었음 — 특히 `refused`(도달했지만 거부됨) vs `timeout`(아예 도달 못함)의 구분이 10주차 WireShark 학습과 그대로 이어져 실전에서 바로 진단에 쓰임.
