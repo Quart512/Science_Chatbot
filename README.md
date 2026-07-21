@@ -87,7 +87,7 @@ Python은 따로 설치하지 않아도 된다 — `uv sync`가 `pyproject.toml`
 
 ## 실행
 
-> 아래는 로컬 개발용 최소 실행법이다. EC2 등 서버 배포(빅뱅 방식/Docker 방식 둘 다)는 **[DEPLOY.md](DEPLOY.md)** 참고.
+> 아래는 로컬 개발용 최소 실행법이다. EC2 등 서버 배포(빅뱅 방식/Docker 방식 둘 다)는 **[DEPLOY.md](DEPLOY.md)** 참고. ⚠️ EC2 인스턴스를 중지 후 재시작하면 퍼블릭 IP가 바뀐다 — GitHub Actions를 쓴다면 `EC2_HOST` Secret도 같이 갱신해야 함(상세: DEPLOY.md 2.6).
 
 ```bash
 # 의존성 설치

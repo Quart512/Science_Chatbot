@@ -168,6 +168,7 @@ docker compose up -d   # 새 이미지로 컨테이너 재생성
 2. **컨테이너는 자동으로 안 켜짐** — 재접속 후 `cd ~/science-chatbot && docker compose up -d` 다시 실행
 3. **스왑은 그대로 유지됨** — `/etc/fstab`에 등록해뒀으므로 재설정 불필요
 4. **이미지·`.env`·`docker-compose.yml`은 EBS에 남아있음** — 재전송 불필요, RAM 상주 상태만 초기화됨
+5. **GitHub Actions CI/CD를 쓰는 경우, `EC2_HOST` Secret도 새 IP로 갱신해야 함** — 저장소 Settings → Secrets and variables → Actions → `EC2_HOST` → Update. 안 하면 다음 push 시 워크플로우의 SSH 배포 단계가 예전 IP로 접속을 시도하다 실패함. (근본 해결책은 Elastic IP로 고정하는 것 — 자동화 파이프라인이 있다면 이 시점부터 Elastic IP의 실익이 커짐)
 
 ## 참고
 
