@@ -1,6 +1,7 @@
 services:
   science-chatbot:
     build: .
+    image: quart512/science-chatbot:latest
     ports: 
       - "8000:8000"
     env_file:

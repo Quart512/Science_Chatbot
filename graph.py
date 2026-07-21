@@ -303,10 +303,10 @@ class final_answer_structure(BaseModel):
         "이 내용은 버려지지 않고 답변과 함께 사용자에게 별도 표시된다. 적을 것이 없으면 빈 문자열."))
     
 def final_answer(state: State) ->dict:
-    print("-----최종답변-----")
     if state.try_count == 1:  #final answer 분리할 필요 없음
         return {"answer": state.answer, "comment" : state.comment}
-    
+    print("-----최종답변-----")
+
     messages = [
         SystemMessage(content=
             "너는 답변 편집자다. 주어진 초안을 두 부분으로 분리해라: "
@@ -329,6 +329,7 @@ def final_answer(state: State) ->dict:
             print("최종답변: "+ answer.final_answer)
             return {"answer": answer.final_answer, "comment" : answer.comment, "tokens_used": total_tokens}
     except RuntimeError:
+        print("최종답변: "+ state.answer)
         return {"answer": state.answer, "comment" : state.comment}
       
 # === 그래프 빌더 생성 === <-langchain의 chain과 동격

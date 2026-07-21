@@ -87,6 +87,8 @@ Python은 따로 설치하지 않아도 된다 — `uv sync`가 `pyproject.toml`
 
 ## 실행
 
+> 아래는 로컬 개발용 최소 실행법이다. EC2 등 서버 배포(빅뱅 방식/Docker 방식 둘 다)는 **[DEPLOY.md](DEPLOY.md)** 참고.
+
 ```bash
 # 의존성 설치
 uv sync
