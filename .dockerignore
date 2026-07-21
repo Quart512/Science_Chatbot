@@ -3,6 +3,7 @@ docs/
 .venv/
 evaluation/results/
 .env
+.github/
 
 chroma_db/
 models/

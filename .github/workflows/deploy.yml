@@ -22,6 +22,8 @@ jobs:
           context: .
           push: true
           tags: quart512/science-chatbot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: EC2 배포
         uses: appleboy/ssh-action@v1
         with:
