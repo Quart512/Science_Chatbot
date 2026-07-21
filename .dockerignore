@@ -1,0 +1,9 @@
+docs/
+.git/
+.venv/
+evaluation/results/
+.env
+
+chroma_db/
+models/
+*.gguf

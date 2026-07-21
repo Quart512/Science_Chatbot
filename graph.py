@@ -143,10 +143,7 @@ def generate(state: State) -> dict:
             "disabled_models": disabled_models,
             "tokens_used": _add_tokens(state.tokens_used, tokens_used),
             "comment" : state.comment+
-            f"""------
-                \n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}
-                {f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}
-            """
+            f"""------\n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}"""
             }
 
 
@@ -211,10 +208,7 @@ def run_tools(state: State) -> dict:
             "disabled_tools": disabled,
             "tool_rounds": rounds + 1,
             "comment" : state.comment+
-            f"""------
-            \n {tool_msgs}
-            \n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}
-            """}
+            f"""------\n {tool_msgs}\n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}"""}
 
 
 # verify 단계에서 모델이 이 스키마 형태(structured output)로 답변을 채워서 반환
@@ -259,11 +253,7 @@ def verify(state: State) ->dict:
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : state.disabled_models+ [state.generated_by],
             "comment" : state.comment+
-            f"""------
-                \n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략
-            """
-
-            }
+            f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략"""}
         
     # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
     # 필드 간 불일치에 대한 안전망 — false negative(고칠 게 있는데 통과)가 false positive보다 위험
@@ -281,12 +271,7 @@ def verify(state: State) ->dict:
             "disabled_models" : disabled_models,
             "tokens_used": _add_tokens(state.tokens_used, tokens_used),
             "comment" : state.comment+
-            f"""------
-                \n {state.try_count+1}번째 verify 결과: {fix_needed}
-                {f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}
-                \n {verified_by} 모델로 verify됨
-                \n {answer.comment} 
-                """
+            f"""------\n {state.try_count+1}번째 verify 결과: {fix_needed}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}\n {verified_by} 모델로 verify됨\n {answer.comment} """
             }
 
 

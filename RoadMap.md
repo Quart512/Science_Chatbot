@@ -35,23 +35,24 @@
 |---|---|---|
 | 07-15~ | 베이스라인 완주 | gemini 쿼터 리필 대기 — bare gemini, graph(gemini-only)에서 역전 재현 확인 후 전체 비교표 완성 |
 | 07-15~ | 신뢰도 확보 | 0.915 vs 0.926 차이의 반복 실행 검증 (3회 이상 평균) |
+| 07-21~ | 11-1. Docker 패키징 + Compose | Dockerfile(uv, `uv sync --frozen`으로 uv.lock 그대로 재현) + docker-compose.yml(science-chatbot / llama-server 분리, `profiles`로 llama-server 선택 실행, 서비스명 기반 컨테이너 간 통신) 작성 완료 — 로컬 실행 검증 진행 중 |
 
 ## 📅 예정
 
 | 목표 시기 | 항목 | 내용 |
 |---|---|---|
-|  | 동일 답 조기 종료 | 재시도 답변이 이전과 같으면 verify 재호출 없이 final_answer 직행 — 지적을 반영 못 하는 모델(Qwen 4연속 동일 답)에서 verify 쿼터 낭비 방지 |
-|  | model_map temperature=0 고정 | verify 판정 비결정성(동일 입력에 판정 뒤집힘) 대응 — 실험 재현성 |
-|  | 메시지 트리밍 | 멀티턴에서 messages 무한 성장 → 긴 대화의 generate 비용 관리 (tokens_used로 성장 측정 가능) |
-|  | 후속 질문 재작성 | "그거 더 자세히" 같은 후속 질문이 그대로 벡터 검색어가 되는 문제 — 대화 맥락 기반 검색 질의 재작성 |
-|  | SqliteSaver 영속화 | MemorySaver는 프로세스 메모리(재시작 시 소멸) → 디스크 영속화 |
+|  | 11-2. EC2 배포 + 외부 접근 | 이미지 push(ECR/Docker Hub) → EC2 pull·실행, 보안그룹 8000 오픈. 프리티어 RAM 1GB 제약(bge-m3 로드 위험) — 스왑 설정/임베딩 대안 검토. 10주차에 확인한 HTTP 평문 노출이 공인망 리스크로 전환 — IP 제한·HTTPS 검토 |
+|  | 11-3. GitHub Actions CI/CD | push 시 이미지 빌드 → 레지스트리 push → EC2 배포(SSH/SSM) 자동화. 시크릿은 GitHub Secrets(.env 절대 커밋 금지). 완성되면 이후 모든 기능은 푸시만으로 자동 배포 |
 |  | HITL | `interrupt_before=["run_tools"]` — 안전 가드레일·논문 구매 승인 메커니즘의 예행연습 |
 |  | 프론트엔드 | Streamlit 등 간이 UI (단기기억+쓰레드 안정화 후) |
-|  | tool 정비 | wikipedia-api 기반 커스텀 tool(wikipedia 패키지 신뢰성 문제 대체), WolframAlpha 수식 검증 tool, arxiv API 이슈 해결 |
 |  | 멀티 에이전트 전환 1단계 | 현 그래프를 "물리 지식 에이전트" 서브그래프로 포장 (재작성 아님 — 컴파일된 그래프를 부모 그래프의 노드로) |
 |  | 멀티 에이전트 전환 2단계 | 오케스트레이터(Supervisor 패턴) → 문헌 학습·평가(Evaluator-Optimizer, arxiv 선행) → 논문 조달(HITL) → 가설 수립 → 실험 설계(Plan-and-Execute) → 번역 레이어 |
 |  | 장기기억 | VDB 메타데이터 필터링으로 user_id 태그 — 유저별 LTM 분리, 검증된 문헌의 LTM 승격 |
 |  | verify 구성 비교 실험 확장 | self / 교차 / 무 verify / 다중 모델 앙상블 — correctness·토큰·지연 지표로 체계화 (현재 부분 진행: Qwen self-verify vs claude-verify 완료) |
+|  | 메시지 트리밍 | 멀티턴에서 messages 무한 성장 → 긴 대화의 generate 비용 관리 (tokens_used로 성장 측정 가능) |
+|  | 후속 질문 재작성 | "그거 더 자세히" 같은 후속 질문이 그대로 벡터 검색어가 되는 문제 — 대화 맥락 기반 검색 질의 재작성 |
+|  | SqliteSaver 영속화 | MemorySaver는 프로세스 메모리(재시작 시 소멸) → 디스크 영속화 |
+|  | tool 정비 | wikipedia-api 기반 커스텀 tool(wikipedia 패키지 신뢰성 문제 대체), WolframAlpha 수식 검증 tool, arxiv API 이슈 해결 |
 |  | 학습 데이터 확장 | 45문항 → 파인만 강의록에서 대량 생성, 한국어 혼입(중국어 토큰) 대응, 데이터 비율 실험(논문 문어체 vs 평서문) |
 |  | 개인 모델 2차 학습 | 확장 데이터로 재파인튜닝 → 젬마 등 가중치 공개 모델과 비교 평가 |
 
