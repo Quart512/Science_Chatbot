@@ -180,6 +180,12 @@ science-chatbot-1  | INFO:     192.168.65.1:25935 - "POST /query HTTP/1.1" 200 O
 
 **결론: 컨테이너 간 통신, profiles 기반 선택적 기동, 기존 fallback/verify 로직 모두 Docker 환경에서 정상 동작 확인.** (답변 품질 자체는 1.5B 파인튜닝 모델의 한계이며 인프라 문제 아님)
 
+### 2.5 트러블슈팅 — Docker Desktop에 남아있던 옛 이미지
+
+로컬 이미지 목록에 낯선 이름 `science_chatbot-science-chatbot:latest`가 하나 더 있었음. `docker-compose.yml`에 `image: quart512/science-chatbot:latest`를 넣기 **전**, Compose가 자동으로 붙이는 기본 이름 규칙(`<프로젝트폴더명>-<서비스명>`)으로 빌드됐던 옛 이미지 — 그 키를 넣은 뒤로는 매번 `quart512/science-chatbot`으로만 태그된다.
+
+이 옛 이미지를 쓰던 컨테이너가 한동안 남아있었는데, 로컬에서 `--build`로 다시 빌드하면서 Compose가 컨테이너를 새 이미지로 교체하는 순간 자연스럽게 정리됨(Docker Hub 업로드 여부와는 무관 — 순수 로컬 이미지/컨테이너 이름 문제). Docker Desktop의 초록/흰 점은 "그 이미지로 뜬 컨테이너가 지금 있는지"만 나타내므로, 지금은 아무 컨테이너도 안 쓰니 `docker image rm`으로 안전하게 삭제 가능.
+
 ---
 
 ## 3. 이미지 레지스트리 — Docker Hub
@@ -281,17 +287,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Buildx 설정
-        uses: docker/setup-buildx-action@v3
-
       - name: 이미지 빌드 + push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: quart512/science-chatbot:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: EC2 배포
         uses: appleboy/ssh-action@v1
@@ -317,8 +318,10 @@ jobs:
 
 - **워크플로우 파일 push 거부** (`refusing to allow a Personal Access Token to create or update workflow ... without workflow scope`): `.github/workflows/` 안의 파일은 자동 코드 실행이 가능하므로, 일반 코드 push 권한과 별도로 PAT에 `workflow` 스코프가 명시적으로 필요함 — 스코프 추가한 새 토큰 발급 후 재인증
 - **EC2 배포 단계 `dial tcp ***:22: i/o timeout`**: 인증 실패(`refused`)가 아니라 연결 자체가 안 된 것 — 원인은 보안 그룹 SSH(22) 소스를 "내 IP"로만 제한해뒀기 때문. GitHub Actions 호스티드 러너는 매번 다른(예측 불가능한) IP에서 접속하므로 특정 IP 화이트리스트로는 대응 불가 → SSH 소스를 Anywhere(0.0.0.0/0)로 변경. SSH는 비밀번호 인증이 꺼져있고 키 기반 인증만 허용되므로(무차별 대입 사실상 불가능), 소스 IP를 넓혀도 실질적 위험은 낮다고 판단(포트 8000의 앱 API는 반대로 자체 인증이 없어 IP 제한이 유일한 방어선이라 그대로 유지)
-- **이미지 빌드가 매번 의존성 전체(torch·nvidia-cuda 등 5GB+)를 처음부터 재설치**: 로컬(맥)에서 Dockerfile의 레이어 캐싱이 잘 작동했던 건 **같은 머신, 같은 Docker 데몬**이 이전 빌드의 레이어를 디스크에 들고 있었기 때문. 반면 GitHub 호스티드 러너는 워크플로우 실행마다 **완전히 새 가상머신**을 띄웠다가 종료 후 통째로 버림 — 이 머신 입장에선 "이전 빌드"라는 게 아예 존재한 적이 없어 캐시를 재사용할 대상 자체가 없음(`actions/checkout`을 매번 새로 해야 하는 것과 같은 이유). 해결책은 캐시를 GitHub 쪽에 영속적으로 저장해두는 것 — `build-push-action`에 `cache-from: type=gha` / `cache-to: type=gha,mode=max` 추가
-  - 부수적으로 발생한 에러: `Cache export is not supported for the docker driver` — 캐시 export는 기본 `docker` 드라이버가 아니라 `docker-container` 드라이버에서만 지원되므로, `docker/setup-buildx-action`으로 그 드라이버의 빌더 인스턴스를 먼저 만들어줘야 함(이 설정 단계 자체도 러너가 매번 새 VM이라 매 실행마다 반복되지만, 몇 초 내로 끝나는 가벼운 작업이라 캐시 저장/복원이 주는 이득에 비하면 무시할 만한 비용)
+- **이미지 빌드가 매번 의존성 전체(torch·nvidia-cuda 등 5GB+)를 처음부터 재설치 — 시도했으나 포기함**: 로컬(맥)에서 Dockerfile의 레이어 캐싱이 잘 작동했던 건 **같은 머신, 같은 Docker 데몬**이 이전 빌드의 레이어를 디스크에 들고 있었기 때문. 반면 GitHub 호스티드 러너는 워크플로우 실행마다 **완전히 새 가상머신**을 띄웠다가 종료 후 통째로 버림 — 이 머신 입장에선 "이전 빌드"라는 게 아예 존재한 적이 없어 캐시를 재사용할 대상 자체가 없음.
+  - **1차 시도 — `cache-to: type=gha,mode=max`**: 캐시를 GitHub 쪽에 영속적으로 저장해두는 방식. 적용 과정에서 `Cache export is not supported for the docker driver` 에러가 나서(기본 `docker` 드라이버는 캐시 export 미지원) `docker/setup-buildx-action`으로 `docker-container` 드라이버를 먼저 세팅해야 했음.
+  - **실패 원인 진단**: 적용 후에도 의존성 설치 레이어(2.8GB)가 매번 캐시 미스로 재실행됨. GitHub Actions 캐시 저장소의 실제 항목을 직접 대조해보니, 베이스 이미지 레이어(수십 KB~MB급)는 정상적으로 캐시 히트했지만 그 2.8GB 레이어만 유독 실패 — 삭제(eviction)된 것도 아니었음(예전 블롭이 목록에 그대로 남아있음에도 이번 빌드가 못 찾고 새로 만듦). 원인을 찾아보니 **GitHub Actions 캐시 API는 파일 하나당 400MB 제한**이 있어, 2.8GB 레이어는 여러 조각으로 쪼개져 저장되는데 이걸 다시 정확히 찾아 재조립하는 과정이 buildkit의 `gha` 캐시 백엔드에서 아직 불안정함(`moby/buildkit` 저장소에 "blob not found", `mode=max`에서의 export 실패 등으로 다수 보고된 알려진 이슈).
+  - **결론 — 캐싱 포기**: registry 캐시(`type=registry`, Docker Hub에 캐시 전용 태그로 저장)로 바꾸면 이 400MB 청크 제한 자체가 없어 해결될 가능성이 높지만, 검증하지 않은 상태에서 무작정 도입하기보다 **일단 캐싱 없이 안정적으로 동작하는 지금 상태를 유지**하기로 결정. 매 배포마다 의존성을 재설치하는 비용(빌드 자체는 uv 덕에 약 30초로 빠름, 병목은 오히려 이미지 push(~157초)와 캐시 export 시도(~217초) 쪽이었음 — 캐싱을 포기하면 이 export 비용도 같이 사라짐)은 감수 가능한 수준이라 판단.
 
 ### 5.3 검증
 
@@ -501,6 +504,7 @@ volumes:
 - EC2 실제 쿼리 로그를 들여다보다 `graph.py`의 사소한 로깅 버그 발견: `final_answer()`가 `try_count==1`(재시도 없이 첫 시도 통과)일 때는 지름길로 바로 `return`해서 `최종답변: ...` print가 없는 분기를 탐 — 재시도가 있었던 경우(else 분기)에만 그 print가 있었던 비일관성. RuntimeError 등 실제 오류는 아니었고(응답은 200 OK로 정상), 그 분기에도 print 추가해 수정.
 - 과제 11 세 항목(Docker 패키징, EC2 배포, CI/CD) 전부 완료. 두 번의 실패(EC2 배포 SSH timeout, PAT workflow scope 거부) 모두 "에러 메시지를 정확히 읽고 원인을 좁혀가는" 과정이었음 — 특히 `refused`(도달했지만 거부됨) vs `timeout`(아예 도달 못함)의 구분이 10주차 WireShark 학습과 그대로 이어져 실전에서 바로 진단에 쓰임.
 - 배포 자체가 끝난 뒤, "왜 이렇게 동작하는가"를 네트워킹(§6)·볼륨(§7) 두 축으로 스스로 정리하고 검증하는 딥다이브를 별도로 진행 — Compose 내장 DNS, iptables 포트 매핑, 바인드 마운트/네임드 볼륨의 차이와 각각의 생명주기를 이 문서에 통합.
+- GitHub Actions CI 캐싱(`type=gha`)은 400MB 청크 제한 + buildkit 안정성 이슈로 시도했다가 포기(§5.2). 그 여파로 로컬 Docker Desktop 캐시도 별도로 재확인 — 로컬 재빌드는 CI와 완전히 독립된 캐시를 쓰므로 서로 영향 없음을 재확인. 이 과정에서 `image:` 키 추가 전에 만들어졌던 옛 이미지(`science_chatbot-science-chatbot:latest`)를 발견·정리함(§2.5).
 
 ---
 
