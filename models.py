@@ -25,7 +25,10 @@ model_map = {
     # 클라이언트 생성은 접속이 아니므로 서버가 꺼져 있어도 이 dict는 안전 — 접속은 invoke 때 일어남.
     # 서버 실행: llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
     "Qwen-tuned": ChatOpenAI(
-        base_url=os.getenv("LOCAL_MODEL_URL", "http://localhost:8080/v1"),
+        base_url=os.getenv("LOCAL_MODEL_URL", "http://localhost:8080/v1"), 
+        # LOCAL_MODEL_URL이 docker-compose.yml로부터 주어진다면(로컬 터미널이 아니라 docker 컨테이너로 열었다면) 
+        # localhost:8080이 아니라 llama-server:8080 사용하고,
+        # 그 docker compose가 만든 내부 네트워크의 내장 DNS 기능으로 llama-server:8080을 
         api_key="not-needed",  # 로컬 서버는 키 검사 안 함 (필드가 필수라 더미값)
         max_tokens=10000,
         frequency_penalty=0.3,

@@ -1,25 +1,34 @@
 services:
   science-chatbot:
-    build: .
-    image: quart512/science-chatbot:latest
-    ports: 
+    build: .                              # 로컬에서 빌드할 때 씀 (Dockerfile 기반)
+    image: quart512/science-chatbot:latest # 서버에서는 이 이름으로 Docker Hub에서 pull만 함
+    ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
+      # LOCAL_MODEL_URL이 models.py의 os.getenv 기본값(localhost:8080)을 덮어씀.
+      # 컨테이너 안에서 localhost는 "자기 자신"이라 llama-server를 못 찾음 —
+      # 서비스 이름(llama-server)으로 불러야 Docker 내장 DNS(127.0.0.11)가 찾아줌
       - LOCAL_MODEL_URL=http://llama-server:8080/v1
     volumes:
+      # 바인드 마운트 — 사람이 직접 만드는 데이터라 호스트 경로를 그대로 노출.
+      # 이미지에 굽지 않으므로 chroma_db 내용이 바뀌어도 재빌드 불필요
       - "./chroma_db:/app/chroma_db"
+      # 네임드 볼륨 — bge-m3 다운로드 캐시(자동 생성, 사람이 안 들여다봄).
+      # 프로젝트 폴더 밖 Docker 관리 영역에 저장 → git/폴더 오염 없이 재시작해도 재사용
       - "huggingface-cache:/root/.cache/huggingface"
 
   llama-server:
+    # llama-server 실행 파일에 붙는 인자만 적음 (ENTRYPOINT가 이미 고정돼 있음)
     command: -m /app/models/qwen_finetuned_Q4_K_M.gguf --port 8080 --host 0.0.0.0
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server  # build: 없음 — 우리 Dockerfile과 무관, 프리빌트 이미지 pull만
     ports:
-      - "8080:8080"
+      - "8080:8080"   # 호스트/외부에서 직접 접속할 때만 필요 — 컨테이너 간 통신엔 무관(내부 DNS로 직접 감)
     volumes:
+      # GGUF 모델 파일(941MB) 바인드 마운트 — 이미지에 굽지 않아 이미지 크기 유지, 모델 교체도 재빌드 없이 가능
       - "./models:/app/models"
-    profiles: ["llama"]
+    profiles: ["llama"]  # 기본 `up`엔 실행 안 됨 — `--profile llama up`으로 명시해야 선택적으로 기동
+
 volumes:
-  huggingface-cache:
-  
+  huggingface-cache:   # 네임드 볼륨 선언 — 실제 저장 위치는 Docker가 알아서 관리(호스트별로 별개)
