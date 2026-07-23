@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Literal, Annotated
 from langgraph.graph.message import add_messages
 
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage, RemoveMessage
 
 from models import invoke_with_fallback
 from tool import tools_list, tool_map
@@ -59,6 +59,7 @@ class State(BaseModel):
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
+    turn_start_len: int = 0 # 이번 턴 시작 시점의 messages 길이. final_answer에서 "이번 턴에 쌓인 메시지"(재시도 초안, tool 호출/응답 등) 경계로 씀 — 이 이후 것만 지우고 질문+최종답변으로 정리
 
 #멀티턴 대비 초기화(messages 제외)
 def reset_turn(state: State) -> dict:
@@ -75,7 +76,8 @@ def reset_turn(state: State) -> dict:
         "disabled_models": [],
         "tool_rounds": 0, # 이번 답변 시도에서 tools 노드를 돈 횟수
         "tool_failures": {}, # tool별 연속 실패 횟수
-        "disabled_tools":[] # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
+        "disabled_tools":[], # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
+        "turn_start_len": len(state.messages) # 지금 시점 = 이번 턴 이전까지의 메시지 개수. final_answer가 이걸 경계로 이번 턴 메시지만 정리
         }
 
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
@@ -226,12 +228,14 @@ def verify(state: State) ->dict:
 
     messages = [
     SystemMessage(content=f"""
-        다음 문서와 네가 알고 있는 지식을 종합해서 답이 맞는지 확인해줘.
+        다음 문서와 네가 알고 있는 지식, 그리고 지금까지의 대화 이력을 종합해서 답이 맞는지 확인해줘.
+        대화 이력에 등장한 정보(예: 사용자가 밝힌 이름 등 단기기억)는 근거로 인정해도 된다 — 문서에 없다는 이유만으로 틀렸다고 판단하지 마라.
         문서에 근거가 없더라도 네 지식으로 판단해도 돼.
         문서: {state.context}
         fix_needed는 사실 오류, 질문과 불일치일 때만 True. 문서에 근거가 없어도 내용이 정확하면 False. 문서 연결 제안은 what_to_fix가 아니라 무시하라
         질문이 대화 맥락상 답할 수 없을 만큼 불완전하거나 모호하고(예: 요약할 대상이 이 대화에 없음), 답변이 그 점을 지적하며 명확화를 요청했다면 이는 정확한 대응이므로 fix_needed는 False.
     """),
+    ] + state.messages + [
     HumanMessage(f"질문: {state.question}\n\n답변: {state.answer}\n\n이 답변을 검증해줘."),
     ]
     try: # generated_by를 이미 써본 모델로 등록, 다른 모델 시도
@@ -303,34 +307,44 @@ class final_answer_structure(BaseModel):
         "이 내용은 버려지지 않고 답변과 함께 사용자에게 별도 표시된다. 적을 것이 없으면 빈 문자열."))
     
 def final_answer(state: State) ->dict:
+    tokens_used = None
     if state.try_count == 1:  #final answer 분리할 필요 없음
-        return {"answer": state.answer, "comment" : state.comment}
-    print("-----최종답변-----")
+        final_text, comment_text = state.answer, state.comment
+    else:
+        print("-----최종답변-----")
 
-    messages = [
-        SystemMessage(content=
-            "너는 답변 편집자다. 주어진 초안을 두 부분으로 분리해라: "
-            "final_answer는 질문에 대한 완결된 답변 본문, "
-            "comment는 본문이 아닌 모든 말(자기 평가, 판단 과정, 수정 이력 언급, 주의사항). "
-            "문장을 수정·요약·재작성하지 말고 그대로 옮겨 담기만 해라. 질문에 새로 답하지 마라."),
-        HumanMessage(content=f"질문: {state.question}\n\n초안:\n{state.answer}"),
-    ]
+        messages = [
+            SystemMessage(content=
+                "너는 답변 편집자다. 주어진 초안을 두 부분으로 분리해라: "
+                "final_answer는 질문에 대한 완결된 답변 본문, "
+                "comment는 본문이 아닌 모든 말(자기 평가, 판단 과정, 수정 이력 언급, 주의사항). "
+                "문장을 수정·요약·재작성하지 말고 그대로 옮겨 담기만 해라. 질문에 새로 답하지 마라."),
+            HumanMessage(content=f"질문: {state.question}\n\n초안:\n{state.answer}"),
+        ]
 
-    try:
-        answer, _, _, tokens_used = invoke_with_fallback(state.generated_by, messages, structured=final_answer_structure,
-                                                                    disabled_models=state.disabled_models)
-        total_tokens = _add_tokens(state.tokens_used, tokens_used)
-        if state.fix_needed:
-            answer_f=f"\nlimit:{state.try_count} 내에 적합한 답변 도출 불가능 \n 남은 문제점: {state.what_to_fix} \n limit/top_k 증가나 다른 모델 재시도 권장"
-            print("최종답변: "+ answer.final_answer)
-            return {"answer": answer.final_answer, "comment" : answer.comment+answer_f, "tokens_used": total_tokens}
+        try:
+            answer, _, _, tokens_used = invoke_with_fallback(state.generated_by, messages, structured=final_answer_structure,
+                                                                        disabled_models=state.disabled_models)
+            if state.fix_needed:
+                answer_f=f"\nlimit:{state.try_count} 내에 적합한 답변 도출 불가능 \n 남은 문제점: {state.what_to_fix} \n limit/top_k 증가나 다른 모델 재시도 권장"
+                final_text, comment_text = answer.final_answer, answer.comment+answer_f
+            else:
+                final_text, comment_text = answer.final_answer, answer.comment
+        except RuntimeError:
+            final_text, comment_text = state.answer, state.comment
 
-        else:
-            print("최종답변: "+ answer.final_answer)
-            return {"answer": answer.final_answer, "comment" : answer.comment, "tokens_used": total_tokens}
-    except RuntimeError:
-        print("최종답변: "+ state.answer)
-        return {"answer": state.answer, "comment" : state.comment}
+    print("최종답변: " + final_text)
+
+    # 이번 턴에 쌓인 메시지(재시도 초안, tool 호출/응답 등)는 지우고 질문+최종답변만 남겨서
+    # 다음 턴 generate/verify가 보는 대화 이력을 가볍게 유지 — turn_start_len이 이번 턴의 시작 경계
+    this_turn_msgs = state.messages[state.turn_start_len:]
+    prune = [RemoveMessage(id=m.id) for m in this_turn_msgs]
+    clean_msgs = [HumanMessage(content=state.question), AIMessage(content=final_text)]
+
+    result = {"answer": final_text, "comment": comment_text, "messages": prune + clean_msgs}
+    if tokens_used is not None:
+        result["tokens_used"] = _add_tokens(state.tokens_used, tokens_used)
+    return result
       
 # === 그래프 빌더 생성 === <-langchain의 chain과 동격
 graph = StateGraph(State) # 상태 스키마를 기반으로 그래프 빌더 생성

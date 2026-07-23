@@ -1,0 +1,9 @@
+[project]
+name = "science-chatbot-frontend"
+version = "0.1.0"
+description = "Science Chatbot — Streamlit 프론트엔드 (백엔드와 별개 프로젝트, 별개 이미지)"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.60.0",
+    "requests>=2.32.0",
+]

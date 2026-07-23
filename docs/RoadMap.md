@@ -32,6 +32,7 @@
 | 07-21~22 | 11-2. EC2 배포 + 외부 접근 | Docker Hub 경유 → `t4g.micro`(arm64 일치) pull·실행, 보안그룹 8000 오픈. 프리티어 RAM 1GB에서 bge-m3 로드 시 OOM(Exited 137) 실제 재현 → 스왑 2GB로 해결. 외부 접근까지 검증 |
 | 07-22 | 11-3. GitHub Actions CI/CD | `main` push 시 자동 빌드(arm64 러너)→Docker Hub push→EC2 SSH 배포. 시크릿은 GitHub Secrets. 두 번의 실패(SSH timeout, PAT scope 거부)를 에러 메시지 정독으로 진단·해결 (README_11.md) |
 | 07-22~23 | 이미지 경량화 (CPU 전용 torch) | 8.77GB 이미지 원인이 `sentence-transformers`가 끌어온 미사용 CUDA/nvidia 패키지(2GB+)임을 빌드 로그로 특정. `pyproject.toml`에 `[tool.uv.sources]`로 torch를 PyPI CPU 인덱스(`download.pytorch.org/whl/cpu`)에 고정 → nvidia 19종 제거, torch `2.13.0+cpu`로. **이미지 8.77GB → 2.04GB**. EC2 디스크 99%→63% 회복. GHA `type=gha` 캐싱은 400MB 청크 제한+buildkit 이슈로 포기(README_11 §5.2) |
+| 07-23 | 테스트 게이트 | pytest 톨게이트 유닛 테스트 4종(`route_by_fix`/`reset_turn`/`_add_tokens`/`invoke_with_fallback`, 전부 실제 API·벡터DB 없이 1~2초) + `tests/conftest.py`(retrieval import-time 로딩 차단, API 키 더미값, `make_state` fixture). `deploy.yml`을 `test`→`deploy` job으로 분리해 테스트 실패 시 배포 자체가 안 나가도록 게이트 연결, 배포 스크립트에 `docker image prune -f` 추가. 실제 push로 test→build+push→EC2 배포 전체 파이프라인 검증 완료 (README_11.md §8) |
 
 ## 🔄 진행 중
 
@@ -43,10 +44,10 @@
 
 | 목표 시기 | 항목 | 내용 |
 |---|---|---|
-| 07-25 | HITL | `interrupt_before=["run_tools"]` — 안전 가드레일·논문 구매 승인 메커니즘의 예행연습 |
-| 07-27 | 프론트엔드 | Streamlit 등 간이 UI (단기기억+쓰레드 안정화 후) |
+| 07-25 | 프론트엔드 | Streamlit 등 간이 UI (단기기억+쓰레드 안정화 후) |
 | 07-29 | 멀티 에이전트 전환 1단계 | 현 그래프를 "물리 지식 에이전트" 서브그래프로 포장 (재작성 아님 — 컴파일된 그래프를 부모 그래프의 노드로) |
-| 08-02 | 멀티 에이전트 전환 2단계 | 오케스트레이터(Supervisor 패턴) → 문헌 학습·평가(Evaluator-Optimizer, arxiv 선행) → 논문 조달(HITL) → 가설 수립 → 실험 설계(Plan-and-Execute) → 번역 레이어 |
+| 08-02 | 멀티 에이전트 전환 2단계 | 오케스트레이터(Supervisor 패턴) → 문헌 학습·평가(Evaluator-Optimizer, arxiv 선행) → 논문 조달(트리아지·추천 리스트, 구매는 사람이 별도 결정) → 가설 수립 → 실험 설계(Plan-and-Execute) → 번역 레이어 |
+| 08-03 | HITL | `interrupt_before` — 실험 안전 가드레일(임계치 초과 시 사람 승인 전까지 진행 불가) 예행연습. 실험 설계(③b)·실험 운영(④) 에이전트가 생긴 뒤 진행 — **논문 조달과는 무관**(정정: 논문 구매는 사람이 리스트만 보고 그래프 밖에서 별도로 결정하는 것이라 interrupt 기반 HITL이 아님) |
 | 08-06 | 장기기억 | VDB 메타데이터 필터링으로 user_id 태그 — 유저별 LTM 분리, 검증된 문헌의 LTM 승격 |
 | 08-08 | verify 구성 비교 실험 확장 | self / 교차 / 무 verify / 다중 모델 앙상블 — correctness·토큰·지연 지표로 체계화 (현재 부분 진행: Qwen self-verify vs claude-verify 완료). 모든 에이전트 완성 후 전체 evaluation 단계에서 **bare vs graph 0.915 vs 0.926 차이의 반복 실행 신뢰도 검증(3회 이상 평균)**도 함께 진행 |
 | 08-09 | 메시지 트리밍 | 멀티턴에서 messages 무한 성장 → 긴 대화의 generate 비용 관리 (tokens_used로 성장 측정 가능) |

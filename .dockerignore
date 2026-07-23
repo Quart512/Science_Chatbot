@@ -6,6 +6,7 @@ evaluation/results/
 .github/
 tests/
 .pytest_cache/
+frontend/
 
 chroma_db/
 models/
