@@ -57,6 +57,7 @@ CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 | 결정 | 이유 |
 |---|---|
+| `FROM python:3.14-slim` (파이썬 미리 설치된 베이스) | `pyproject.toml`의 `requires-python`(>=3.14)과 매칭 — uv가 별도 다운로드 없이 이미 있는 인터프리터를 그대로 재사용 |
 | `COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/` | uv를 별도 설치 과정 없이, uv 공식 이미지 안에 이미 컴파일된 바이너리를 그대로 복사(멀티스테이지 COPY) — 설치 시간 단축 |
 | 의존성 설치를 두 단계로 분리 | 아래 §1.2 참고 |
 | 첫 `uv sync`에 `--no-install-project` | 아직 전체 소스(및 `pyproject.toml`이 참조하는 `README.md`)가 없는 시점이라 프로젝트 자체 설치는 생략, 의존성만 먼저 설치 |
@@ -500,7 +501,7 @@ volumes:
 
 - 원래 To Do List엔 "Qwen-tuned(llama-server)는 RAM 부담으로 배포에서 제외"로 적혀 있었으나, 실습 도중 "제외" 대신 "선택적 컨테이너로 분리"로 설계를 바꿈 — 단순히 컨테이너 안 켜는 것보다, 컨테이너 간 통신이라는 배울 거리가 있는 방향을 택함. 결과적으로 Compose `profiles`, 서비스명 기반 DNS, `environment:`/`env_file:` 우선순위까지 원래 계획엔 없던 개념을 추가로 익힘.
 - 다음 단계(EC2 배포)부터는 10주차에 직접 확인한 "HTTP는 평문"이라는 사실이 로컬 실습이 아니라 실제 공인망 노출 문제로 이어짐 — Security Group 설정 시 이 부분을 실질적 리스크로 다뤄야 함.
-- To Do List에 미리 적어뒀던 "프리티어 RAM 1GB — bge-m3 로드 위험"이 추측이 아니라 실제로 재현됨(`Exited 137`, OOM Killer). 사전에 위험을 문서화해뒀던 덕분에 원인 파악이 빨랐음 — 스왑 2GB 추가로 해결, 상세는 [DEPLOY.md](../DEPLOY.md) 2.2.1 참고.
+- To Do List에 미리 적어뒀던 "프리티어 RAM 1GB — bge-m3 로드 위험"이 추측이 아니라 실제로 재현됨(`Exited 137`, OOM Killer). 사전에 위험을 문서화해뒀던 덕분에 원인 파악이 빨랐음 — 스왑 2GB 추가로 해결, 상세는 [DEPLOY.md](DEPLOY.md) 2.2.1 참고.
 - EC2 실제 쿼리 로그를 들여다보다 `graph.py`의 사소한 로깅 버그 발견: `final_answer()`가 `try_count==1`(재시도 없이 첫 시도 통과)일 때는 지름길로 바로 `return`해서 `최종답변: ...` print가 없는 분기를 탐 — 재시도가 있었던 경우(else 분기)에만 그 print가 있었던 비일관성. RuntimeError 등 실제 오류는 아니었고(응답은 200 OK로 정상), 그 분기에도 print 추가해 수정.
 - 과제 11 세 항목(Docker 패키징, EC2 배포, CI/CD) 전부 완료. 두 번의 실패(EC2 배포 SSH timeout, PAT workflow scope 거부) 모두 "에러 메시지를 정확히 읽고 원인을 좁혀가는" 과정이었음 — 특히 `refused`(도달했지만 거부됨) vs `timeout`(아예 도달 못함)의 구분이 10주차 WireShark 학습과 그대로 이어져 실전에서 바로 진단에 쓰임.
 - 배포 자체가 끝난 뒤, "왜 이렇게 동작하는가"를 네트워킹(§6)·볼륨(§7) 두 축으로 스스로 정리하고 검증하는 딥다이브를 별도로 진행 — Compose 내장 DNS, iptables 포트 매핑, 바인드 마운트/네임드 볼륨의 차이와 각각의 생명주기를 이 문서에 통합.

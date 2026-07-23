@@ -21,6 +21,9 @@ env/
 # chroma_db/
 chroma_db/
 
+# pytest
+.pytest_cache/
+
 # IDE
 .vscode/
 .idea/

@@ -2,6 +2,20 @@
 
 실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 과학 챗봇. 최종 목표는 오케스트레이터가 전문 에이전트들을 라우팅하는 **멀티 에이전트 물리 연구 어시스턴트**이며, 현재는 그 첫 구성 요소인 **Self-RAG 스타일 단일 에이전트**(물리 지식 에이전트)가 동작한다.
 
+## 문서 안내
+
+역할별로 문서를 나눠 뒀다. 무엇을 고칠 때 어디를 보면 되는지:
+
+| 문서 | 담는 내용 | 업데이트 시점 |
+|---|---|---|
+| **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
+| **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
+| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 | 상시 — 진행 상황이 바뀔 때마다 |
+| **To Do List** (Obsidian 칸반) | 실행 단위 할 일 | 상시 — RoadMap과 짝으로 동기화 |
+| **docs/README_08~11.md** | 주차별 개발 회고 (아카이브) | 해당 주차 마무리 시 1회 |
+
+> 평소엔 **RoadMap ↔ To Do List**만 동기화하면 된다. 완료한 기능이 현황을 바꾸는 순간(예: 프론트엔드 추가 → 실행법 변경)에만 README/DEPLOY도 함께 손본다.
+
 ## 목표 아키텍처
 
 ![멀티 에이전트 아키텍처](docs/architecture.png)
@@ -18,7 +32,15 @@
 | 논문 조달 | 논문 탐색·트리아지, 구매는 사람이 결정 | Human-in-the-loop |
 | 번역 레이어 | 응답 직전 한국어 후처리 (원문 병기) | - |
 
-설계 원칙: 실험 안전은 공유 가드레일이 계획·실행 양 단계에서 검사하고 임계치 초과 시 사람 승인 전까지 진행 불가. 멀티 에이전트 전환은 재작성이 아니라 현재 그래프를 서브그래프로 포장하는 방식.
+### 설계 포인트
+
+- **가설 수립(③)과 실험 설계(③b) 분리**: 가설을 세우는 일(귀추적 추론)과 그 가설을 검증 가능한 실험으로 번역하는 일(방법론·장비·통제조건 설계)은 성격이 다른 작업이라 서브에이전트로 나눴다. ③은 오케스트레이터가 라우팅하는 진입점, ③b는 ③이 신규 가설을 넘길 때와 ④가 재실험/대체실험을 요청할 때만 내부적으로 호출되는 하위 단계.
+- **재실험·대체실험 루프는 ③b만 재호출**: 실험 운영(④)이 재실험이 필요하다고 판단하면 가설 수립(③)은 다시 거치지 않고 ③b에만 재설계를 요청한다. 가설은 고정한 채 실험 프로토콜만 다시 짜는 게 훨씬 흔한 경로이기 때문 — 매번 가설부터 재추론하면 낭비.
+- **오케스트레이터 우회 직접 연결**: 문헌 평가 ↔ 물리 지식(정합성 검증), ③b 실험 설계 ↔ 실험 운영(인벤토리 조회·결과 피드백, 양방향)은 오케스트레이터를 거치지 않는다. 매 내부 검증마다 왕복시키면 지연만 늘기 때문.
+- **안전 가드레일**: 실험 안전은 각 에이전트가 자체 판단하지 않고, 공유 인프라의 규칙 기반 가드레일을 계획(③b)·실행(④) 양 단계에서 공통 조회. 임계치 초과 시 사람 승인 전까지 진행 불가.
+- **Human-in-the-loop**: 논문 구매는 순위·근거 리스트를 사람에게 제시하고 최종 결정은 사람이 한다.
+- **진행상황 안내**: 실험 운영 에이전트는 오케스트레이터를 통해 사용자에게 비동기로 실시간 진행상황을 전달한다 (유일하게 오케스트레이터를 통과하는 내부 알림 경로).
+- **멀티 에이전트 전환은 재작성이 아니라 포장**: 현재 그래프를 서브그래프로 감싸는 방식 — 컴파일된 그래프를 부모 그래프의 노드로 넣는다.
 
 ## 현재 구현 — Self-RAG 에이전트
 
@@ -55,8 +77,12 @@ Science_Chatbot/
 ├── docs/
 │   ├── architecture.png     # 목표 아키텍처 다이어그램
 │   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
+│   ├── RoadMap.md           # 개발 이력·계획 (완료/진행중/예정 + 설계 노트)
+│   ├── DEPLOY.md            # 배포 가이드 (빅뱅/Docker 방식)
 │   ├── README_08.md         # 개발 회고 (8주차: LangGraph 에이전트)
 │   ├── README_09.md         # 개발 회고 (9주차: QLoRA 파인튜닝·양자화·GGUF)
+│   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
+│   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
@@ -87,7 +113,7 @@ Python은 따로 설치하지 않아도 된다 — `uv sync`가 `pyproject.toml`
 
 ## 실행
 
-> 아래는 로컬 개발용 최소 실행법이다. EC2 등 서버 배포(빅뱅 방식/Docker 방식 둘 다)는 **[DEPLOY.md](DEPLOY.md)** 참고. ⚠️ EC2 인스턴스를 중지 후 재시작하면 퍼블릭 IP가 바뀐다 — GitHub Actions를 쓴다면 `EC2_HOST` Secret도 같이 갱신해야 함(상세: DEPLOY.md 2.6).
+> 아래는 로컬 개발용 최소 실행법이다. EC2 등 서버 배포(빅뱅 방식/Docker 방식 둘 다)는 **[docs/DEPLOY.md](docs/DEPLOY.md)** 참고. ⚠️ EC2 인스턴스를 중지 후 재시작하면 퍼블릭 IP가 바뀐다 — GitHub Actions를 쓴다면 `EC2_HOST` Secret도 같이 갱신해야 함(상세: DEPLOY.md 2.6).
 
 ```bash
 # 의존성 설치
@@ -155,19 +181,17 @@ ANTHROPIC_API_KEY=...
 LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 ```
 
-## 로드맵
+## 개발 이력 · 로드맵
 
-날짜별 상세 이력·계획은 **[RoadMap.md](RoadMap.md)** 참고. 요약:
+지금까지의 진행 과정과 앞으로의 계획은 별도 문서에 정리되어 있다:
 
-- **완료**: LangGraph Self-RAG 에이전트, tool 노드 분리 + 예외처리·서킷 브레이커, Pydantic State, 모듈 분리, Qwen2.5-1.5B QLoRA→GGUF→로컬 서빙 통합, fallback 추적(`generated_by`/`disabled_models`) 기반 교차 검증, 출력 이원화(answer/comment), 평가 시스템 + 비교 실험 — 약한 모델은 3.4배 구제(0.132→0.445), **강한 모델도 개선(bare claude 0.915 → graph 0.926, 단일 실행)**
-- **완료(추가)**: 단기기억·쓰레드 — MemorySaver checkpointer + thread_id + reset_turn 턴 경계, 토큰 사용량 추적(tokens_used)
-- **완료(11주차)**: Docker 패키징+Compose(11-1, science-chatbot/llama-server 분리+profiles) → EC2 배포+외부 접근 검증(11-2) → GitHub Actions CI/CD(11-3, push 시 자동 빌드+배포) — 상세: [docs/README_11.md](docs/README_11.md), [DEPLOY.md](DEPLOY.md)
-- **진행 중**: 베이스라인 완주(gemini 쿼터 대기), graph 프롬프트 개선
-- **예정**: HITL → 프론트 → 멀티 에이전트 전환(오케스트레이터·문헌·조달·가설·실험 설계·번역) → 장기기억 → verify 구성 비교 실험 확장 → 메시지 트리밍 → 후속 질문 재작성 → SqliteSaver 영속화 → tool 정비 → 학습 데이터 확장·2차 파인튜닝
+- **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 진행 중, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
+- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD)
 
 ## 데이터 & 감사
 
-- 코퍼스: [The Feynman Lectures on Physics](https://www.feynmanlectures.caltech.edu/) — Caltech이 무료 공개한 파인만의 물리학 강의록
+- 코퍼스: [The Feynman Lectures on Physics](https://www.feynmanlectures.caltech.edu/) — Caltech이 무료 공개한 파인만의 물리학 강의록. *"I learned very early the difference between knowing the name of something and knowing something."*
+- 참고(랭체인 RAG 챗봇): [Notion](https://app.notion.com/p/adapterz/fab394a4806183f78b20013d0fa13dd4?source=copy_link)
 - Thank you to arXiv for use of its open access interoperability.
 
 ## 사용 라이브러리

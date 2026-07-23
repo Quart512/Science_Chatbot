@@ -4,6 +4,8 @@ docs/
 evaluation/results/
 .env
 .github/
+tests/
+.pytest_cache/
 
 chroma_db/
 models/

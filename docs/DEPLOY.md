@@ -97,7 +97,7 @@ sudo usermod -aG docker ubuntu
 # 그룹 반영을 위해 재접속 필요 (exit 후 다시 ssh)
 ```
 
-### 2.2.1 스왑 설정 (프리티어에선 사실상 필수)
+### 2.2.1 스왑 설정
 
 `t4g.micro`(RAM 1GB)에서 bge-m3 임베딩 모델을 로드하면 **OOM Killer에 의해 컨테이너가 즉시 강제 종료된다**(`docker compose ps -a`에 `Exited (137)`로 표시 — 137 = 128+9 = SIGKILL). 옵션이 아니라 이 RAM 사양에선 사실상 필수 단계:
 
@@ -170,7 +170,64 @@ docker compose up -d   # 새 이미지로 컨테이너 재생성
 4. **이미지·`.env`·`docker-compose.yml`은 EBS에 남아있음** — 재전송 불필요, RAM 상주 상태만 초기화됨
 5. **GitHub Actions CI/CD를 쓰는 경우, `EC2_HOST` Secret도 새 IP로 갱신해야 함** — 저장소 Settings → Secrets and variables → Actions → `EC2_HOST` → Update. 안 하면 다음 push 시 워크플로우의 SSH 배포 단계가 예전 IP로 접속을 시도하다 실패함. (근본 해결책은 Elastic IP로 고정하는 것 — 자동화 파이프라인이 있다면 이 시점부터 Elastic IP의 실익이 커짐)
 
+## 3. CI/CD(GitHub Actions) 사용 시 — 로컬 vs EC2, 뭐가 자동으로 바뀌나
+
+`deploy.yml`이 `main` push마다 하는 일: GitHub 러너에서 코드 체크아웃 → 이미지 빌드 → Docker Hub push → EC2에 SSH 접속해 `docker compose pull` + `up -d`. **로컬(맥)은 이 흐름에 전혀 관여하지 않는다** — GitHub 러너가 로컬 파일을 읽는 게 아니라 push된 git 커밋을 자기 서버에서 체크아웃해 새로 빌드하는 것이고, 결과물도 로컬로 내려오지 않는다.
+
+| | git push 시 자동 갱신? | 최신화하려면 |
+|---|---|---|
+| EC2 (실서비스) | O — `deploy.yml`이 자동으로 pull + 재시작 | 아무것도 안 해도 됨 |
+| 로컬 (맥) | X | `docker pull <이미지>` 또는 `docker compose build`로 직접 |
+
+로컬은 보통 매번 맞출 필요 없다 — 로컬의 역할은 "배포된 이미지를 그대로 쓰는 것"이 아니라 "소스 코드로 직접 빌드해서 테스트하는 것"(`docker compose up --build`)이기 때문이다. 로컬에 최신 이미지를 굳이 pull 받는 경우는 프로덕션에서만 나는 문제를 로컬에서 그대로 재현해보고 싶을 때 정도.
+
+### 이미지·컨테이너 확인하는 법
+
+**이미지 목록**: `docker images`
+- 태그(`REPOSITORY:TAG`), `IMAGE ID`, 크기를 보여준다.
+- `REPOSITORY`/`TAG`가 `<none>`으로 뜨는 항목이 dangling 이미지(아래 참고) — 이름표를 잃었을 뿐 삭제된 건 아니라 디스크는 그대로 차지한다.
+
+**컨테이너 목록**: `docker ps` (실행 중인 것만) / `docker ps -a` (멈춘 것 포함 전체)
+- `IMAGE` 컬럼으로 어떤 이미지 ID를 물고 쓰는 컨테이너인지 확인 가능.
+- `STATUS` 컬럼으로 `Up`(실행 중) / `Exited`(정지) 구분.
+
+이 두 명령으로 "지금 뭐가 남아있고, 뭐가 실제로 돌고 있는지"부터 확인하는 게 정리의 출발점이다.
+
+### pull + up -d, 각각 뭘 건드리나 — 이미지·컨테이너·볼륨의 운명
+
+> 로컬이든 EC2든 완전히 같은 Docker/Compose 엔진이 도는 것이라, 아래 동작은 환경과 무관하게 동일하다 — "로컬에서만 이런다"가 아니다.
+
+**`docker compose pull`이 건드리는 건 이미지뿐**
+- 레지스트리에서 `image:` 태그(예: `quart512/science-chatbot:latest`)가 가리키는 최신 digest를 확인하고, 로컬에 없는 레이어만 새로 받는다(레이어 캐싱 원리는 [README_11.md](README_11.md) §1.2 참고).
+- 다 받으면 로컬의 `latest` 태그 포인터를 새 이미지로 옮긴다.
+- **컨테이너는 이 시점에 전혀 안 건드린다** — 기존 컨테이너는 여전히, 방금 태그가 떨어져나간(dangling된) 예전 이미지로 계속 돌아가는 중이다.
+
+**`docker compose up -d`가 건드리는 건 컨테이너**
+- Compose가 "지금 떠 있는 컨테이너가 물고 있는 이미지"와 "지금 `image:` 태그가 가리키는 이미지"를 비교한다.
+- 다르면(pull 직후엔 항상 다름) 기존 컨테이너를 **stop → remove**하고, 새 이미지로 컨테이너를 **create → start**한다. 두 컨테이너가 동시에 떠 있는 게 아니라 완전한 교체(새 컨테이너 ID) — 기존 컨테이너는 이 순간 사라진다.
+
+**볼륨은 이 둘 중 어디에도 안 끼어든다**
+- `./chroma_db`, `./models` 같은 바인드 마운트도, `huggingface-cache` 네임드 볼륨도 컨테이너 생명주기와 완전히 분리된 존재라 pull에도, up -d의 컨테이너 교체에도 영향을 안 받는다.
+- 새로 만들어진 컨테이너는 `docker-compose.yml`에 적힌 그대로 같은 볼륨을 다시 마운트해서 시작 — 데이터는 컨테이너가 몇 번을 교체되든 그대로 이어진다(애초에 [README_11.md](README_11.md) §7에서 볼륨을 따로 뺀 이유가 이것 — 컨테이너는 갈아치우더라도 데이터는 안 날아가게).
+
+| 오브젝트 | `pull`이 하는 일 | `up -d`가 하는 일 | 최종 상태 |
+|---|---|---|---|
+| 이미지 | 변경된 레이어만 받고 태그를 새 digest로 이동 | (관여 안 함) | 새 이미지 = 현재 태그, 예전 이미지 = dangling으로 디스크에 남음 |
+| 컨테이너 | (관여 안 함, 예전 이미지로 계속 실행 중) | 예전 컨테이너 stop+remove → 새 이미지로 새 컨테이너 create+start | 예전 컨테이너는 완전히 사라짐 |
+| 볼륨(바인드/네임드) | (관여 안 함) | (관여 안 함 — 새 컨테이너가 그대로 재마운트) | 그대로 유지, 데이터 연속 |
+
+### 옛날 이미지·컨테이너는 자동 정리 안 됨
+
+위 표의 "이미지" 행이 실제로 EC2에서 문제가 되는 사례다. 같은 태그(`latest`)로 새 이미지가 pull되면 태그 이름표만 새 이미지로 옮겨가고, 예전 이미지는 dangling(`<none>:<none>`) 상태로 디스크에 그대로 남는다. EC2처럼 디스크가 작으면(프리티어 기본 용량) 이게 쌓여서 `no space left on device`로 pull 자체가 실패할 수 있다 — 실제로 겪은 문제.
+
+```bash
+docker rm <컨테이너>          # 그 이미지를 물고 있는 컨테이너부터 제거해야 이미지 삭제 가능
+docker rmi <옛 이미지 ID>     # 또는 정리용으로 docker image prune -a
+```
+
+참고로 `Exited` 컨테이너는 완전히 멈춘 상태라 CPU·메모리는 안 쓰고 디스크만 차지하고, `Up` 컨테이너는 요청을 대기하며 임베딩 모델 등을 메모리에 올려둔 채 유지한다. 로컬에서 테스트 삼아 `docker compose up -d` 했다면 다 쓴 뒤 `docker compose down`(또는 `stop`)으로 내려주는 게 좋다 — `stop`은 컨테이너를 멈추기만 해서 `start`로 바로 재개할 수 있고, `down`은 컨테이너와 네트워크까지 삭제해서 다시 쓰려면 `up`으로 새로 만들어야 한다.
+
 ## 참고
 
 - 컨테이너 간 통신(science-chatbot ↔ llama-server)은 `localhost`가 아니라 **서비스 이름**으로 이뤄진다(`http://llama-server:8080/v1`) — Compose가 만드는 내부 네트워크에서 서비스 이름이 곧 DNS 호스트네임.
-- Docker 세부 설계(레이어 캐싱, `uv sync --frozen`, profiles, 바인드 마운트 vs 네임드 볼륨 등)는 [docs/README_11.md](docs/README_11.md) 참고.
+- Docker 세부 설계(레이어 캐싱, `uv sync --frozen`, profiles, 바인드 마운트 vs 네임드 볼륨 등)는 [README_11.md](README_11.md) 참고.

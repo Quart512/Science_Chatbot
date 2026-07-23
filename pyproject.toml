@@ -37,3 +37,17 @@ torch = [{ index = "pytorch-cpu" }]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+# 운영 코드가 아니라 테스트할 때만 필요 — uv sync는 기본적으로 이 그룹도 같이 설치하지만
+# (배포용) `uv sync --no-dev`로 제외 가능
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+# tests/ 에는 __init__.py가 없어서, pytest가 기본 규칙(상위 폴더로 올라가다 __init__.py가
+# 없는 곳에서 멈춰 그 폴더만 sys.path에 추가)대로면 프로젝트 루트(graph.py가 있는 곳)까지는
+# 안 올라감 — "." 를 명시적으로 추가해서 graph/models/tool 등을 어디서 실행하든 import 가능하게 함
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
