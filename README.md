@@ -84,6 +84,12 @@ Science_Chatbot/
 │   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
 │   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
+├── tests/
+│   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
+│   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
+│   ├── test_reset_turn.py           # reset_turn (State 초기화 로직)
+│   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
+│   └── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -135,6 +141,23 @@ llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
 > **GGUF 참고**: 모델 가중치(941MB)는 용량 문제로 저장소에 포함되지 않는다 (`models/`는 git 제외). `Qwen-tuned` 없이도 gemini/claude로 모든 기능이 동작하며, 파인튜닝 과정은 [docs/README_09.md](docs/README_09.md)에 기록되어 있다.
 
 > **임베딩 모델 참고**: `BAAI/bge-m3`는 별도 설치가 필요 없다 — 첫 실행 시 Hugging Face Hub에서 자동 다운로드된다 (약 2GB, `~/.cache/huggingface`에 캐시). 이후 실행은 캐시를 사용하므로 빠르며, API 키·네트워크 없이 로컬에서 동작한다. 단 `ingest.py`와 `graph.py`는 반드시 같은 임베딩 모델을 써야 한다 (모델이 다르면 벡터 공간이 달라져 유사도 검색이 무의미해짐).
+
+## 테스트
+
+```bash
+uv run pytest
+```
+
+실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 1~2초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"만 골라서 검증한다 — 어떤 노드가 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙:
+
+- `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
+- `reset_turn` — State 초기화가 정확한지 + `messages`는 절대 안 건드리는지
+- `_add_tokens` — 토큰 누적 헬퍼 (provider가 얹어주는 낯선 키를 무시하는지)
+- `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
+
+`tests/conftest.py`가 두 가지 import-time 문제를 미리 막아준다: `retrieval.py`의 무거운 임베딩 모델 로딩(가짜 모듈로 대체), `models.py`의 `model_map` 생성 시 API 키 존재 검사(더미 키로 통과, 로컬 `.env` 값은 덮어쓰지 않음). 그래서 CI에도 별도 API 키 Secret 없이 그대로 돈다.
+
+`.github/workflows/deploy.yml`의 `test` job이 이 테스트를 빌드·배포 전에 자동 실행하는 게이트 역할을 한다 — 실패하면 `deploy` job(이미지 빌드+push+EC2 배포)은 시작조차 안 됨. 상세: [docs/README_11.md](docs/README_11.md#8-테스트-게이트).
 
 ## API
 
@@ -205,3 +228,4 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 - `pydantic` — 구조화 출력·State 스키마
 - `fastapi` + `uvicorn` — REST API
 - `langsmith` — tracing·평가
+- `pytest` — 유닛 테스트 (dev 의존성, [테스트](#테스트) 참고)

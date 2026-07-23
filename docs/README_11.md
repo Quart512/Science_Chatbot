@@ -267,7 +267,7 @@ science-chatbot-1  | INFO:     211.244.225.211:58866 - "POST /query HTTP/1.1" 20
 
 ## 5. GitHub Actions CI/CD — 완료
 
-`.github/workflows/deploy.yml` — `main` push 시 자동으로 빌드→push→EC2 배포까지 실행:
+`.github/workflows/deploy.yml` — `main` push 시 자동으로 테스트→빌드→push→EC2 배포까지 실행 (테스트 게이트를 추가한 최신 버전 — 추가 배경과 설계는 §8 참고):
 
 ```yaml
 name: Deploy Science Chatbot
@@ -276,7 +276,22 @@ on:
   push:
     branches: [main]
 jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+
+      - name: 테스트 (톨게이트)
+        run: |
+          uv sync
+          uv run pytest
+
   deploy:
+    needs: test # test job이 실패(또는 취소)하면 이 job은 시작조차 안 함
     runs-on: ubuntu-24.04-arm
     steps:
       - name: 코드 체크아웃
@@ -305,6 +320,7 @@ jobs:
             cd ~/science-chatbot
             docker compose pull
             docker compose up -d
+            docker image prune -f
 ```
 
 ### 5.1 설계 포인트
@@ -497,6 +513,91 @@ volumes:
 
 ---
 
+## 8. 테스트 게이트
+
+과제 자체(Docker+EC2+CI/CD)는 끝났지만, CI/CD가 완성된 뒤 곱씹어보니 빈틈이 하나 있었다: `main`에 push하면 테스트도 사람 검토도 없이 곧바로 빌드→EC2 배포까지 자동으로 이어진다 — 로직 버그가 있는 채로 push해도 걸러줄 게 없다.
+
+### 8.1 어디를 테스트할 것인가 — 톨게이트 원칙
+
+멀티 에이전트로 노드가 계속 늘어날 구조라, 노드(도로) 하나하나의 내부 구현을 전부 테스트하면 노드가 늘어날 때마다 테스트도 같이 늘어나 확장 속도를 깎아먹는다. 대신 여러 노드가 반드시 거쳐가는 소수의 공유 지점(톨게이트)만 검증한다 — State 검증, 라우팅 조건, model fallback 로직. 톨게이트는 "도로가 어떻게 포장됐나"가 아니라 "그 위를 지나는 트래픽이 규격을 지키나"만 보므로, 노드 내부가 바뀌어도 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다. 이 기준으로 고른 4개:
+
+- `route_by_fix` — 순수 라우팅 함수
+- `reset_turn` — State 초기화 로직 (+ `messages` 보존 여부, 필드명 오타 안전망)
+- `_add_tokens` — 토큰 누적 헬퍼 (제거하면 "합집합으로 더하다 int+dict로 터지는" 이미 한 번 겪은 버그가 재현될 수 있어 포함)
+- `invoke_with_fallback` — 모델 fallback·서킷 브레이커 로직
+
+State 스키마 자체(필드 타입·`Literal` 제약)는 테스트 대상에서 제외했다 — Pydantic이 이미 보장하는 것을 우리가 또 검증하는 건 중복이기 때문.
+
+### 8.2 import-time 부작용 두 가지
+
+`route_by_fix`처럼 LLM·벡터DB를 전혀 안 쓰는 순수 함수도, 그게 정의된 `graph.py`를 import하는 순간 두 가지가 딸려온다:
+
+1. `graph.py`가 최상단에서 `from retrieval import vectorstore`를 실행 → `retrieval.py`가 `HuggingFaceEmbeddings(model_name="BAAI/bge-m3")`를 그 자리에서 바로 생성 → import 한 줄에 2GB 임베딩 모델이 로드됨
+2. `graph.py`가 `from models import invoke_with_fallback` → `models.py`의 `model_map`이 `ChatGoogleGenerativeAI(...)` 등을 생성하는데, 이 생성자가 **API 키 존재 여부**를 그 자리에서 검사(진짜 네트워크 호출은 `.invoke()` 시점에만 일어남) — 키 없는 환경(CI 등)에서는 import 자체가 에러로 죽음
+
+`tests/conftest.py`에서 둘 다 막는다: `retrieval`을 `sys.modules`에 가짜 모듈로 먼저 등록(모듈 자체가 아직 함수로 감싸져 있지 않아 "함수 하나만 나중에 바꿔치기"하는 방식이 안 통해서 모듈 통째로 대체), API 키는 `os.environ.setdefault`로 더미값을 채움(로컬 `.env` 값이 이미 있으면 덮어쓰지 않음). `invoke_with_fallback`은 반대로 `model_map` 딕셔너리 자체를 `monkeypatch`로 통째로 갈아끼우는 방식 — 무거운 일이 함수 호출 시점에 있어서 함수(객체) 단위 바꿔치기로 충분하다.
+
+### 8.3 CI 파이프라인 구조 — test/deploy job 분리
+
+원래는 한 job 안에 스텝만 나열해도 "테스트 실패 시 이후 스텝 중단"이라는 게이트 효과는 이미 있었다. job을 나누면 원래 얻을 수 있는 이득은 더 많다 — 서로 다른 러너 종류를 job별로 골라 쓸 수 있고, 의존관계 없는 job끼리는 병렬 실행되고, PR 기반 워크플로우에서는 job 단위로 branch protection의 필수 상태 체크를 걸 수 있다. 근데 지금은 PR 없이 `main`에 직접 push하고, job도 `test`→`deploy` 딱 두 개(순차 의존)뿐인 작은 프로젝트라 이런 이득이 아직 발휘될 자리가 없다. 그래서 지금 규모에서 `test`/`deploy`를 나눈 걸로 실제 체감되는 효과는 이 정도에 그친다:
+
+- Actions UI에서 테스트/빌드+배포가 독립된 박스로 보임(시인성)
+- `deploy`만 실패했을 때(EC2 SSH 일시 오류 등) **"Re-run failed jobs"로 deploy만 재시도** 가능 — 이미 통과한 `test`(uv sync + pytest)를 다시 안 돌려도 됨
+- job은 서로 다른 러너(VM)에서 돌아 파일시스템을 공유하지 않으므로, `deploy` job도 `코드 체크아웃`을 별도로 다시 해야 함(작은 대가)
+
+### 8.4 배포 스크립트에 이미지 정리 추가
+
+`docker compose pull`로 새 이미지를 받으면 기존 이미지는 지워지지 않고 **태그(`latest`)만 새 이미지로 옮겨가고, 옛 이미지는 이름 없는(dangling) 상태로 디스크에 남는다** — Git이 안 바뀐 blob을 복사 없이 커밋끼리 공유 참조하는 것과 같은 원리로, 레이어가 겹치는 부분은 두 이미지가 같이 참조할 뿐 중복 저장되진 않는다. 그래도 dangling 이미지가 계속 쌓이므로, `docker compose up -d` 뒤에 `docker image prune -f`(태그 없는 이미지만 안전하게 정리, 지금 쓰는 이미지는 안 건드림)를 추가했다. 현재는 `latest` 단일 태그만 운영해 롤백 개념이 없어 즉시 정리하는 쪽을 택함 — 롤백이 필요해지면 커밋 SHA 등으로 버전 태그를 남기고 최근 N개만 보존하는 방식으로 바꿔야 한다(추후 과제).
+
+### 8.5 검증
+
+`git push` 후 Actions에서 `test` job 성공 → `deploy` job(빌드+push+EC2 배포) 이어서 성공까지 실제 확인.
+
+---
+
+## 9. 이미지·컨테이너 갱신 메커니즘
+
+> 실제로 설치·배포하는 절차는 [DEPLOY.md](../DEPLOY.md)에 있다. 여기는 그 절차 중 `pull`/`up -d`/이미지 정리가 "왜" 그렇게 동작하는지 파고든 내용.
+
+**확인 명령어**: `docker images`(이미지 목록 — `REPOSITORY`/`TAG`가 `<none>`이면 dangling 이미지, 이름표만 없을 뿐 디스크는 그대로 차지), `docker ps` / `docker ps -a`(컨테이너 목록, 후자는 멈춘 것까지 포함).
+
+### 9.1 pull + up -d, 각각 뭘 건드리나 — 이미지·컨테이너·볼륨의 운명
+
+> 로컬이든 EC2든 완전히 같은 Docker/Compose 엔진이 도는 것이라, 아래 동작은 환경과 무관하게 동일하다 — "로컬에서만 이런다"가 아니다.
+
+**`docker compose pull`이 건드리는 건 이미지뿐**
+- 레지스트리에서 `image:` 태그(예: `quart512/science-chatbot:latest`)가 가리키는 최신 digest를 확인하고, 로컬에 없는 레이어만 새로 받는다(레이어 캐싱 원리는 §1.2 참고).
+- 다 받으면 로컬의 `latest` 태그 포인터를 새 이미지로 옮긴다.
+- **컨테이너는 이 시점에 전혀 안 건드린다** — 기존 컨테이너는 여전히, 방금 태그가 떨어져나간(dangling된) 예전 이미지로 계속 돌아가는 중이다.
+
+**`docker compose up -d`가 건드리는 건 컨테이너**
+- Compose가 "지금 떠 있는 컨테이너가 물고 있는 이미지"와 "지금 `image:` 태그가 가리키는 이미지"를 비교한다.
+- 다르면(pull 직후엔 항상 다름) 기존 컨테이너를 **stop → remove**하고, 새 이미지로 컨테이너를 **create → start**한다. 두 컨테이너가 동시에 떠 있는 게 아니라 완전한 교체(새 컨테이너 ID) — 기존 컨테이너는 이 순간 사라진다.
+
+**볼륨은 이 둘 중 어디에도 안 끼어든다**
+- `./chroma_db`, `./models` 같은 바인드 마운트도, `huggingface-cache` 네임드 볼륨도 컨테이너 생명주기와 완전히 분리된 존재라 pull에도, up -d의 컨테이너 교체에도 영향을 안 받는다.
+- 새로 만들어진 컨테이너는 `docker-compose.yml`에 적힌 그대로 같은 볼륨을 다시 마운트해서 시작 — 데이터는 컨테이너가 몇 번을 교체되든 그대로 이어진다(§7에서 볼륨을 따로 뺀 이유가 이것 — 컨테이너는 갈아치우더라도 데이터는 안 날아가게).
+
+| 오브젝트 | `pull`이 하는 일 | `up -d`가 하는 일 | 최종 상태 |
+|---|---|---|---|
+| 이미지 | 변경된 레이어만 받고 태그를 새 digest로 이동 | (관여 안 함) | 새 이미지 = 현재 태그, 예전 이미지 = dangling으로 디스크에 남음 |
+| 컨테이너 | (관여 안 함, 예전 이미지로 계속 실행 중) | 예전 컨테이너 stop+remove → 새 이미지로 새 컨테이너 create+start | 예전 컨테이너는 완전히 사라짐 |
+| 볼륨(바인드/네임드) | (관여 안 함) | (관여 안 함 — 새 컨테이너가 그대로 재마운트) | 그대로 유지, 데이터 연속 |
+
+### 9.2 `pull` vs `--build`, 헷갈리는 지점
+
+`docker-compose.yml`의 `science-chatbot`은 `build: .`와 `image: quart512/science-chatbot:latest`를 동시에 갖고 있다. 이 둘 중 뭘 쓰는지는 명령어가 정한다 — `docker compose pull`은 Docker Hub의 이미지로 로컬 태그를 덮어쓰고, `docker compose up --build`는 그 태그를 무시하고 `Dockerfile` + 로컬 소스로 새로 빌드한다.
+
+헷갈리기 쉬운 지점: `pull`은 프로젝트 폴더의 소스 코드는 전혀 안 건드린다 — 파일은 그대로고, 오직 "컨테이너가 실행할 이미지"만 Hub의 것으로 바뀐다. 그래서 로컬에서 코드를 고쳐놓고 아직 push 안 한 상태에서 `pull`을 쓰면, 컨테이너는 그 수정사항 없이 Hub에 마지막으로 올라간 버전 그대로 뜬다 — "방금 고친 게 반영된 컨테이너"라고 착각하기 쉬운 지점이라 주의. 정리하면 **레지스트리의 최신 배포 버전을 그대로 확인**하고 싶으면 `pull`, **로컬에서 방금 고친 코드를 컨테이너로 테스트**하고 싶으면 `--build`.
+
+### 9.3 옛날 이미지·컨테이너, Docker 자체는 자동 정리 안 함
+
+위 §9.1 표의 "이미지" 행이 실제로 EC2에서 문제가 되는 사례다. 같은 태그(`latest`)로 새 이미지가 pull되면 태그 이름표만 새 이미지로 옮겨가고, 예전 이미지는 dangling(`<none>:<none>`) 상태로 디스크에 그대로 남는다 — 이건 Docker 엔진 자체의 기본 동작이라 어디서 돌든(로컬·EC2·CI 무관) 똑같다. EC2처럼 디스크가 작으면(프리티어 기본 용량) 이게 쌓여서 `no space left on device`로 pull 자체가 실패할 수 있다 — 실제로 겪은 문제.
+
+**지금은 `deploy.yml`의 EC2 배포 스크립트에 `docker image prune -f`를 추가해둬서, CI/CD로 나가는 배포(=git push)에서는 이 정리가 자동으로 일어난다**(§8.4). 다만 이건 "Docker가 원래 알아서 해주는 것"이 아니라 우리가 배포 스크립트에 직접 추가한 스텝이다 — 로컬에서 수동으로 `pull`/`up -d` 했을 때나, 이 스크립트를 안 거치는 다른 방식으로 이미지를 갱신했을 때는 여전히 자동 정리가 안 되므로 직접 정리해야 한다(명령어는 [DEPLOY.md](../DEPLOY.md) 참고).
+
+---
+
 ## 업데이트
 
 - 원래 To Do List엔 "Qwen-tuned(llama-server)는 RAM 부담으로 배포에서 제외"로 적혀 있었으나, 실습 도중 "제외" 대신 "선택적 컨테이너로 분리"로 설계를 바꿈 — 단순히 컨테이너 안 켜는 것보다, 컨테이너 간 통신이라는 배울 거리가 있는 방향을 택함. 결과적으로 Compose `profiles`, 서비스명 기반 DNS, `environment:`/`env_file:` 우선순위까지 원래 계획엔 없던 개념을 추가로 익힘.
@@ -506,6 +607,7 @@ volumes:
 - 과제 11 세 항목(Docker 패키징, EC2 배포, CI/CD) 전부 완료. 두 번의 실패(EC2 배포 SSH timeout, PAT workflow scope 거부) 모두 "에러 메시지를 정확히 읽고 원인을 좁혀가는" 과정이었음 — 특히 `refused`(도달했지만 거부됨) vs `timeout`(아예 도달 못함)의 구분이 10주차 WireShark 학습과 그대로 이어져 실전에서 바로 진단에 쓰임.
 - 배포 자체가 끝난 뒤, "왜 이렇게 동작하는가"를 네트워킹(§6)·볼륨(§7) 두 축으로 스스로 정리하고 검증하는 딥다이브를 별도로 진행 — Compose 내장 DNS, iptables 포트 매핑, 바인드 마운트/네임드 볼륨의 차이와 각각의 생명주기를 이 문서에 통합.
 - GitHub Actions CI 캐싱(`type=gha`)은 400MB 청크 제한 + buildkit 안정성 이슈로 시도했다가 포기(§5.2). 그 여파로 로컬 Docker Desktop 캐시도 별도로 재확인 — 로컬 재빌드는 CI와 완전히 독립된 캐시를 쓰므로 서로 영향 없음을 재확인. 이 과정에서 `image:` 키 추가 전에 만들어졌던 옛 이미지(`science_chatbot-science-chatbot:latest`)를 발견·정리함(§2.5).
+- 과제 완료 후 "push만 하면 검토 없이 바로 배포된다"는 빈틈을 발견해 테스트 게이트를 추가(§8) — 톨게이트 원칙으로 4개 유닛 테스트 작성, `test`/`deploy` job 분리, 배포 후 dangling 이미지 정리(`docker image prune -f`)까지 포함. 로컬 git 인덱스 lock(`Another git process seems to be running`) 트러블도 겪었는데, 실제 git 프로세스는 없었고 `rm -f .git/index.lock` 후 재시도로 해결.
 
 ---
 
@@ -517,3 +619,4 @@ volumes:
 - Qwen-tuned 돌리는 llama-server를 그냥 같이 이미지에 올릴까 하다가 분리해서 별개의 컨테이너로 묶어놨는데, 신의 한수였다. 나중에 AWS에 업로드할 때 llama server 올리지도 않았는데 ram이 부족해서 2GB를 스왑해서 돌려써야 했다. 실제로 배포받을 때 api만으로 할지, Qwen-tuned 돌리는 llama-server까지 같이 받아서 컨테이너 두개로 서로 컨테이너간 소통하면서 돌릴지, 선택할 수 있다.
 - 네트워크 기초가 잡혀있지 않다보니 포트를 열고, 보안 그룹을 설정하고, ssh를 들어가고.. 하는 과정들이 어려웠다. 네트워크 공부하고 readme_11를 보면서 다시 익혀야 할 것 같다.
 - github actions는 사실 체감되지 않았다. 한 일주일정도 깃 수정할때마다 명령어 한땀한땀 쳐서 이미지 새로 만들고 docker에 push하는 노가다를 했다면 감사함을 절감했을 것 같다. 그래도 그렇게 하고싶진 않다.
+- 배포 전에 테스트를 거치도록 게이트를 달아놨는데, 지금은 route 노드 몇 개랑 타입 틀려서 오류 냈던 부분 정도만 pytest로 커버한 상태다. 문제는 앞으로 만들 기능이 훨씬 많은데, 그때마다 이런 테스트를 어떻게 짤지 고민해야 한다는 게 걸린다. 실제로 서비스하는 것도 아니고 책임소재도 거의 없는 개인 프로젝트라, 자동화해서 아끼는 수고보다 테스트 로직을 짜고 유지보수하고 재사용 가능하게 만드는 수고가 더 클 수도 있겠다는 생각이 든다. 로컬에서 그때그때 돌려보는 걸로 충분했을지도 모르겠다.
