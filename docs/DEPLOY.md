@@ -157,7 +157,23 @@ docker compose up -d   # 새 이미지로 컨테이너 재생성
 
 ---
 
-### 2.6 인스턴스 중지 → 재시작 (비용 절약)
+### 2.6 프론트엔드(Streamlit) — CI/CD로 자동 배포
+
+`deploy.yml`이 `main` push마다 백엔드와 함께 프론트도 자동으로 처리한다: 프론트 이미지 빌드+push, `docker-compose.yml`을 EC2로 전송(`appleboy/scp-action` — git의 최신 파일을 그대로 옮기므로 `frontend` 서비스 정의가 항상 EC2에도 반영됨), `docker compose --profile frontend pull` + `up -d`까지 한 번에 실행. **로컬에서 따로 build/push/scp 할 필요 없음** — git push만 하면 됨.
+
+단, 아래 하나는 CI가 못 해주는 수동 준비물:
+- 외부에서 `8501`로 접속하려면 EC2 보안 그룹 인바운드 규칙에 **8501** 포트를 열어야 함(최초 1회, EC2 콘솔에서 직접 — 기본은 8000/22만 열려 있음).
+
+접속 확인: `http://<EC2_퍼블릭IP>:8501`
+
+그만 쓰고 싶으면 EC2에서 직접:
+```bash
+docker compose --profile frontend stop frontend   # 멈추기만
+docker compose --profile frontend rm -s frontend  # 컨테이너까지 제거
+```
+(다음 git push 때 `deploy.yml`이 다시 `up -d`로 살려낸다 — 완전히 끄려면 `docker-compose.yml`에서 `frontend` 서비스 자체를 빼거나 CI 스텝을 주석 처리해야 함.)
+
+### 2.7 인스턴스 중지 → 재시작 (비용 절약)
 
 ```bash
 # 콘솔 또는 CLI로 인스턴스 중지, 필요할 때 다시 시작

@@ -26,6 +26,7 @@ EXPECTED_RESET = {
     "tool_rounds": 0,
     "tool_failures": {},
     "disabled_tools": [],
+    "turn_start_len": 0,
 }
 
 
@@ -60,6 +61,14 @@ def test_reset_turn_does_not_touch_messages(make_state):
     # add_messages reducer가 "덮어쓰기"가 아니라 "누적"으로 계속 동작함
     state = make_state(messages=[HumanMessage(content="이전 질문")])
     assert "messages" not in reset_turn(state)
+
+
+def test_reset_turn_records_turn_start_len(make_state):
+    # turn_start_len은 고정값 0이 아니라 "이번 턴 시작 시점의 messages 길이"를 기록해야 함 —
+    # final_answer가 이걸 경계로 이번 턴 메시지만 정리(RemoveMessage)하므로 실제로 안 맞으면
+    # 이전 턴 대화 이력까지 같이 지워지는 사고로 이어짐
+    state = make_state(messages=[HumanMessage(content="이전 질문1"), HumanMessage(content="이전 질문2")])
+    assert reset_turn(state)["turn_start_len"] == 2
 
 
 def test_reset_turn_returns_only_known_state_fields(make_state):
