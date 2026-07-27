@@ -39,6 +39,7 @@
 | 07-27 | effort 프로필 (low/medium/high) | top_k/limit은 능력 내부 다이얼이라는 판단은 유지, 그 위에 Claude reasoning effort와 같은 패턴으로 사용자 노출용 프로필만 추가. `graph.py`의 `EFFORT_PROFILES`(dict) + `model_validator`로 숫자 매핑 캡슐화, `orchestrator`/`main`/프론트는 이름만 통과. 죽어있던 프론트 top_k 슬라이더를 effort 선택박스로 교체 |
 | 07-27 | 스트리밍/진행상황 API + comment·트레이스 분리 (6-2) | 래퍼 함수 노드 패턴상 부모(orchestrator) 레벨 `stream_mode`로는 능력 내부 진행상황이 안 보여서, `physics_qa_node`가 능력을 `stream(stream_mode="values")`로 순회하며 `get_stream_writer()`로 부모의 `stream_mode="custom"`에 실어 보냄. `main.py` `/query`가 `astream`+SSE로 전환. 스트리밍하다 comment가 사용자용/디버그 트레이스 역할을 겸하던 문제 발견 — `State`에 `trace`(내부 로그) 신설, `comment`는 verify의 구조화 출력(`answer.comment`)만 담도록 분리 |
 | 07-27 | arxiv API 이슈 해결 (6-3 선행) | `langchain_community`의 `ArxivQueryRun`이 arxiv.org 서버 이슈+구버전 API 요구로 막혀있던 것을, `arxiv_api.py` 신설로 해결 — export.arxiv.org의 공식 API를 `requests`로 직접 호출·Atom XML 파싱해 제목/저자/연도/arxiv id/요약을 구조화된 dict로 반환(새 의존성 없음). `tool.py`의 `search_arxiv` tool이 이걸 감싸 물리 QA의 tool-calling 루프에 사용(기존 DDG `site:arxiv.org` 우회 대체), 원본 `arxiv_search()` 함수는 6-3 논문 분석기가 그대로 재사용할 예정 |
+| 07-27 | tool 라운드 예산 낭비 버그 수정 | 실전에서 `search_arxiv` 연속 2회 실패로 서킷 브레이커 발동 후, LLM이 그 사실을 모르고 3회차에 같은 tool을 재요청 → `[사용 불가]`로 거부됐는데 이 거부까지 `tool_rounds`를 소모해버려서, 정작 fallback tool(`duckduckgo_search`)은 `MAX_TOOL_ROUNDS=3` 한도 초과로 시도조차 못 해본 채 끝난 사례 발견(verify는 "정직한 실패 인정"으로 통과했지만 구조적으로 fallback이 항상 막히는 상태였음). `run_tools()`에 `attempted` 플래그를 추가해 `[한도 초과]`/`[사용 불가]`처럼 실행을 시도조차 안 한 거부는 라운드로 안 세도록 수정 — 전역 라운드 캡 자체는 유지(tool별 연속실패 카운터만으로 대체하면 여러 tool을 번갈아 실패하는 라운드-로빈 패턴에서 무한루프 방지가 안 됨) |
 
 ## 🔄 진행 중
 

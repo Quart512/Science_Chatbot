@@ -80,7 +80,7 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
     return results
 
 
-def arxiv_search(query: str, max_results: int = 5, _retries: int = 2) -> list[dict]:
+def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
     """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
 
     각 항목의 키: title, authors(list[str]), year, arxiv_id, summary(abstract), pdf_url
@@ -93,7 +93,15 @@ def arxiv_search(query: str, max_results: int = 5, _retries: int = 2) -> list[di
 
     for attempt in range(_retries + 1):
         _throttle()
-        resp = requests.get(ARXIV_API_URL, params=params, headers=HEADERS, timeout=20)
+        try:
+            resp = requests.get(ARXIV_API_URL, params=params, headers=HEADERS, timeout=10)
+        except requests.exceptions.RequestException:
+            # ReadTimeout/ConnectionError 등은 상태 코드를 받기도 전에 나는 예외라 아래
+            # status_code 체크로는 못 잡음 — 429/503과 똑같이 재시도 대상으로 취급
+            if attempt < _retries:
+                time.sleep(MIN_INTERVAL_SEC * 2)
+                continue
+            raise
         # 429(요청 과다)와 503(arxiv 공식 문서에 나오는 "서버 과부하 — Retry-After 존중" 응답) 둘 다 재시도
         if resp.status_code in (429, 503) and attempt < _retries:
             wait = float(resp.headers.get("Retry-After", 0)) or MIN_INTERVAL_SEC * 2
