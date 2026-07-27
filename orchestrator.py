@@ -25,6 +25,10 @@ class ParentState(BaseModel):
     answer: str = ""
     comment: str = ""
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
+    # "얼마나 열심히 검색·재시도할지"를 low/medium/high 프로필로 노출 — Claude의 reasoning effort와 같은 패턴.
+    # 실제 top_k/limit 숫자로의 매핑은 능력마다 다를 수 있는 내부 지식이라 여기 두지 않고 각 능력(graph.py의
+    # EFFORT_PROFILES) 안에 둔다. model과 마찬가지로 "사용자가 매 요청마다 고르는 값"이라 부모가 그대로 통과시킴
+    effort: Literal["low", "medium", "high"] = "medium"
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — 능력들이 공유(한 능력에서 gemini 고장나면 다른 능력도 회피)
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
@@ -35,6 +39,7 @@ def physics_qa_node(state: ParentState) -> dict:
         "question": state.question,
         "messages": state.messages,          # 지금까지의 대화 이력을 그대로 넘김 (능력 내부에서 단기기억으로 씀)
         "model": state.model,
+        "effort": state.effort,              # low/medium/high 그대로 전달 — 숫자 매핑은 능력 내부(graph.py) 책임
         "disabled_models": state.disabled_models,
         "turn_start_len": len(state.messages),  # 이 길이 이후가 "이번 호출에서 새로 쌓인 것" — 능력이 알아서 정리해 돌려줌
     })

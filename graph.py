@@ -4,7 +4,7 @@ from langgraph.graph import StateGraph, START, END
 
 from langchain_core.documents import Document
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Annotated
 from langgraph.graph.message import add_messages
 
@@ -42,6 +42,16 @@ def _add_tokens(current: dict, new: dict) -> dict:
     return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
 
 
+# effort(low/medium/high) -> 실제 top_k/limit 매핑. "얼마나 검색을 넓게 하고 몇 번까지 재시도할지"는
+# 이 능력(물리 QA)만 아는 내부 지식이라 여기 둔다 — 호출자(orchestrator)는 effort 이름만 넘기고
+# 실제 숫자는 몰라도 된다. 다른 능력이 생기면 그 능력은 자기만의 프로필을 따로 가질 수 있음
+EFFORT_PROFILES: dict[str, dict[str, int]] = {
+    "low":    {"top_k": 2, "limit": 2},
+    "medium": {"top_k": 3, "limit": 4},
+    "high":   {"top_k": 5, "limit": 6},
+}
+
+
 #LangGraph State 구성 - 그래프 전체 노드가 공유하는 상태
 class State(BaseModel):
     question: str
@@ -52,9 +62,10 @@ class State(BaseModel):
     fix_needed: bool = False
     what_to_fix: str = ""
     needs_more_context: bool = False
-    top_k: int = 3
+    effort: Literal["low", "medium", "high"] = "medium"  # 호출자가 선택하는 사용자 노출용 프로필 — 실제 top_k/limit 숫자는 EFFORT_PROFILES가 내부적으로 채움
+    top_k: int = -1  # -1(미지정) 이면 아래 model_validator가 effort 프로필값으로 채움. 이미 값이 있으면(재검색 중 증가된 값 등) 건드리지 않음
     try_count: int = 0
-    limit: int = 4
+    limit: int = -1  # top_k와 동일한 방식 — effort 프로필로 채워짐
     #arxiv_references: list[str]
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     generated_by: str = ""
@@ -64,6 +75,18 @@ class State(BaseModel):
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
     turn_start_len: int = 0 # 이번 호출 시작 시점의 messages 길이(호출자가 len(messages)로 명시 전달). final_answer가 이 이후 메시지만 지우고 질문+최종답변으로 정리
+
+    # top_k/limit이 아직 -1(호출자가 안 정했음)이면 effort 프로필값으로 채운다.
+    # LangGraph는 매 노드 호출마다 dict->State로 재구성하므로 이 validator도 매번 도는데,
+    # 한번 실제 값이 채워지면(-1이 아니게 되면) 이후 재구성에서는 그대로 유지된다.
+    @model_validator(mode="after")
+    def _apply_effort_profile(self):
+        profile = EFFORT_PROFILES[self.effort]
+        if self.top_k == -1:
+            self.top_k = profile["top_k"]
+        if self.limit == -1:
+            self.limit = profile["limit"]
+        return self
 
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:

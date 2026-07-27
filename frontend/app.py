@@ -22,7 +22,7 @@ if "history" not in st.session_state:
 
 with st.sidebar:
     model = st.selectbox("모델", ["gemini", "claude", "Qwen-tuned"])
-    top_k = st.slider("검색 문서 수 (top_k)", min_value=1, max_value=10, value=3)
+    effort = st.selectbox("검색/재시도 강도 (effort)", ["low", "medium", "high"], index=1)
     st.caption(f"thread_id: `{st.session_state.thread_id}`")
 
 for msg in st.session_state.history:
@@ -43,7 +43,7 @@ if question := st.chat_input("물리에 대해 궁금한 걸 물어보세요"):
                     f"{BACKEND_URL}/query",
                     json={
                         "prompt": question,
-                        "top_k": top_k,
+                        "effort": effort,
                         "model": model,
                         "thread_id": st.session_state.thread_id,
                     },
