@@ -14,15 +14,19 @@ from models import invoke_with_fallback
 from tool import tools_list, tool_map
 from retrieval import vectorstore
 
-from langgraph.checkpoint.memory import MemorySaver
-
 # =========================================================
-# Self-RAG 스타일 에이전틱 RAG 그래프
+# Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력 (서브그래프)
 #   retrieve(검색) -> generate(답변 생성) -(tool_calls 있으면)-> tools(실행) -> generate 루프
 #   -(없으면)-> verify(자체 검증) -> route_by_fix 분기:
 #      문제없거나 limit 도달 시 종료 / 컨텍스트 부족하면 retrieve로 / 아니면 generate 재시도
 #   tool 예외처리: 실패도 반드시 ToolMessage로 응답(API 요구사항) -> LLM이 다음 라운드에
 #   에러를 읽고 자가수정. 연속 2회 실패한 tool은 disabled_tools로 이번 런에서 제외(서킷 브레이커)
+#
+#   [아키텍처 개편] 이 그래프는 이제 checkpointer를 직접 갖지 않는다 — 매번 orchestrator.py의
+#   래퍼 노드가 fresh하게 .invoke()로 호출한다. 턴 경계(예전 reset_turn)도 부모(orchestrator) 소속.
+#   fresh invoke이므로 messages 외 필드는 Pydantic 기본값으로 이미 "리셋된" 상태로 시작함 —
+#   reset_turn이 하던 일 대부분이 필요 없어짐. 다만 turn_start_len만은 호출자가
+#   len(messages)로 명시적으로 넘겨줘야 함(이번 호출에서 새로 쌓인 메시지 경계).
 # =========================================================
 
 
@@ -59,26 +63,7 @@ class State(BaseModel):
     tool_rounds: int = 0 # 이번 답변 시도에서 tools 노드를 돈 횟수
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-    turn_start_len: int = 0 # 이번 턴 시작 시점의 messages 길이. final_answer에서 "이번 턴에 쌓인 메시지"(재시도 초안, tool 호출/응답 등) 경계로 씀 — 이 이후 것만 지우고 질문+최종답변으로 정리
-
-#멀티턴 대비 초기화(messages 제외)
-def reset_turn(state: State) -> dict:
-    return{
-        "context": [],
-        "answer": "",
-        "comment": "",
-        "tokens_used": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-        "fix_needed": False,
-        "what_to_fix": "",
-        "needs_more_context": False,
-        "try_count": 0,
-        "generated_by": "",
-        "disabled_models": [],
-        "tool_rounds": 0, # 이번 답변 시도에서 tools 노드를 돈 횟수
-        "tool_failures": {}, # tool별 연속 실패 횟수
-        "disabled_tools":[], # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
-        "turn_start_len": len(state.messages) # 지금 시점 = 이번 턴 이전까지의 메시지 개수. final_answer가 이걸 경계로 이번 턴 메시지만 정리
-        }
+    turn_start_len: int = 0 # 이번 호출 시작 시점의 messages 길이(호출자가 len(messages)로 명시 전달). final_answer가 이 이후 메시지만 지우고 질문+최종답변으로 정리
 
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
@@ -350,7 +335,6 @@ def final_answer(state: State) ->dict:
 graph = StateGraph(State) # 상태 스키마를 기반으로 그래프 빌더 생성
 
 # === 노드 등록 ===
-graph.add_node("reset_turn", reset_turn) # 이름, 함수
 graph.add_node("retrieve", retrieve)
 graph.add_node("generate", generate)
 graph.add_node("run_tools", run_tools)
@@ -359,8 +343,7 @@ graph.add_node("final_answer", final_answer)
 
 
 # === 엣지 연결 ===
-graph.add_edge(START, "reset_turn")
-graph.add_edge("reset_turn", "retrieve")
+graph.add_edge(START, "retrieve")
 graph.add_edge("retrieve", "generate")
 graph.add_conditional_edges(   # generate → tool 요청 있으면 tools, 없으면 verify
 	"generate",
@@ -381,12 +364,13 @@ graph.add_edge("final_answer", END)
 
 
 # === 컴파일 ===
-memory = MemorySaver()
-app = graph.compile(checkpointer=memory) # 빌더를 실행 가능한 그래프로 변환
+# checkpointer 없음 — 이 그래프는 orchestrator.py가 매번 fresh하게 invoke하는 능력(서브그래프).
+# 단기기억(대화 이력)과 checkpointer 소유권은 orchestrator 쪽으로 이동했다.
+app = graph.compile() # 빌더를 실행 가능한 그래프로 변환
 
 if __name__ == "__main__":
     # === 실행 ===
-    end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"}, config={"configurable": {"thread_id": "test"}})["answer"]
+    end_answer = app.invoke({"question": "파인만이 설명한 강력이 뭐야?"})["answer"]
     print(end_answer)
 
     # === 시각화용 그래프 구조 객체 가져오기 ===
