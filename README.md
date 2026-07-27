@@ -77,13 +77,14 @@
 ## 현재 구현 — Self-RAG 에이전트
 
 ```
-START → reset_turn → retrieve → generate ──(tool 요청)──→ run_tools ──→ generate (ReAct 루프)
-                          ↑          └─(답변 완성)→ verify ──── 통과 ────→ final_answer → END
-                          │                          ├── 수정 필요 → generate (재시도)
-                          └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
+START → retrieve → generate ──(tool 요청)──→ run_tools ──→ generate (ReAct 루프)
+             ↑          └─(답변 완성)→ verify ──── 통과 ────→ final_answer → END
+             │                          ├── 수정 필요 → generate (재시도)
+             └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
 ```
 
-- **reset_turn — 멀티턴 경계**: 매 요청 진입 시 임시 상태(try_count, fix_needed, comment, 서킷 브레이커 등)를 전부 초기화하되 **대화 이력(messages)만 보존** — checkpointer로 살아남은 이전 턴의 잔여 상태가 새 턴을 오염시키지 않게 하는 턴 경계선
+> **[아키텍처 개편]** 이 그래프(`graph.py`)는 이제 "물리 QA" 능력(서브그래프)이다 — 자체 checkpointer가 없고, `orchestrator.py`가 매번 fresh하게 `.invoke()`로 호출한다. 예전엔 `reset_turn` 노드가 매 턴 진입 시 임시 상태를 초기화했는데, fresh invoke 자체가 Pydantic 기본값으로 이미 초기화된 상태라 이 노드가 통째로 불필요해졌다 — 단기기억(대화 이력)·턴 경계·체크포인터는 이제 `orchestrator.py`가 소유한다.
+
 - **retrieve**: 벡터 검색 (기본 top_k=3). 재검색 시 벡터DB 문서는 교체하되 tool로 수집한 증거는 보존
 - **generate**: 대화 이력(`add_messages` reducer) 기반 답변 생성. tool이 필요하면 `tool_calls`만 요청 — 실행은 run_tools 노드 담당. 재시도 시 verify의 지적사항을 대화 메시지로 반영
 - **run_tools**: tool 실행 + 예외처리. 모든 tool_call에 반드시 ToolMessage로 응답(실패 포함) → LLM이 다음 라운드에 에러를 읽고 자가수정. 빈 결과·호출 실패·미등록 tool을 구분해 다른 힌트 제공, **연속 2회 실패한 tool은 해당 런에서 자동 제외(서킷 브레이커)**. 성공 결과는 Document로 변환해 RAG context에 병합
@@ -94,7 +95,7 @@ START → reset_turn → retrieve → generate ──(tool 요청)──→ run_
 
 ### 특징
 
-- **단기기억 (멀티턴 대화)**: `MemorySaver` checkpointer + `thread_id` — 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. (MemorySaver는 프로세스 메모리라 서버 재시작 시 소멸 — 영속화는 SqliteSaver로 예정)
+- **단기기억 (멀티턴 대화)**: `MemorySaver` checkpointer + `thread_id` — **이제 `orchestrator.py`가 소유**(물리 QA 능력 자체는 checkpointer 없이 fresh invoke). 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. (MemorySaver는 프로세스 메모리라 서버 재시작 시 소멸 — 영속화는 SqliteSaver로 예정)
 - **모델 선택 + fallback 체인**: `model_map`(gemini-2.5-flash / claude-haiku / **Qwen-tuned**)에서 요청별 선택, rate limit·접속 오류 시 남은 모델로 자동 전환. 실패한 모델은 `disabled_models`로 State에 기록되어 같은 요청 안에서는 재시도하지 않음 (노드를 넘나드는 모델 서킷 브레이커). 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음.
 
 2개 모델이 동시에 장애여도 3번째로 정상 응답 — 상세 로그: [docs/README_09.md](docs/README_09.md#장애-복원력-테스트)
@@ -119,7 +120,6 @@ Science_Chatbot/
 ├── tests/
 │   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
-│   ├── test_reset_turn.py           # reset_turn (State 초기화 로직)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
 │   └── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
 ├── evaluation/
@@ -131,7 +131,8 @@ Science_Chatbot/
 │   └── results/               # evaluate.py 실행 결과 (모델별 JSON)
 ├── models/               # GGUF 모델 가중치 (git 제외)
 ├── chroma_db/            # ChromaDB 영구 저장소
-├── graph.py              # LangGraph StateGraph — 에이전트 본체 (State, 노드, 배선)
+├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
+├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
 ├── models.py             # model_map + invoke_with_fallback (모델 등록·fallback 정책의 단일 지점)
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
 ├── retrieval.py          # 임베딩 + 벡터스토어 (ingest와 공유 — 임베딩 모델 불일치를 구조로 방지)
@@ -183,7 +184,6 @@ uv run pytest
 실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 1~2초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"만 골라서 검증한다 — 어떤 노드가 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙:
 
 - `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
-- `reset_turn` — State 초기화가 정확한지 + `messages`는 절대 안 건드리는지
 - `_add_tokens` — 토큰 누적 헬퍼 (provider가 얹어주는 낯선 키를 무시하는지)
 - `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
 
@@ -197,8 +197,6 @@ uv run pytest
 POST /query
 {
   "prompt": "파인만이 설명한 원자가 뭐야?",
-  "top_k": 3,
-  "limit": 4,
   "model": "gemini",
   "thread_id": "user-123"
 }
@@ -207,9 +205,8 @@ POST /query
 ```
 
 - `model`: `"gemini"` (기본값) / `"claude"` / `"Qwen-tuned"` (로컬 llama-server 필요)
-- `top_k`: 검색 문서 수 (기본값 3)
-- `limit`: 최대 verify 루프 횟수 (기본값 4)
 - `thread_id`: 대화 세션 식별자 — 같은 값으로 요청하면 이전 대화 맥락이 이어짐(단기기억). 생략 시 uuid 자동 발급(맥락 없는 단발 요청)
+- `top_k`/`limit`(검색 문서 수·verify 재시도 한도)은 물리 QA 능력 내부 다이얼이라 API에서 빠짐 — 지금은 `orchestrator.py`가 기본값(top_k=3, limit=4)으로 호출. 능력이 여러 개로 늘어나면(6-7 라우터) 능력별 파라미터 노출 방식을 다시 설계할 예정
 - 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지 등. 정상 처리 시 comment는 비어 있을 수 있음
 
 ## 평가
