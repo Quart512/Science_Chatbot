@@ -36,6 +36,8 @@
 | 07-23 | 프론트엔드(Streamlit) + 배포 자동화 | 채팅 UI를 백엔드와 완전 분리된 서브프로젝트(`frontend/`, 별도 이미지)로 구축, `docker-compose.yml`에 `profiles: ["frontend"]`로 선택 설치 연결. `deploy.yml`에 프론트 이미지 빌드+push, `docker-compose.yml` EC2 자동 전송(`appleboy/scp-action`), `--profile frontend`로 배포까지 통합 — git push 한 번으로 백엔드+프론트 전부 자동 배포. 겸사겸사 verify가 대화 이력(단기기억)을 못 보던 버그 발견·수정 + 턴 종료 시 메시지 정리(`RemoveMessage`) 추가 (README_12.md) |
 | 07-24 | **아키텍처 개편 — 표면/능력/데이터 3층** | "슈퍼바이저가 7개 에이전트를 라우팅하는 단일 챗봇" → 표면(메인 챗/연구 워크플로우/추천 피드) · 능력(호출당하는 서브그래프) · 데이터 서비스 3층으로 재설계. 상시 챗봇은 메인 챗 하나, 추천(③)은 cron 파이프라인, 논문 분석기(②)를 허브 능력으로 최우선 구축. 예정 순서 전면 재편 (README §목표 아키텍처, README_12 §7) |
 | 07-24 | 물리 QA 서브그래프 포장 (6-1) | `graph.py`를 checkpointer 없는 순수 능력으로 분리 — `reset_turn` 노드는 fresh invoke 자체가 Pydantic 기본값으로 이미 초기화라 통째로 불필요해져 삭제(당초 "부모로 이동" 계획보다 더 단순해짐). `orchestrator.py` 신설: `ParentState`(question/answer/comment/model/tokens_used/disabled_models/messages) + `physics_qa_node` 래퍼(능력을 fresh invoke하고, 새로 생긴 메시지만 슬라이싱해 반환 — `add_messages`가 id 기준 병합이라 안 그래도 중복은 안 되지만 매 턴 불필요한 교체 시도를 피함). checkpointer는 이제 orchestrator 소유. `main.py`가 orchestrator를 호출하도록 전환, `top_k`/`limit`은 능력 내부 다이얼이라 API에서 제거. mock 모델로 멀티턴 스모크 테스트 검증(메시지 중복 없이 정상 누적) |
+| 07-27 | effort 프로필 (low/medium/high) | top_k/limit은 능력 내부 다이얼이라는 판단은 유지, 그 위에 Claude reasoning effort와 같은 패턴으로 사용자 노출용 프로필만 추가. `graph.py`의 `EFFORT_PROFILES`(dict) + `model_validator`로 숫자 매핑 캡슐화, `orchestrator`/`main`/프론트는 이름만 통과. 죽어있던 프론트 top_k 슬라이더를 effort 선택박스로 교체 |
+| 07-27 | 스트리밍/진행상황 API + comment·트레이스 분리 (6-2) | 래퍼 함수 노드 패턴상 부모(orchestrator) 레벨 `stream_mode`로는 능력 내부 진행상황이 안 보여서, `physics_qa_node`가 능력을 `stream(stream_mode="values")`로 순회하며 `get_stream_writer()`로 부모의 `stream_mode="custom"`에 실어 보냄. `main.py` `/query`가 `astream`+SSE로 전환. 스트리밍하다 comment가 사용자용/디버그 트레이스 역할을 겸하던 문제 발견 — `State`에 `trace`(내부 로그) 신설, `comment`는 verify의 구조화 출력(`answer.comment`)만 담도록 분리 |
 
 ## 🔄 진행 중
 
@@ -47,8 +49,6 @@
 
 | 목표 시기 | 항목 | 내용 |
 |---|---|---|
-| 07-29 | 물리 QA 서브그래프 포장 (6-1) | 현 그래프를 "물리 QA 능력"으로 포장 (재작성 아님). **래퍼 함수 노드에서 `invoke()` 호출 + 입출력 명시 매핑** — 부모와 State 스키마 비공유(특히 `messages` reducer 충돌·RemoveMessage 오염 방지). checkpointer는 부모 컴파일로 이동, reset_turn(턴 경계)도 부모 소속으로 |
-| 08-01 | 스트리밍/진행상황 API | 동기 `POST /query` → `astream(stream_mode="updates")` + SSE 엔드포인트. 연구 워크플로우(장시간 실행)·진행상황 안내의 전제, 프론트 `timeout=120` 문제도 해소. 겸사겸사 comment 채널 정리(사용자용 comment와 디버그 트레이스 분리 — 트레이스는 LangSmith 몫) |
 | 08-03 | 논문 분석기 (②) — 허브 능력 | abstract 트리아지 → 전문 요약·평가 → 논문 요약 VDB 저장. **메타데이터에 서지정보(제목·저자·연도·arxiv id) 포함** — 참고문헌 인용 포맷(BibTeX 등)의 전제. ③④⑦이 전부 재사용하므로 최우선. 선행: arxiv API 이슈 해결. ② 완성 직후 QA(④)에 "참고" 부착(retrieve 문서 메타데이터, 추가 호출 0)이 거의 자동으로 생김 |
 | 08-05 | SqliteSaver 영속화 | MemorySaver는 재시작 시 소멸 → 디스크 영속화. **HITL보다 먼저** — interrupt로 멈춘 승인 대기 상태가 재시작에 살아남아야 함. `/query` 응답에 interrupted 상태 + resume 엔드포인트 API 설계 포함 |
 | 08-07 | 관심사 서비스 (①) | 관심사 저장소(VDB 컬렉션) + 문서 작성기 능력(대화 → 템플릿 문서, 유사도 중복 검사 → 기존 편집 제안, 등록 확인 `interrupt`) + 턴 종료 후 훅("대화 내용을 관심사로 등록할까요?" — 싼 모델 1회 판정). 작성기는 ⑤ 실험도구와 템플릿만 갈아끼워 공용 |

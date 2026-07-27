@@ -143,12 +143,43 @@ clean_msgs = [HumanMessage(content=state.question), AIMessage(content=final_text
 
 반영 위치: README §목표 아키텍처(전면 교체), RoadMap §예정(순서 재편)·§설계 노트(결정 기록), Obsidian To Do List(6-x 항목 교체). **6-1(현 그래프 포장)은 이 구조에서도 그대로 첫 단계라 기존 작업 방향은 유효하다** — 방식만 래퍼 노드로 확정됐고, 다음 순서가 "오케스트레이터"에서 "논문 분석기"로 바뀌었다.
 
+## 8. 6-1 실행 — orchestrator.py 분리 + effort 프로필 + 6-2 스트리밍/comment 정리
+
+### 8.1 6-1: graph.py → orchestrator.py 분리 (래퍼 함수 노드)
+
+§7.3에서 정한 방식(래퍼 함수 노드, State 비공유)대로 실행했다. `graph.py`에서 `MemorySaver`/`reset_turn`을 통째로 뺐다 — orchestrator가 매 턴 능력을 fresh하게 부르므로(`physics_qa_app.invoke()`, 지금은 `.stream()`으로 바뀜 — 8.3 참고), `reset_turn`이 하던 일(임시 필드 초기화)은 Pydantic 기본값이 이미 대신해준다. 당초 "reset_turn을 부모로 옮긴다"는 계획보다 더 단순해졌다 — 아예 필요가 없어졌다.
+
+`orchestrator.py` 신설:
+- `ParentState`(question/answer/comment/model/effort/tokens_used/disabled_models/messages) — 능력 내부 전용 필드(try_count/tool_rounds/disabled_tools 등)는 안 들어감
+- `physics_qa_node` 래퍼: 능력을 호출하고, 반환된 messages 중 "이번 호출에서 새로 생긴 것"만 슬라이싱해 부모에 전달(옛 메시지까지 매번 교체 시도하는 낭비 방지, `add_messages`는 id 병합이라 중복 append는 원래 안 됨)
+
+`main.py`가 `graph.app` 대신 `orchestrator.app`을 부르도록 전환, mock 모델로 멀티턴 스모크 테스트(메시지 중복 없이 정상 누적) 검증 완료.
+
+### 8.2 effort 프로필 — top_k/limit을 사용자 노출 다이얼로
+
+top_k/limit 자체는 "능력 내부 다이얼이라 부모 State에 안 넣는다"는 §7.3의 판단을 유지하되, Claude의 reasoning effort와 같은 패턴으로 그 위에 `low/medium/high` 선택지만 노출하기로 했다. 숫자 매핑(`EFFORT_PROFILES = {"low": {"top_k":2,"limit":2}, "medium": {...}, "high": {...}}`)은 능력마다 다를 수 있는 내부 지식이라 `graph.py` 안에 두고, `ParentState`/`main.py`/프론트는 문자열 이름만 그대로 통과시킨다(`model` 필드와 같은 위치·역할). `State`의 `top_k`/`limit` 기본값을 -1(미지정 센티널)로 바꾸고 `model_validator(mode="after")`로 -1일 때만 프로필값을 채우게 해서, 재검색 중 이미 갱신된 값은 안 건드리게 했다. 죽어있던 프론트 `top_k` 슬라이더를 `effort` 선택박스로 교체.
+
+### 8.3 6-2: 스트리밍 API + comment/트레이스 채널 분리
+
+당초 계획(§예정)은 `stream_mode="updates"`였는데, 구조상 걸리는 게 하나 있었다: orchestrator 그래프엔 노드가 `physics_qa` 하나뿐이라(래퍼 함수 노드 패턴), 부모 그래프 자체를 `stream_mode`로 스트리밍해도 능력 내부(retrieve/generate/verify)의 진행 상황은 안 보인다 — 래퍼가 `.invoke()`로 결과를 한 번에 받아오기 때문. 그래서 대신:
+
+- `physics_qa_node` 내부에서 능력을 `physics_qa_app.stream(stream_mode="values")`로 순회 — "values"는 매 노드가 끝날 때마다 그 시점까지의 전체 State 스냅샷을 주므로, 마지막 스냅샷은 기존 `.invoke()` 반환값과 완전히 동일(정확성 그대로 유지)
+- 매 스냅샷마다 `get_stream_writer()`로 부모 스트림에 진행 상황을 흘려보냄 — orchestrator가 `stream_mode="custom"`으로 스트리밍될 때만 실제로 효과가 있는 "쓰기 채널"이라, 기존 동기 `invoke()` 호출(테스트 등)엔 아무 영향 없음
+- `main.py`의 `/query`가 `async def`로 바뀌고 `app_graph.astream(..., stream_mode="custom")`을 그대로 SSE(`data: ...\n\n`)로 흘려보냄
+
+진행 상황을 실제로 스트리밍해보면서 새 문제가 드러났다: **comment 필드가 두 역할을 겸하고 있었다** — (1) 각 노드가 이어붙이는 내부 디버그 로그, (2) `final_answer`가 최종적으로 사용자에게 보여줄 코멘트. `try_count==1`(첫 시도 통과, 제일 흔한 경우)엔 `final_answer`가 `state.comment`를 그대로 통과시키는데, 그 시점 `state.comment`엔 이미 트레이스 전체가 쌓여있어서 "사용자용 코멘트"라는 이름으로 사실상 디버그 로그가 나가고 있었다(프론트의 💬 캡션과 "판단 과정 보기" expander 내용이 겹치는 걸로 발견). §7.3 항목 5(comment 채널 분리)가 원래 계획에 있었는데 이 타이밍에 실제로 필요해진 것.
+
+수정: `State`에 `trace`(내부 디버그 로그, 계속 누적) 필드를 신설하고, 각 노드가 쌓던 로그를 `comment` → `trace`로 옮겼다. `comment`는 `verify`가 structured output으로 이미 뽑고 있던 `answer.comment`("사용자가 알아야 할 주의점")를 그대로 담도록 정리 — reducer 없이 매번 덮어쓰기라 "가장 최근 verify의 의견"만 남는다. 검증 자체가 생략되는 예외 분기에도 트레이스 뒤에 숨기지 않고 `comment`에 "검증을 수행하지 못해 결과를 확인 없이 반환합니다"를 명시적으로 채웠다.
+
+프론트(`frontend/app.py`)는 진행 중엔 `trace`를 실시간 로그로 보여주다가, `final: true` 이벤트가 오면 답변(`answer`) + 클린한 `comment`(💬)로 전환하고, 전체 `trace`는 "판단 과정 보기" expander로 접어서 남긴다.
+
 ## 업데이트
 
 - 2026-07-23: CI 테스트 게이트(test/deploy job 분리 + 이미지 정리) 반영, Streamlit 프론트엔드 추가(별도 서브프로젝트·별도 이미지) + docker-compose 통합(profiles로 선택 설치), verify가 대화 이력을 못 보던 버그 수정 + 턴 종료 시 메시지 정리(`RemoveMessage`) 추가.
 - 2026-07-24: `turn_start_len` 누락으로 인한 CI 테스트 실패 수정(게이트 정상 작동 확인). CI/CD가 프론트까지 항상 같이 배포하도록 `deploy.yml` 확장(프론트 이미지 빌드+push, `docker-compose.yml` 자동 scp 전송) + 태그 오타 수정. `DEPLOY.md`를 이 변경사항에 맞게 정리. nginx 도입은 보류하고 재고 조건을 로드맵에 기록.
 - 2026-07-24 (2): **아키텍처 개편** — 단일 슈퍼바이저 챗봇 → 표면/능력/데이터 3층 구조 (§7). README 목표 아키텍처 전면 교체, RoadMap 예정 순서 재편(논문 분석기 최우선, 스트리밍·SqliteSaver 전진 배치), To Do List 동기화.
 - 2026-07-24 (4): **설계 확장 — 표면 4개 체제**: 라이브러리 표면 신설(관심사·논문·실험도구·지식 노트 관리 통합 — 논문 등록의 주 경로), 피드 재정의(관심사 무관 hype 소식 cron 크롤링 + 키워드 태깅 + 관심사 일치 색 강조·상단 정렬), 추천 검색(③)은 관심사 트리거 온디맨드로 전환, 논문 카탈로그(DOI 기본 키, status로 등록 시 추천에서 자동 하차), 지식 노트(`user_note` 신뢰도 구분). 외부 논문 API(Crossref·Unpaywall·OpenAlex)는 최종 단계 어댑터로 후순위 명시. 프론트 스택 재검토(Streamlit 한계) 노트. architecture.png 재갱신.
+- 2026-07-27: **6-1 실행** — orchestrator.py 분리(래퍼 함수 노드, checkpointer·reset_turn 부모 소속 → reset_turn 자체가 불필요해져 삭제), mock 스모크 테스트 검증. **effort 프로필** 도입(low/medium/high, Claude reasoning effort 패턴 — 숫자 매핑은 능력 내부에 캡슐화). **6-2 실행** — 스트리밍 API(SSE): 당초 계획한 `stream_mode="updates"` 대신 래퍼 함수 노드 패턴 특성상 `get_stream_writer()` + `stream_mode="custom"`으로 능력 내부 진행상황을 직접 흘려보내는 방식으로 조정. §7.3 항목 5(comment 채널 분리) 실행 — `trace`(내부 디버그 로그) 신설, `comment`는 verify의 구조화 출력만 담도록 정리(§8).
 - 2026-07-24 (3): **참고문헌 추천기 설계 추가** — ③과 검색·평가 내부를 공유하는 온디맨드 능력. 참고문헌은 연구 워크플로우가 끌고 다니는 누적 산출물(가설 단계부터 각 단계가 append, 서지+인용 이유+단계 기록 → ⑦이 소비, 목록 밖 인용은 환각 신호). QA(④)는 기본 retrieve 메타데이터 "참고" 부착(추가 호출 0) + 온디맨드 풀 호출. 전제: ② 요약 VDB 메타데이터에 서지정보 포함. README 능력 표·설계 포인트, RoadMap, To Do List 반영.
 
 ## 회고

@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app, _add_tokens
 
@@ -35,14 +36,32 @@ class ParentState(BaseModel):
 
 
 def physics_qa_node(state: ParentState) -> dict:
-    result = physics_qa_app.invoke({
+    # get_stream_writer(): 부모(orchestrator)가 stream_mode="custom"으로 스트리밍될 때만 실제로
+    # 뭔가를 흘려보내는 "쓰기 채널". 일반 invoke()/stream_mode 미사용 호출에서는 그냥 아무 효과 없는
+    # no-op이라 안전 — 그래서 아래 로직이 기존 동기 호출(테스트 등)을 전혀 깨지 않는다.
+    writer = get_stream_writer()
+
+    # 능력을 fresh invoke()하는 대신 stream(stream_mode="values")으로 돌린다 — "values"는 매 노드가
+    # 끝날 때마다 그 시점까지의 전체 State를 스냅샷으로 주므로, 마지막 스냅샷은 기존 invoke()의
+    # 반환값과 완전히 동일하다(정확성 그대로 유지). 그 대신 중간 스냅샷들을 이용해 진행 상황을
+    # writer로 부모 스트림에 흘려보낼 수 있다 — trace는 각 노드가 계속 이어붙이는 내부 디버그 로그라
+    # 매번 그 시점 전체를 보내면 "지금까지의 판단 기록"이 그대로 진행 로그가 된다. (comment는 이거랑
+    # 다른 채널 — verify/final_answer가 채우는 "진짜 사용자용 코멘트"라 진행 중엔 안 보내고 최종에만 실어 보냄)
+    result = None
+    for snapshot in physics_qa_app.stream({
         "question": state.question,
         "messages": state.messages,          # 지금까지의 대화 이력을 그대로 넘김 (능력 내부에서 단기기억으로 씀)
         "model": state.model,
         "effort": state.effort,              # low/medium/high 그대로 전달 — 숫자 매핑은 능력 내부(graph.py) 책임
         "disabled_models": state.disabled_models,
         "turn_start_len": len(state.messages),  # 이 길이 이후가 "이번 호출에서 새로 쌓인 것" — 능력이 알아서 정리해 돌려줌
-    })
+    }, stream_mode="values"):
+        result = snapshot
+        writer({"trace": result.get("trace", ""), "final": False})
+
+    # 스트림이 끝났다는 건 final_answer까지 완료됐다는 뜻 — 이번엔 answer+comment(사용자용)까지 실어
+    # "최종 답변 도착"을 final=True로 신호. trace도 마지막 한 번 더 실어서 "판단 과정 보기"가 전체를 볼 수 있게
+    writer({"trace": result.get("trace", ""), "answer": result["answer"], "comment": result["comment"], "final": True})
 
     # 능력이 돌려준 messages는 [기존 이력 그대로] + [이번 턴 정리된 질문+최종답변]이므로,
     # 뒷부분(새로 생긴 것)만 잘라내 부모의 add_messages reducer에 넘긴다 — add_messages는 id 기준

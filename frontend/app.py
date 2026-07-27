@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 
@@ -37,26 +38,43 @@ if question := st.chat_input("물리에 대해 궁금한 걸 물어보세요"):
         st.write(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("생각 중..."):
-            try:
-                res = requests.post(
-                    f"{BACKEND_URL}/query",
-                    json={
-                        "prompt": question,
-                        "effort": effort,
-                        "model": model,
-                        "thread_id": st.session_state.thread_id,
-                    },
-                    timeout=120,
-                )
+        # /query가 이제 SSE로 진행 로그를 실시간으로 흘려보낸다(final=False인 동안은 판단 기록,
+        # final=True가 뜨는 순간이 진짜 최종 answer). progress_box는 그 로그를 실시간으로 덮어쓰는 자리 —
+        # 다 끝나면 지우고 답변만 깔끔히 남긴 뒤, 판단 기록은 접힌 expander로 아래에 남긴다.
+        progress_box = st.empty()
+        answer, comment, last_progress = "", "", ""
+        try:
+            with requests.post(
+                f"{BACKEND_URL}/query",
+                json={
+                    "prompt": question,
+                    "effort": effort,
+                    "model": model,
+                    "thread_id": st.session_state.thread_id,
+                },
+                timeout=120,
+                stream=True,
+            ) as res:
                 res.raise_for_status()
-                data = res.json()
-                answer, comment = data["answer"], data.get("comment", "")
-            except requests.RequestException as e:
-                answer, comment = f"백엔드 호출 실패: {e}", ""
+                for line in res.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload = json.loads(line[len("data: "):])
+                    # trace: 내부 디버그 로그(진행 중 로그·판단 과정 expander용) / comment: 진짜 사용자용 코멘트(최종에만 있음)
+                    last_progress = payload.get("trace", "") or last_progress
+                    if payload.get("final"):
+                        answer, comment = payload["answer"], payload.get("comment", "")
+                    else:
+                        progress_box.caption("⏳ " + last_progress.strip().splitlines()[-1] if last_progress.strip() else "⏳ 진행 중...")
+        except requests.RequestException as e:
+            answer = f"백엔드 호출 실패: {e}"
 
+        progress_box.empty()
         st.write(answer)
         if comment:
             st.caption(f"💬 {comment}")
+        if last_progress:
+            with st.expander("판단 과정 보기"):
+                st.text(last_progress)
 
     st.session_state.history.append({"role": "assistant", "content": answer, "comment": comment})

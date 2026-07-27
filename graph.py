@@ -57,7 +57,8 @@ class State(BaseModel):
     question: str
     context: list[Document] = Field(default_factory=list)
     answer: str = Field(default="")
-    comment: str = ""
+    comment: str = ""  # 사용자에게 보여줄 진짜 코멘트만 (verify/final_answer가 채움, 매번 덮어씀 — 트레이스 아님)
+    trace: str = ""  # 내부 디버그 로그(각 노드가 계속 이어붙임) — 스트리밍 진행상황/"판단 과정 보기"용, 사용자용 comment와는 별개
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     fix_needed: bool = False
     what_to_fix: str = ""
@@ -152,7 +153,7 @@ def generate(state: State) -> dict:
             "generated_by": generated_by,
             "disabled_models": disabled_models,
             "tokens_used": _add_tokens(state.tokens_used, tokens_used),
-            "comment" : state.comment+
+            "trace" : state.trace+
             f"""------\n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}"""
             }
 
@@ -217,7 +218,7 @@ def run_tools(state: State) -> dict:
             "tool_failures": failures,
             "disabled_tools": disabled,
             "tool_rounds": rounds + 1,
-            "comment" : state.comment+
+            "trace" : state.trace+
             f"""------\n {tool_msgs}\n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}"""}
 
 
@@ -264,8 +265,10 @@ def verify(state: State) ->dict:
             "needs_more_context" : False,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : state.disabled_models+ [state.generated_by],
-            "comment" : state.comment+
-            f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략"""}
+            "trace" : state.trace+
+            f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략""",
+            # 검증을 아예 못 했다는 건 트레이스 뒤에 숨길 일이 아니라 사용자도 알아야 할 진짜 주의점
+            "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}
         
     # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
     # 필드 간 불일치에 대한 안전망 — false negative(고칠 게 있는데 통과)가 false positive보다 위험
@@ -282,8 +285,11 @@ def verify(state: State) ->dict:
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : disabled_models,
             "tokens_used": _add_tokens(state.tokens_used, tokens_used),
-            "comment" : state.comment+
-            f"""------\n {state.try_count+1}번째 verify 결과: {fix_needed}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}\n {verified_by} 모델로 verify됨\n {answer.comment} """
+            "trace" : state.trace+
+            f"""------\n {state.try_count+1}번째 verify 결과: {fix_needed}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}\n {verified_by} 모델로 verify됨\n {answer.comment} """,
+            # verify가 structured output으로 직접 뽑아준 사용자용 코멘트 — 트레이스에 파묻지 않고 그대로.
+            # comment는 reducer 없이 매번 덮어쓰기라 "가장 최근 verify의 의견"만 남는다(원하는 그대로)
+            "comment" : answer.comment,
             }
 
 
@@ -316,8 +322,8 @@ class final_answer_structure(BaseModel):
     
 def final_answer(state: State) ->dict:
     tokens_used = None
-    if state.try_count == 1:  #final answer 분리할 필요 없음
-        final_text, comment_text = state.answer, state.comment
+    if state.try_count == 1:  #final answer 분리할 필요 없음. state.comment는 이미 verify가 뽑아준
+        final_text, comment_text = state.answer, state.comment  # 클린한 사용자용 코멘트(트레이스 아님)
     else:
         print("-----최종답변-----")
 
