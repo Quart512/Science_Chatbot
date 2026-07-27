@@ -40,7 +40,9 @@ def physics_qa_node(state: ParentState) -> dict:
     })
 
     # 능력이 돌려준 messages는 [기존 이력 그대로] + [이번 턴 정리된 질문+최종답변]이므로,
-    # 뒷부분(새로 생긴 것)만 잘라내 부모의 add_messages reducer에 넘긴다 — 안 그러면 기존 이력이 중복 append됨
+    # 뒷부분(새로 생긴 것)만 잘라내 부모의 add_messages reducer에 넘긴다 — add_messages는 id 기준
+    # 병합이라 통째로 넘겨도 "중복 append"는 안 되지만(기존 id는 교체될 뿐), 매 턴 안 바뀐 옛
+    # 메시지들까지 매번 교체 시도(내용은 같아 눈에 안 보이는 낭비)하게 되므로 아예 슬라이싱으로 피한다
     new_msgs = result["messages"][len(state.messages):]
 
     return {
