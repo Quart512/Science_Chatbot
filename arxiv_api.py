@@ -44,13 +44,18 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
 
     네트워크(requests) 호출과 분리해둔 이유: 이 부분만 순수 함수로 떼어놔야
     실제 API를 안 두드리고도(=arxiv rate limit 걱정 없이) pytest로 검증할 수 있음.
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, summary(abstract), pdf_url
+    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
+
+    키 이름이 summary가 아니라 abstract인 이유(07-28): paper_ingest.py가 Chroma에
+    저장하는 doc_type="summary"(우리가 LLM으로 만든 구조화 요약)와 이름이 겹치면
+    "이 논문의 abstract"와 "우리가 생성한 요약"을 코드에서 헷갈리기 쉽다 — 이건
+    저자가 쓴 원문 그대로의 초록이라 abstract로 구분한다.
     """
     root = ET.fromstring(xml_text)
     results = []
     for entry in root.findall(f"{ATOM_NS}entry"):
         title = " ".join(entry.findtext(f"{ATOM_NS}title", default="").split())
-        summary = " ".join(entry.findtext(f"{ATOM_NS}summary", default="").split())
+        abstract = " ".join(entry.findtext(f"{ATOM_NS}summary", default="").split())
         published = entry.findtext(f"{ATOM_NS}published", default="")
         year = published[:4] if published else ""
 
@@ -74,7 +79,7 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
             "authors": authors,
             "year": year,
             "arxiv_id": arxiv_id,
-            "summary": summary,
+            "abstract": abstract,
             "pdf_url": pdf_url,
         })
     return results
@@ -83,7 +88,7 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
 def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
     """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
 
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, summary(abstract), pdf_url
+    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
     """
     params = {
         "search_query": f"all:{query}",
@@ -117,5 +122,5 @@ if __name__ == "__main__":
     for paper in arxiv_search("quantum entanglement", max_results=3):
         print(paper["title"], f"({paper['year']})", paper["arxiv_id"])
         print("  저자:", ", ".join(paper["authors"]))
-        print("  요약:", paper["summary"][:150] + "...")
+        print("  요약:", paper["abstract"][:150] + "...")
         print()

@@ -10,9 +10,9 @@
 |---|---|---|
 | **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
-| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 | 상시 — 진행 상황이 바뀔 때마다 |
+| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다 |
 | **To Do List** (Obsidian 칸반) | 실행 단위 할 일 | 상시 — RoadMap과 짝으로 동기화 |
-| **docs/README_08~11.md** | 주차별 개발 회고 (아카이브) | 해당 주차 마무리 시 1회 |
+| **docs/README_08~12.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
 > 평소엔 **RoadMap ↔ To Do List**만 동기화하면 된다. 완료한 기능이 현황을 바꾸는 순간(예: 프론트엔드 추가 → 실행법 변경)에만 README/DEPLOY도 함께 손본다.
 
@@ -38,7 +38,7 @@
 | 능력 | 역할 | 핵심 기법 | 재사용처 |
 |---|---|---|---|
 | 물리 QA | 물리 지식 설명 | Self-RAG ← **현재 구현** | 메인 챗 |
-| 논문 요약기 (②a) | **보유 논문 전문** → 구조화 추출(핵심 주장 / 근거의 종류 / **저자가 밝힌 한계**·미해결 지점 / preprint·코드 공개 여부) → 논문 VDB 저장. lazy 생성 후 캐시. **품질 판정은 하지 않는다**(아래 설계 포인트) | 파이프라인 서브그래프 | 라이브러리 논문 탭(요약 요청) · 물리 QA(④) · 논문 작성(⑦) |
+| 논문 요약기 (②a) | **보유 논문 전문** → 구조화 추출(핵심 주장 / 근거의 종류 / **저자가 밝힌 한계**·미해결 지점 / preprint·코드 공개 여부) → 논문 VDB 저장. lazy 생성 후 캐시. **품질 판정은 하지 않는다**(아래 설계 포인트) ← **현재 구현**(`paper_ingest.py` — 상세는 아래 "논문 요약기(②a) — 현재 구현" 절) | 함수 조합(그래프 아님) | 라이브러리 논문 탭(요약 요청, 미구현) · 물리 QA(④, 연동됨) · 논문 작성(⑦, 미구현) |
 | 논문 스크리닝 (②b) | **abstract만** 보고 관련도 판정(유일한 LLM 판단) + 확인 가능한 축 병기: peer-review 여부(arXiv `journal_ref`), 연간 인용수, 출판 연도. 전문을 읽지 않는다(유료 저널은 읽을 수도 없음). **단일 점수로 합치지 않는다** | 경량 판정 (LLM은 관련도만, 나머지는 계산·조회) | 추천 검색(③) · 참고문헌 추천기 |
 | 논문 검색 (어댑터) | 쿼리 → 후보 목록(abstract + 서지 + 지표). arxiv·웹 검색 → 나중에 Crossref/OpenAlex로 교체 | 검색 함수 (LLM 거의 불필요) | 추천 검색(③) · 참고문헌 추천기 |
 | 문서 작성기 (①⑤ 공용) | 대화 → 템플릿 문서 변환, 유사도 중복 검사(신규 대신 기존 편집 제안), 등록 확인 `interrupt` | HITL | 모든 표면 — 템플릿만 갈아끼움(관심사/실험도구) |
@@ -56,8 +56,8 @@
 | 저장소 | 내용 | 형태 |
 |---|---|---|
 | 관심사 저장소 (①) | 사용자 관심사 문서 (템플릿 기반) | VDB 컬렉션 — 유사도 검색으로 중복 검사 |
-| 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** | VDB 컬렉션 — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
-| 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite), **DOI가 기본 키**. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
+| 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** ← **현재 구현**(`retrieval.py`의 `papers_vectorstore`) | VDB 컬렉션(`feynman`과 별도) — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
+| 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite). 기본 키는 **정규화된 `paper_id`**(`doi:...` → `arxiv:...` → 내용 해시 순), DOI는 별도 nullable·unique 컬럼 — arXiv preprint는 DOI가 없고 업로드 PDF는 둘 다 없을 수 있으며, 나중에 게재돼 DOI가 생겨도 `paper_id`는 불변. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
 | 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | VDB 컬렉션 — `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분** (RAG 검색은 되지만 사실 근거로는 논문·코퍼스 우선) |
 | 실험도구 DB (⑤) | 장비 spec 문서 | 구조화 레코드(정확 조회 필요) + 선택적 임베딩 |
 | 코퍼스 | 파인만 강의록 | ChromaDB (현재 구현) |
@@ -68,7 +68,7 @@
 - **논문 처리를 요약(②a) / 스크리닝(②b) / 검색으로 3분할**: "abstract 트리아지 → 통과하면 전문 요약"이라는 단일 파이프라인은 성립하지 않는다 — 유료 저널은 트리아지를 통과해도 전문을 읽을 수 없고, 반대로 라이브러리 보유 논문은 이미 선별이 끝나 트리아지가 불필요하다. 입력(전문 vs abstract+지표)·비용(비싸고 드묾 vs 싸고 대량)·호출자가 전부 다르므로 별개 능력으로 나눈다.
 - **등록 시 인코딩, 요약은 lazy**: 논문 등록 시점에는 전문 청킹·임베딩만 해서 검색 가능하게 만들고(인코딩 ≠ 요약), 요약은 라이브러리에서 요청받거나 QA·논문 작성이 필요로 할 때 생성 후 캐시. **QA 중 요약이 없으면 전문 청크로 답하고 요약 생성은 백그라운드로** — 인라인 생성은 응답을 수십 초 늘린다(스트리밍 도입으로 생기는 진행상황 채널에 얹는다).
 - **권위 판단은 LLM이 아니라 지표로**: 스크리닝에서 LLM은 "관심사와 관련 있나"(abstract 기반)만 담당하고, 신뢰도·권위는 저널·인용수 계산으로 낸다 — LLM에게 권위를 물으면 환각한다. 지표는 API 어댑터가 붙기 전엔 비어 있으므로 관련도만으로 랭킹하고, 필드는 미리 준비해둔다. 저자 h-index 같은 명성 지표는 쓰지 않는다(논문을 사람으로 판단하는 편향).
-- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록
+- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록. **References 판정은 대표 라벨이 아니라 헤더 계층 전체로**(07-28 수정) — 조각마다 표시용 대표 라벨은 가장 깊은 헤더 하나만 남기지만, `is_references` 분류는 그 라벨 하나가 아니라 헤더 계층 전체에 `any()`로 판정해 "References 아래 하위헤더"가 있는 조각도 빠짐없이 잡음
 - **논문 "품질 평가"는 보류 — 평가 대신 추출**: 실험 설계의 건전성·통계적 타당성·분야 내 신규성 판정은 피어 리뷰의 영역이고 도메인 전문성이 필요하다. LLM에 "신뢰도 점수"를 물으면 그럴듯한 노이즈가 나오는데, 하류(⑦ 인용·가설 수립)가 그걸 신호로 취급하므로 없는 것보다 나쁘다. 07-15에 verify 판정 기준을 "사실 오류만"으로 좁힌 것과 같은 실패 양상 — 모호한 품질 판정을 요구하면 모델이 아무 말이나 만들어낸다. 그래서 ②a는 판정 대신 **저자 자신의 진술을 추출**한다(추출은 판단이 아니라 신뢰 가능). 품질 평가 자체는 **논문 작성(⑦)이 실제로 그것을 소비할 수 있게 된 시점에 재검토** — 소비처가 없으면 기준을 검증할 방법도 없다.
 - **스크리닝 축을 합치지 않는다**: 관련도·최근성·인용·peer-review는 성격이 다른 축이라 하나의 점수로 합치면 가중치가 임의적이고 정보가 사라진다. 관련도로 1차 필터만 하고 나머지는 나란히 표시해 사용자가 정렬하게 한다("추천에서 끝나고 결정은 사람이" 방침과 일치). 최신이 항상 좋은 것도 아니다 — 기초 물리는 오래된 정전이, 실험 기법은 최신이 중요하므로 방향은 관심사별로 다르다.
 - **기각 이력이 평가 기준의 정답 레이블**: 카탈로그의 `status: dismissed`가 사용자의 판단 기록이므로, 스크리닝 기준을 바꿨을 때 "예전에 기각한 논문을 여전히 상위에 올리나"로 비교할 수 있다 — 별도 데이터 수집 없이 얻는 평가셋.
@@ -112,6 +112,17 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - **로컬 임베딩** (BAAI/bge-m3): 임베딩에 API rate limit·비용 없음, 검색 시 외부 의존 없음
 - **LangSmith tracing** + LLM-as-judge 평가 (아래 [평가](#평가) 참고)
 
+## 논문 요약기 (②a) — 현재 구현
+
+`paper_ingest.py`가 등록(`register_paper`)과 조회 시 lazy 요약(`get_paper_summary`) 두 함수로 최소 구현되어 있다. 그래프가 아니라 평범한 함수 조합 — 지금 범위엔 조건 분기·HITL이 필요 없어 LangGraph로 감쌀 이유가 없었다.
+
+- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_chunking.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy). `bibliographic`은 화이트리스트(title/authors/year/arxiv_id/pdf_url)만 청크 메타데이터로 복제한다 — abstract 같은 긴 필드를 그대로 받으면 청크 수만큼 그대로 복제돼 쌓인다(07-28 리뷰로 발견·수정).
+- `get_paper_summary(paper_id)`: 캐시(`doc_type: summary`)가 있으면 그대로 반환(추가 LLM 호출 0). 없으면 등록된 청크(References 제외)를 모아 `paper_extraction.py`의 구조화 스키마로 LLM을 한 번 호출한다 — 컨텍스트 예산을 넘으면 `ContextBudgetExceeded`를 그대로 전파(단순 경로 우선, map-reduce 재귀 분할은 아직 미구현).
+- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택 — 컬렉션별로 top_k씩 이어붙이면 항상 최대 2×top_k가 들어가던 문제를 수정(07-28 리뷰). 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(07-15 근접-오검색을 반대 방향으로 재현하므로).
+- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림) — 07-28 리뷰로 발견·수정.
+
+미구현: 라이브러리 등록 폼(UI), 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
+
 ## 파일 구조
 
 ```
@@ -125,12 +136,19 @@ Science_Chatbot/
 │   ├── README_09.md         # 개발 회고 (9주차: QLoRA 파인튜닝·양자화·GGUF)
 │   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
 │   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
+│   ├── README_12.md         # 개발 회고 (CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
 ├── tests/
 │   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
-│   └── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
+│   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
+│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 (네트워크 없이)
+│   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
+│   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
+│   ├── test_paper_chunking.py       # 헤더 분할·References 태깅·임베딩용 청킹
+│   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
+│   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -142,10 +160,16 @@ Science_Chatbot/
 ├── chroma_db/            # ChromaDB 영구 저장소
 ├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
-├── models.py             # model_map + invoke_with_fallback (모델 등록·fallback 정책의 단일 지점)
+├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
-├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 분석기·arxiv 검색 tool이 공유)
-├── retrieval.py          # 임베딩 + 벡터스토어 (ingest와 공유 — 임베딩 모델 불일치를 구조로 방지)
+├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 요약기·arxiv 검색 tool이 공유)
+├── paper/                # 논문 파이프라인(파싱→분할→식별→추출→저장, 07-28 디렉토리로 묶음)
+│   ├── pdf_parse.py          # PDF 파싱 어댑터 (PyMuPDF/pymupdf4llm 격리, AGPL 고지)
+│   ├── paper_chunking.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
+│   ├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
+│   ├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
+│   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
+├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
@@ -177,6 +201,9 @@ uv run fastapi dev main.py
 # 단독 실행 (터미널 테스트)
 uv run graph.py
 
+# (선택) 논문 한 편 등록 + 요약 생성 — 라이브러리 UI 전, 수동 등록 경로
+uv run -m paper.paper_ingest <PDF 경로> [arxiv_id]
+
 # (선택) 자체 파인튜닝 모델 서빙 — model: "Qwen-tuned" 사용 시 필요
 llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
 ```
@@ -191,15 +218,18 @@ llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
 uv run pytest
 ```
 
-실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 1~2초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"만 골라서 검증한다 — 어떤 노드가 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙:
+실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 몇 초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"·순수 함수·명시적 설계 결정만 골라서 검증한다 — 어떤 구현이 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙. 대표적으로:
 
 - `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
-- `_add_tokens` — 토큰 누적 헬퍼 (provider가 얹어주는 낯선 키를 무시하는지)
 - `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
+- `paper_id.normalize_paper_id` — DOI > arXiv > 파일 해시 우선순위, 재등록 멱등성
+- `paper_chunking.split_into_sections`/`split_for_embedding` — 헤더 분할·병합, References 태깅
+- `paper_ingest.register_paper`/`get_paper_summary` — 가짜 vectorstore·가짜 LLM 응답을 주입해 등록·lazy 요약·캐시 로직만 검증
+- `graph.retrieve` — feynman·papers 두 컬렉션 검색 결과 병합 (가짜 vectorstore 주입)
 
 `tests/conftest.py`가 두 가지 import-time 문제를 미리 막아준다: `retrieval.py`의 무거운 임베딩 모델 로딩(가짜 모듈로 대체), `models.py`의 `model_map` 생성 시 API 키 존재 검사(더미 키로 통과, 로컬 `.env` 값은 덮어쓰지 않음). 그래서 CI에도 별도 API 키 Secret 없이 그대로 돈다.
 
-`.github/workflows/deploy.yml`의 `test` job이 이 테스트를 빌드·배포 전에 자동 실행하는 게이트 역할을 한다 — 실패하면 `deploy` job(이미지 빌드+push+EC2 배포)은 시작조차 안 됨. 상세: [docs/README_11.md](docs/README_11.md#8-테스트-게이트).
+CI는 `.github/workflows/test.yml`(재사용 워크플로우)에 pytest 실행 스텝을 하나만 두고 두 군데서 쓴다: PR(main 대상)에 직접 붙어 merge 전에 결과가 보이고, `deploy.yml`의 `test` job이 이걸 `uses:`로 재사용해 push(main) 시 배포 게이트로도 쓴다 — 실패하면 `deploy` job(이미지 빌드+push+EC2 배포)은 시작조차 안 됨. 상세: [docs/README_11.md](docs/README_11.md#8-테스트-게이트), [docs/README_12.md](docs/README_12.md#1-배포-전-테스트-게이트-ci).
 
 ## API
 
@@ -248,7 +278,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 지금까지의 진행 과정과 앞으로의 계획은 별도 문서에 정리되어 있다:
 
 - **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 진행 중, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
-- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD)
+- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD) · [README_12](docs/README_12.md)(CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
 
 ## 데이터 & 감사
 
@@ -264,6 +294,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 - `langchain-huggingface` — 로컬 임베딩 (bge-m3)
 - `langchain-chroma` — 벡터 저장소
 - `langchain-community` + `ddgs` — 웹 검색 tool
+- `pymupdf` + `pymupdf4llm` — PDF 파싱(마크다운 변환, `pdf_parse.py` 뒤에 격리). AGPL-3.0 듀얼 라이선스 — [docs/RoadMap.md](docs/RoadMap.md) "PDF 파싱 라이브러리 선택" 참고
 - `pydantic` — 구조화 출력·State 스키마
 - `fastapi` + `uvicorn` — REST API
 - `langsmith` — tracing·평가

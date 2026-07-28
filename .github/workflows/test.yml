@@ -1,0 +1,28 @@
+name: 테스트 (톨게이트)
+
+# 재사용 워크플로우 — 두 군데서 이 파일 하나를 쓴다:
+#   1. pull_request(main 대상): PR 화면에 테스트 통과 여부가 직접 뜨게 함 — 지금까지는
+#      deploy.yml이 push(main)에만 붙어 있어서, PR 단계에선 테스트 결과가 하나도 안 보이고
+#      merge된 "다음"에야(배포 직전) 실패를 알 수 있었음. push→PR→merge 흐름을 쓰기 시작한
+#      뒤로는 실패를 merge 전에, PR에서 바로 보는 쪽이 맞음.
+#   2. deploy.yml의 test job이 workflow_call로 이 파일을 그대로 재사용 — pytest 스텝을
+#      두 파일에 중복해서 안 둔다(하나 고치면 둘 다 반영되게).
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+
+      - name: 테스트 (톨게이트)
+        run: |
+          uv sync
+          uv run pytest

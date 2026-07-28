@@ -41,7 +41,7 @@ def search_arxiv(query: str) -> str:
         f"제목: {p['title']} ({p['year']})\n"
         f"저자: {', '.join(p['authors'])}\n"
         f"arxiv id: {p['arxiv_id']}\n"
-        f"요약: {p['summary']}"
+        f"요약: {p['abstract']}"
         for p in papers
     )
 
