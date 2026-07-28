@@ -54,6 +54,15 @@ def _fake_parse_pdf(scanned=False, markdown="# Title\n\n## Body\n\n" + "내용�
     }
 
 
+@pytest.fixture(autouse=True)
+def _reset_in_flight():
+    # ensure_summary_in_background()의 모듈 전역 in-flight 집합은 프로세스 생명주기 동안
+    # 유지되는 상태라, 테스트 간에 서로 오염되지 않도록 매 테스트 전후로 비운다.
+    paper_ingest._IN_FLIGHT.clear()
+    yield
+    paper_ingest._IN_FLIGHT.clear()
+
+
 # --- register_paper() ----------------------------------------------------
 
 
@@ -223,3 +232,85 @@ def test_get_paper_summary_propagates_context_budget_exceeded(monkeypatch):
 
     with pytest.raises(ContextBudgetExceeded):
         paper_ingest.get_paper_summary("arxiv:1", model="Qwen-tuned", vectorstore=vs)
+
+
+# --- ensure_summary_in_background() ---------------------------------------
+
+
+def test_ensure_summary_in_background_skips_when_already_cached(monkeypatch):
+    vs = FakeVectorstore()
+    cached = PaperExtraction(core_claims=["기존 캐시된 주장"])
+    vs.add_texts(
+        texts=["요약 텍스트"],
+        metadatas=[{"paper_id": "arxiv:cached", "doc_type": "summary", "extraction_json": cached.model_dump_json()}],
+        ids=["arxiv:cached-summary"],
+    )
+
+    def _boom(fn):
+        raise AssertionError("이미 요약이 있으면 백그라운드를 띄우면 안 됨")
+    monkeypatch.setattr(paper_ingest, "_spawn_background", _boom)
+
+    result = paper_ingest.ensure_summary_in_background("arxiv:cached", vectorstore=vs)
+    assert result is False
+
+
+def test_ensure_summary_in_background_generates_and_clears_in_flight(monkeypatch):
+    vs = FakeVectorstore()
+    vs.add_texts(
+        texts=["본문 청크"],
+        metadatas=[{"paper_id": "arxiv:new", "doc_type": "fulltext_chunk", "index": 0, "is_references": False, "header": "A"}],
+        ids=["arxiv:new-0"],
+    )
+    # _spawn_background를 동기 실행으로 갈아끼워 진짜 스레드 없이 fn()을 바로 돌린다
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(paper_ingest, "invoke_with_fallback", lambda *a, **kw: (
+        PaperExtraction(core_claims=["백그라운드에서 추출됨"]),
+        "gemini",
+        [],
+        {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    ))
+
+    result = paper_ingest.ensure_summary_in_background("arxiv:new", vectorstore=vs)
+
+    assert result is True
+    assert paper_ingest._IN_FLIGHT == set()  # 완료 후 in-flight 표시가 지워짐
+    assert any(m["doc_type"] == "summary" for m in vs.metadatas)  # 실제로 캐시에 저장됨
+
+
+def test_ensure_summary_in_background_dedupes_concurrent_calls(monkeypatch):
+    vs = FakeVectorstore()
+    vs.add_texts(
+        texts=["본문 청크"],
+        metadatas=[{"paper_id": "arxiv:dup", "doc_type": "fulltext_chunk", "index": 0, "is_references": False, "header": "A"}],
+        ids=["arxiv:dup-0"],
+    )
+    started_fns = []
+    # 일부러 fn()을 실행하지 않는다 — "아직 완료되지 않은 백그라운드 작업" 상태를 그대로
+    # 유지해야 두 번째 호출이 in-flight 가드에 걸리는지 확인할 수 있다.
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: started_fns.append(fn))
+
+    first = paper_ingest.ensure_summary_in_background("arxiv:dup", vectorstore=vs)
+    second = paper_ingest.ensure_summary_in_background("arxiv:dup", vectorstore=vs)
+
+    assert first is True
+    assert second is False  # 이미 진행 중이므로 중복으로 안 띄움
+    assert len(started_fns) == 1
+
+
+def test_ensure_summary_in_background_clears_in_flight_even_on_failure(monkeypatch):
+    vs = FakeVectorstore()
+    vs.add_texts(
+        texts=["본문 청크"],
+        metadatas=[{"paper_id": "arxiv:fail", "doc_type": "fulltext_chunk", "index": 0, "is_references": False, "header": "A"}],
+        ids=["arxiv:fail-0"],
+    )
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+
+    def _fail(*a, **kw):
+        raise RuntimeError("LLM 호출 실패")
+    monkeypatch.setattr(paper_ingest, "invoke_with_fallback", _fail)
+
+    result = paper_ingest.ensure_summary_in_background("arxiv:fail", vectorstore=vs)
+
+    assert result is True  # 시작 자체는 됐음(백그라운드 안에서 실패한 것)
+    assert paper_ingest._IN_FLIGHT == set()  # 실패해도 지워져야 다음 호출에서 재시도 가능

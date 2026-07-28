@@ -19,6 +19,21 @@
 #     전파한다. 호출자(라이브러리 UI·QA 노드)가 "논문이 길어 요약 생성 불가(분할 미구현)"로
 #     정직하게 고지할 것.
 #
+#   ensure_summary_in_background() — QA(graph.py의 retrieve())가 부른다. "QA 중 요약 부재
+#     시 전문 청크로 답하고 요약 생성은 백그라운드로"(To Do 6-3)의 후반부를 담당한다. 전반부
+#     ("전문 청크로 답한다")는 사실 별도 코드가 필요 없다 — summary 문서가 없으면 유사도
+#     검색이 애초에 fulltext_chunk만 돌려주므로 retrieve()는 항상 하던 대로 동작한다. 이
+#     함수는 그 뒤에서 "이 논문 요약이 아직 없으니 만들어두자"만 비동기로 처리한다: 이번
+#     턴의 응답 생성을 막지 않도록 daemon thread로 get_paper_summary()를 실행하고 즉시
+#     반환한다(스레드가 끝날 때까지 기다리지 않음). 완료 여부를 이번 요청 스트림으로 실시간
+#     통지하지는 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다(단순
+#     경로부터: 완료 알림 채널을 새로 만들 만큼 지금 당장 아쉬운 지점이 아니다).
+#     같은 논문이 짧은 시간에 여러 번 걸리면(멀티턴 대화에서 흔함) 모듈 전역 in-flight
+#     집합(_IN_FLIGHT)으로 중복 생성을 막는다 — 안 그러면 답변마다 LLM을 또 부르게 된다.
+#     실제 스레드 기동은 _spawn_background() 한 함수로 분리해뒀다 — 테스트에서 이 함수만
+#     동기 호출로 갈아끼우면 진짜 스레드·진짜 LLM 없이 판단 로직(캐시 확인/중복 방지)만
+#     검증할 수 있다.
+#
 # doc_type 구분: 한 컬렉션(papers_vectorstore)에 fulltext_chunk/summary를 metadata로 구분해
 # 같이 둔다(RoadMap "열린 질문" — 지금은 한 컬렉션+필터로 시작). 둘 다 임베딩되므로 QA가
 # "참고"로 both 검색해 인용할 수 있다 — 요약이 생기고 나면 추가 호출 없이 그냥 검색 결과에
@@ -45,6 +60,8 @@
 # 이유). 테스트는 이 자리에 가짜 vectorstore(인메모리 dict 흉내)를 주입하고, parse_pdf/
 # invoke_with_fallback은 monkeypatch로 갈아끼워 실제 PDF·임베딩·LLM 호출 없이 순수 로직만 검증한다.
 # =========================================================
+
+import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -269,6 +286,56 @@ def get_paper_summary(paper_id: str, *, model: str = "gemini", vectorstore=None)
         "generated_by": generated_by,
         "tokens_used": tokens_used,
     }
+
+
+# 같은 프로세스 안에서 "지금 백그라운드로 생성 중인 paper_id" 집합 — 짧은 시간에 같은
+# 논문이 여러 번 조회될 때(멀티턴 대화에서 흔함) 중복으로 LLM을 부르지 않기 위한 가드.
+# Lock으로 감싸는 이유: 백그라운드 스레드(생성 완료 시 discard)와 다음 요청을 처리하는
+# 메인 스레드(조회 시 add)가 동시에 건드릴 수 있음.
+_IN_FLIGHT: set[str] = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+def _spawn_background(fn) -> None:
+    """실제로 daemon thread를 띄우는 부분만 분리해둔 한 줄짜리 함수 — 테스트에서
+    monkeypatch로 동기 실행(즉시 fn() 호출)이나 no-op으로 갈아끼우기 위한 지점이다."""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+def ensure_summary_in_background(paper_id: str, *, model: str = "gemini", vectorstore=None) -> bool:
+    """paper_id에 캐시된 요약이 없으면 백그라운드에서 생성을 시작한다(모듈 docstring
+    "ensure_summary_in_background" 항목 참고). 이번 턴의 응답은 막지 않는다 — QA는 그동안
+    (이미 그렇게 동작하던 대로) 전문 청크로 답한다.
+
+    이미 요약이 있거나, 이미 같은 paper_id에 대해 생성이 진행 중이면 아무것도 안 하고
+    False를 반환한다. 새로 생성을 시작했으면 True — 호출자(retrieve())가 이 값으로
+    trace에 "백그라운드로 시작함"을 기록하는 데 쓴다(실제 완료 여부와는 무관 — 완료는
+    다음 조회 때 캐시로 확인된다).
+    """
+    vectorstore = vectorstore or _get_papers_vectorstore()
+
+    if _fetch_summary(vectorstore, paper_id) is not None:
+        return False
+
+    with _IN_FLIGHT_LOCK:
+        if paper_id in _IN_FLIGHT:
+            return False
+        _IN_FLIGHT.add(paper_id)
+
+    def _run():
+        try:
+            get_paper_summary(paper_id, model=model, vectorstore=vectorstore)
+        except Exception as e:
+            # 백그라운드라 이 예외를 돌려줄 곳(사용자·호출 스택)이 없다 — 완전히 조용히
+            # 삼켜지면 디버깅이 불가능해지므로 최소한 콘솔에는 남긴다. 다음 조회 때 캐시가
+            # 여전히 없으므로 자연히 재시도된다(별도 재시도 로직 불필요).
+            print(f"백그라운드 요약 생성 실패 (paper_id={paper_id}): {type(e).__name__}: {e}")
+        finally:
+            with _IN_FLIGHT_LOCK:
+                _IN_FLIGHT.discard(paper_id)
+
+    _spawn_background(_run)
+    return True
 
 
 if __name__ == "__main__":

@@ -119,8 +119,9 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_sections.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy).
 - `get_paper_summary(paper_id)`: 캐시(`doc_type: summary`)가 있으면 그대로 반환(추가 LLM 호출 0). 없으면 등록된 청크(References 제외)를 모아 `paper_extraction.py`의 구조화 스키마로 LLM을 한 번 호출한다 — 컨텍스트 예산을 넘으면 `ContextBudgetExceeded`를 그대로 전파(단순 경로 우선, map-reduce 재귀 분할은 아직 미구현).
 - `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다.
+- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다.
 
-미구현: 라이브러리 등록 폼(UI), "요약 부재 시 전문 청크로 답하고 백그라운드에서 요약 생성", 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
+미구현: 라이브러리 등록 폼(UI), 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
 
 ## 파일 구조
 

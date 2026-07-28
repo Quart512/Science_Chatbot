@@ -97,34 +97,24 @@ def test_line_itself_too_big_is_returned_as_is():
 # --- References 헤더 판별 (07-28) ---------------------------------------
 
 
-def test_is_references_header_matches_plain_english():
+def test_is_references_header_matches_common_variants():
+    # 영문(References/Bibliography/Works Cited) + 마크다운 볼드("**REFERENCES**",
+    # 실제 PDF 출력에서 관찰됨) + 한국어(참고문헌, 띄어쓰기 변형) 전부 잡아야 한다
     assert _is_references_header("REFERENCES")
     assert _is_references_header("References")
-
-
-def test_is_references_header_matches_markdown_bold():
-    # "**REFERENCES**"처럼 볼드 기호가 섞여 들어오는 실제 케이스
     assert _is_references_header("**REFERENCES**")
-
-
-def test_is_references_header_matches_bibliography_and_works_cited():
     assert _is_references_header("Bibliography")
     assert _is_references_header("Works Cited")
-
-
-def test_is_references_header_matches_korean():
     assert _is_references_header("참고문헌")
-    assert _is_references_header("참고 문헌")  # 띄어쓰기 변형
+    assert _is_references_header("참고 문헌")
 
 
-def test_is_references_header_rejects_normal_section():
+def test_is_references_header_rejects_non_references():
+    # 정상 섹션 오탐은 내용이 통째로 걸러지는 사고로 이어진다. 또한 헤더 텍스트가
+    # "references"로 시작하지 않으면 오탐하지 않는다 — 문장 중간에 그 단어가
+    # 섞인 경우까지 잡으면 오탐 위험이 커진다.
     assert not _is_references_header("I. 서론")
     assert not _is_references_header("A. First Section")
-
-
-def test_is_references_header_rejects_word_mid_sentence():
-    # 헤더 텍스트가 "references"로 시작하지 않으면 오탐하지 않는다 — 문장
-    # 중간에 그 단어가 섞인 경우까지 잡으면 오탐 위험이 커진다.
     assert not _is_references_header("See references section")
 
 
@@ -149,6 +139,32 @@ def test_references_chunk_is_flagged_but_not_dropped():
     # 버리지 않고 원문 그대로 남겨둬야 한다(모듈 docstring 참고)
     combined = "".join(c["text"] for c in ref_chunks)
     assert "Some Author, Some Title" in combined
+
+
+# Conclusion과 References를 합쳐도 max_chars(4000)를 넉넉히 넘지 않을 만큼 짧게 만듦 —
+# 병합 로직이 References 경계를 무시하면 이 둘이 같은 청크로 합쳐져버린다(07-28 버그 참고)
+CONCLUSION_THEN_REFERENCES_MD = (
+    "# Title\n\n## Conclusion\n\n짧은 결론 내용입니다.\n\n"
+    "## References\n\n[1] Some Author, Some Title, Some Journal, 2020.\n"
+)
+
+
+def test_reference_boundary_forces_separate_chunk_without_overlap():
+    # 병합이 max_chars만 보고 References 여부를 무시하면, Conclusion 내용이 References
+    # 조각과 한 청크로 묶여 통째로 is_references=True가 돼버려서 진짜 본문(Conclusion)까지
+    # 추출 LLM 입력에서 걸러지는 사고가 난다(07-28 버그) — 청크가 분리되는지, 그리고
+    # 그 경계엔 오버랩도 안 붙는지(본문↔참고문헌은 "문장이 끊긴 경계"가 아니므로,
+    # 붙이면 References 청크 안에 본문 조각이 다시 섞여 들어가 fix가 무의미해짐) 확인.
+    chunks = split_into_sections(CONCLUSION_THEN_REFERENCES_MD, max_chars=4000, overlap_chars=50)
+
+    non_ref_chunks = [c for c in chunks if not c["is_references"]]
+    ref_chunks = [c for c in chunks if c["is_references"]]
+
+    assert any("짧은 결론 내용입니다" in c["text"] for c in non_ref_chunks)
+    assert all("Some Author" not in c["text"] for c in non_ref_chunks)
+    assert ref_chunks
+    assert all("짧은 결론 내용입니다" not in c["text"] for c in ref_chunks)
+    assert not ref_chunks[0]["text"].startswith("(...이전 내용에서 이어짐)")
 
 
 # --- split_for_embedding() — 임베딩·검색용 청킹 (split_into_sections과 별개 함수) ------

@@ -13,6 +13,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from models import invoke_with_fallback
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
+import paper_ingest
 
 # =========================================================
 # Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력 (서브그래프)
@@ -103,10 +104,34 @@ def retrieve(state: State) -> dict:
     # 없으면(컬렉션이 비어있으면) 빈 리스트가 돌아올 뿐이라 안전 — feynman 전용이던 기존 동작을
     # 깨지 않는다(eval.json 평가 코퍼스에는 논문이 등록돼 있지 않으므로 기존 점수도 그대로).
     paper_docs = papers_vectorstore.as_retriever(search_kwargs={"k": k}).invoke(state.question)
+
+    # QA 중 요약 부재 시 전문 청크로 답하고 요약 생성은 백그라운드로(To Do 6-3). "전문
+    # 청크로 답한다" 쪽은 이미 그냥 되는 동작이다 — summary 문서가 없으면 위 유사도 검색이
+    # 애초에 fulltext_chunk만 돌려주기 때문에 이 함수는 항상 하던 대로 답변용 문서를 모을
+    # 뿐이다. 여기서 하는 일은 그 "요약이 아직 없다"는 걸 감지해서 백그라운드 생성을
+    # 트리거하는 것뿐 — 이번 턴 응답을 막지 않는다(paper_ingest.py의
+    # ensure_summary_in_background 모듈 docstring 참고). papers_vectorstore를 그대로
+    # 넘기는 이유: 위에서 검색(as_retriever)에도 쓴 같은 Chroma 객체라 get/delete/add_texts도
+    # 지원한다 — 별도 커넥션을 새로 만들 필요가 없다.
+    candidate_paper_ids = {
+        d.metadata["paper_id"] for d in paper_docs
+        if d.metadata.get("doc_type") == "fulltext_chunk" and "paper_id" in d.metadata
+    }
+    started = [
+        pid for pid in candidate_paper_ids
+        if paper_ingest.ensure_summary_in_background(pid, model=state.model, vectorstore=papers_vectorstore)
+    ]
+
     # 재검색 시 벡터DB 문서는 새것으로 교체하되(단순 합치면 겹치는 문서가 중복 누적),
     # tool로 수집한 증거는 보존 — tool 문서는 metadata source가 tool 이름 (chroma 문서는 "feynman")
     tool_docs = [d for d in state.context if d.metadata.get("source") in tool_map]
-    return {"context": docs + paper_docs + tool_docs, "needs_more_context": False, "top_k": k}
+    trace_note = f"\n논문 {started} 요약 생성을 백그라운드로 시작함(다음 조회부터 캐시됨)" if started else ""
+    return {
+        "context": docs + paper_docs + tool_docs,
+        "needs_more_context": False,
+        "top_k": k,
+        "trace": state.trace + trace_note,
+    }
 
 # 문서 기반으로 답변 생성. tool 실행은 별도 tools 노드가 담당 (ReAct 루프를 그래프 구조로).
 # system prompt는 state에 안 쌓고 매번 최신 context로 새로 조립 — messages에는 Human/AI/Tool만 쌓인다

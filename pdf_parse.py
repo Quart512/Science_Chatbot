@@ -46,8 +46,10 @@ def parse_pdf(path: str) -> dict:
     수식(폰트 인코딩에 따라 깨진 유니코드로 나올 수 있음)은 애초에 신뢰하지 않는다 —
     수식이 필요한 곳(예: 요약 메타데이터)에서는 "수식 신뢰 불가"로 별도 표기할 것.
     """
-    doc = fitz.open(path)
-    try:
+    # fitz.Document는 context manager를 지원한다 — with 블록을 빠져나갈 때(정상 종료든
+    # 예외든 return이든) 파이썬이 알아서 doc.close()를 호출해준다. try/finally로 직접
+    # close()를 챙기던 걸 이걸로 대체 — 동작은 동일하고 명시적으로 챙길 게 하나 준다.
+    with fitz.open(path) as doc:
         page_count = len(doc)
 
         if _looks_scanned(doc):
@@ -65,13 +67,11 @@ def parse_pdf(path: str) -> dict:
             "markdown": markdown,
             "page_count": page_count,
         }
-    finally:
-        doc.close()
 
 
 if __name__ == "__main__":
     import sys
-    from pathlib import Path
+    # from pathlib import Path  # 아래 .parsed.md 저장(주석 처리됨)에서만 쓰던 import
 
     if len(sys.argv) < 2:
         print("사용법: uv run pdf_parse.py <PDF 경로>")
@@ -83,11 +83,13 @@ if __name__ == "__main__":
     if result["text_extractable"]:
         print(f"마크다운 총 길이: {len(result['markdown'])}자")
 
-        # 터미널에 몇백~몇천 자만 찍어서는 2단 조판이 뒤섞였는지 눈으로 확인하기 어렵다 —
-        # 전체를 .md 파일로 떨궈서 에디터로 열어 스크롤/검색하며 확인하는 쪽이 실질적으로 낫다.
-        out_path = Path(sys.argv[1]).with_suffix(".parsed.md")
-        out_path.write_text(result["markdown"], encoding="utf-8")
-        print(f"전체 마크다운을 파일로 저장함: {out_path}")
-        print("에디터로 열어서 본문(초록·서론 지나 2단으로 조판되는 페이지)을 직접 확인해줘.")
+        # 전체 마크다운을 .md 파일로 떨궈서 에디터로 눈으로 확인하던 디버깅용 코드 —
+        # 2단 조판 확인(To Do)이 이미 끝나서 지금은 안 씀. 다른 포맷의 논문을 새로
+        # 눈으로 확인해야 할 일이 생기면 그때 다시 주석을 풀 것. 어떤 실제 코드도(예:
+        # paper_ingest.py의 register_paper()) 이 .parsed.md 파일에 의존하지 않는다 —
+        # 다들 parse_pdf()의 반환값(markdown 문자열)을 메모리에서 바로 쓴다.
+        # out_path = Path(sys.argv[1]).with_suffix(".parsed.md")
+        # out_path.write_text(result["markdown"], encoding="utf-8")
+        # print(f"전체 마크다운을 파일로 저장함: {out_path}")
     else:
         print("스캔본으로 판단됨 (텍스트 레이어 없음) — OCR 미적용, text_extractable=False")

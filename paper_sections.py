@@ -81,6 +81,17 @@
 # 전용 도구가 따로 있는 이유 — RoadMap "PDF 파싱 라이브러리 선택" 참고), 지금
 # 소비처(⑦ 논문 작성의 인용 목록)가 없는 상태에서 미리 만들어봤자 검증할 방법도
 # 없다(품질 평가를 소비처 생길 때까지 미룬 것과 같은 논리).
+#
+# References 경계는 병합 max_chars와 별개로 강제 flush (07-28, 실사용 중 발견):
+# is_references는 청크 단위로 any(headers)로 매겨지는데, 처음엔 병합 루프가 References
+# 여부를 전혀 신경 안 쓰고 진행됐다 — 그러면 References 조각이 옆의 진짜 본문(예:
+# Conclusion 끝부분)과 우연히 같은 청크로 묶이는 경우, 그 청크 전체가 is_references=True로
+# 뭉뚱그려져서 진짜 본문까지 추출 LLM 입력에서 통째로 걸러지는 사고가 날 수 있었다(호출부는
+# is_references 플래그만 보고 거르지, 청크 안에 뭐가 실제로 섞였는지 다시 안 들여다보므로).
+# 그래서 References 안팎을 넘나드는 지점은 max_chars 여유가 남았어도 무조건 flush해 청크
+# 경계로 강제한다 — 이러면 References 청크는 항상 순수하게 References만 담는다(본문 조각이
+# 섞여 들어올 일이 없음). 이 강제 flush에는 overlap도 안 붙인다 — 본문↔참고문헌은 "문장이
+# 뚝 끊긴 경계"가 아니라 "성격이 다른 섹션의 경계"라 이어붙일 이유가 없다.
 # =========================================================
 
 import re
@@ -190,19 +201,33 @@ def split_into_sections(
 
     for header_label, text in pieces:
         piece_len = len(text)
+        piece_is_ref = _is_references_header(header_label)
+        current_is_ref = any(_is_references_header(h) for h in current_headers)
+        # is_references는 청크 단위로 any(...)로 매겨지는데, 병합이 References 여부를
+        # 신경 안 쓰고 진행되면 References 조각 하나가 옆의 진짜 본문(예: Conclusion
+        # 끝부분)과 같은 청크로 묶여버려 그 청크 전체가 is_references=True로 잘못
+        # 태깅된다 — 그러면 추출 LLM 입력에서 진짜 본문까지 통째로 걸러지는 사고가
+        # 난다(호출부는 is_references만 보고 거르지, 청크 안에 뭐가 섞였는지 다시
+        # 안 들여다봄). 그래서 References 안팎을 넘나드는 지점은 max_chars와 무관하게
+        # 무조건 flush해 경계를 강제한다.
+        crosses_reference_boundary = bool(current_headers) and piece_is_ref != current_is_ref
 
-        # 지금까지 모아둔 게 있는데 이 조각까지 더하면 넘친다 -> 먼저 flush
-        if current_texts and current_len + piece_len > max_chars:
+        # 지금까지 모아둔 게 있는데 이 조각까지 더하면 넘치거나, References 경계를
+        # 막 넘으려는 참이면 -> 먼저 flush
+        if current_texts and (current_len + piece_len > max_chars or crosses_reference_boundary):
             flushed_text = "\n\n".join(current_texts)
             merged.append({
                 "index": len(merged),
                 "headers": current_headers,
                 "text": flushed_text,
-                "is_references": any(_is_references_header(h) for h in current_headers),
+                "is_references": current_is_ref,
             })
 
-            # 방금 청크의 꼬리를 다음 청크 시작에 오버랩으로 이어붙임
-            tail = flushed_text[-overlap_chars:] if overlap_chars else ""
+            # 방금 청크의 꼬리를 다음 청크 시작에 오버랩으로 이어붙임 — 단, References
+            # 경계를 넘는 flush는 예외: 본문↔참고문헌은 "문장이 뚝 끊긴 경계"가 아니라
+            # "성격이 다른 섹션의 경계"라 이어붙일 이유가 없고, 붙이면 References로
+            # 태깅된 청크 안에 본문 조각이 다시 섞여 들어가 이 fix의 의미가 없어진다.
+            tail = flushed_text[-overlap_chars:] if (overlap_chars and not crosses_reference_boundary) else ""
             current_texts, current_headers, current_len = [], [], 0
             if tail:
                 overlap_text = f"(...이전 내용에서 이어짐) {tail}"

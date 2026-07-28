@@ -56,6 +56,8 @@ DDG `site:arxiv.org` 우회는 스니펫만 줄 뿐 논문 분석기가 필요�
 
 `retrieval.py`에 물리 QA용 `feynman`과 분리된 `papers_vectorstore`(같은 임베딩 모델 공유, `doc_type: fulltext_chunk/summary`로 구분)를 신설하고, `graph.py`의 `retrieve()`가 이 컬렉션도 검색해 QA에 논문 참고를 추가 LLM 호출 없이 붙이게 했다(빈 컬렉션이면 그냥 빈 결과 — 기존 eval 점수에 영향 없음). 실제 14페이지 논문으로 등록(122청크)+요약 생성까지 스모크 테스트 확인.
 
+마지막으로 "요약 부재 시 전문 청크로 답하고 요약 생성은 백그라운드로" 요구를 채웠다. 전반부는 사실 별도 코드가 필요 없었다 — 요약 문서가 없으면 유사도 검색이 애초에 `fulltext_chunk`만 돌려주기 때문. 후반부(`paper_ingest.py`의 `ensure_summary_in_background()`)는 daemon thread로 `get_paper_summary()`를 실행하고 즉시 반환해 이번 턴을 막지 않는다 — 완료를 실시간으로 통지하는 채널은 안 만들었다(다음 조회 때 캐시로 잡히는 것 자체가 결과). 같은 논문이 멀티턴 대화에서 짧은 간격으로 여러 번 걸리는 경우를 대비해 모듈 전역 in-flight 집합으로 중복 생성만 막았다. 실제 스레드 기동을 `_spawn_background()` 한 줄짜리 함수로 분리해, 테스트에서는 이 함수만 동기 실행으로 갈아끼워 진짜 스레드·진짜 LLM 없이 판단 로직(캐시 확인·중복 방지)을 검증했다.
+
 카탈로그(SQLite, 상태 관리)는 의도적으로 이번 범위 밖에 뒀다 — 지금은 Chroma 메타데이터가 등록 여부의 유일한 기록이고, 상태(recommended/owned/dismissed) 관리는 6-6에서.
 
 ## 회고
