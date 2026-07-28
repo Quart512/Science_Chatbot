@@ -176,6 +176,10 @@ def run_tools(state: State) -> dict:
     rounds = state.tool_rounds
 
     tool_msgs, tool_docs = [], []
+    attempted = False  # 이번 run_tools() 호출에서 실제로 invoke()를 시도한 tool_call이 하나라도 있었는지
+    # ([한도 초과]/[사용 불가]로 조기 거절된 요청은 실행이 아니므로 라운드 예산을 안 깎음 —
+    #  안 그러면 이미 disabled된 tool을 LLM이 모르고 재요청하는 라운드가 fallback tool이
+    #  실제로 시도될 라운드를 잡아먹어버림, arxiv 서킷 브레이커 케이스에서 실제로 겪음)
     for tc in last.tool_calls:
         name, tid = tc["name"], tc["id"]
 
@@ -190,10 +194,15 @@ def run_tools(state: State) -> dict:
                                          tool_call_id=tid, status="error"))
             continue
         # 실제 실행 — 예외는 인프라 문제
+        attempted = True
         try:
             result = str(tool_map[name].invoke(tc["args"]))[:4000]  # 길이 제한: messages+context 이중 반입되므로 토큰 폭발 방지
         except Exception as e:
             failures[name] = failures.get(name, 0) + 1
+            # 실패 1회차부터 바로 콘솔에 실제 예외 내용을 찍음 — 예전엔 서킷 브레이커(2회차)가
+            # 켜질 때만 print해서, 1번만 실패한 경우엔 콘솔에 아무 흔적도 안 남고 SSE trace를
+            # 뒤져야만 원인을 알 수 있었음(예: arxiv ReadTimeout 디버깅 때 겪음)
+            print(f"tool '{name}' 실패({failures[name]}회차): {type(e).__name__}: {e}")
             if failures[name] >= 2 and name not in disabled:  # 서킷 브레이커
                 disabled.append(name)
                 print(f"tool '{name}' 연속 {failures[name]}회 실패 → 이번 런에서 비활성화")
@@ -217,7 +226,7 @@ def run_tools(state: State) -> dict:
             "context": state.context + tool_docs,  # verify가 tool 근거를 보도록 병합
             "tool_failures": failures,
             "disabled_tools": disabled,
-            "tool_rounds": rounds + 1,
+            "tool_rounds": rounds + 1 if attempted else rounds,
             "trace" : state.trace+
             f"""------\n {tool_msgs}\n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}"""}
 

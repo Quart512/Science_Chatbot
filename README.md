@@ -135,6 +135,7 @@ Science_Chatbot/
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
 ├── models.py             # model_map + invoke_with_fallback (모델 등록·fallback 정책의 단일 지점)
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
+├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 분석기·arxiv 검색 tool이 공유)
 ├── retrieval.py          # 임베딩 + 벡터스토어 (ingest와 공유 — 임베딩 모델 불일치를 구조로 방지)
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── main.py               # FastAPI: POST /query

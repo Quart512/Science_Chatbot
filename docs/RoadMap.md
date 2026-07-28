@@ -38,6 +38,8 @@
 | 07-24 | 물리 QA 서브그래프 포장 (6-1) | `graph.py`를 checkpointer 없는 순수 능력으로 분리 — `reset_turn` 노드는 fresh invoke 자체가 Pydantic 기본값으로 이미 초기화라 통째로 불필요해져 삭제(당초 "부모로 이동" 계획보다 더 단순해짐). `orchestrator.py` 신설: `ParentState`(question/answer/comment/model/tokens_used/disabled_models/messages) + `physics_qa_node` 래퍼(능력을 fresh invoke하고, 새로 생긴 메시지만 슬라이싱해 반환 — `add_messages`가 id 기준 병합이라 안 그래도 중복은 안 되지만 매 턴 불필요한 교체 시도를 피함). checkpointer는 이제 orchestrator 소유. `main.py`가 orchestrator를 호출하도록 전환, `top_k`/`limit`은 능력 내부 다이얼이라 API에서 제거. mock 모델로 멀티턴 스모크 테스트 검증(메시지 중복 없이 정상 누적) |
 | 07-27 | effort 프로필 (low/medium/high) | top_k/limit은 능력 내부 다이얼이라는 판단은 유지, 그 위에 Claude reasoning effort와 같은 패턴으로 사용자 노출용 프로필만 추가. `graph.py`의 `EFFORT_PROFILES`(dict) + `model_validator`로 숫자 매핑 캡슐화, `orchestrator`/`main`/프론트는 이름만 통과. 죽어있던 프론트 top_k 슬라이더를 effort 선택박스로 교체 |
 | 07-27 | 스트리밍/진행상황 API + comment·트레이스 분리 (6-2) | 래퍼 함수 노드 패턴상 부모(orchestrator) 레벨 `stream_mode`로는 능력 내부 진행상황이 안 보여서, `physics_qa_node`가 능력을 `stream(stream_mode="values")`로 순회하며 `get_stream_writer()`로 부모의 `stream_mode="custom"`에 실어 보냄. `main.py` `/query`가 `astream`+SSE로 전환. 스트리밍하다 comment가 사용자용/디버그 트레이스 역할을 겸하던 문제 발견 — `State`에 `trace`(내부 로그) 신설, `comment`는 verify의 구조화 출력(`answer.comment`)만 담도록 분리 |
+| 07-27 | arxiv API 이슈 해결 (6-3 선행) | `langchain_community`의 `ArxivQueryRun`이 arxiv.org 서버 이슈+구버전 API 요구로 막혀있던 것을, `arxiv_api.py` 신설로 해결 — export.arxiv.org의 공식 API를 `requests`로 직접 호출·Atom XML 파싱해 제목/저자/연도/arxiv id/요약을 구조화된 dict로 반환(새 의존성 없음). `tool.py`의 `search_arxiv` tool이 이걸 감싸 물리 QA의 tool-calling 루프에 사용(기존 DDG `site:arxiv.org` 우회 대체), 원본 `arxiv_search()` 함수는 6-3 논문 분석기가 그대로 재사용할 예정 |
+| 07-27 | tool 라운드 예산 낭비 버그 수정 | 실전에서 `search_arxiv` 연속 2회 실패로 서킷 브레이커 발동 후, LLM이 그 사실을 모르고 3회차에 같은 tool을 재요청 → `[사용 불가]`로 거부됐는데 이 거부까지 `tool_rounds`를 소모해버려서, 정작 fallback tool(`duckduckgo_search`)은 `MAX_TOOL_ROUNDS=3` 한도 초과로 시도조차 못 해본 채 끝난 사례 발견(verify는 "정직한 실패 인정"으로 통과했지만 구조적으로 fallback이 항상 막히는 상태였음). `run_tools()`에 `attempted` 플래그를 추가해 `[한도 초과]`/`[사용 불가]`처럼 실행을 시도조차 안 한 거부는 라운드로 안 세도록 수정 — 전역 라운드 캡 자체는 유지(tool별 연속실패 카운터만으로 대체하면 여러 tool을 번갈아 실패하는 라운드-로빈 패턴에서 무한루프 방지가 안 됨) |
 
 ## 🔄 진행 중
 
@@ -49,7 +51,7 @@
 
 | 목표 시기 | 항목 | 내용 |
 |---|---|---|
-| 08-03 | 논문 분석기 (②) — 허브 능력 | abstract 트리아지 → 전문 요약·평가 → 논문 요약 VDB 저장. **메타데이터에 서지정보(제목·저자·연도·arxiv id) 포함** — 참고문헌 인용 포맷(BibTeX 등)의 전제. ③④⑦이 전부 재사용하므로 최우선. 선행: arxiv API 이슈 해결. ② 완성 직후 QA(④)에 "참고" 부착(retrieve 문서 메타데이터, 추가 호출 0)이 거의 자동으로 생김 |
+| 08-03 | 논문 분석기 (②) — 허브 능력 | abstract 트리아지 → 전문 요약·평가 → 논문 요약 VDB 저장. **메타데이터에 서지정보(제목·저자·연도·arxiv id) 포함** — 참고문헌 인용 포맷(BibTeX 등)의 전제. ③④⑦이 전부 재사용하므로 최우선. 선행 조건(arxiv API 이슈)은 07-27에 해결 완료 — `arxiv_api.py`의 `arxiv_search()`를 그대로 재사용. ② 완성 직후 QA(④)에 "참고" 부착(retrieve 문서 메타데이터, 추가 호출 0)이 거의 자동으로 생김 |
 | 08-05 | SqliteSaver 영속화 | MemorySaver는 재시작 시 소멸 → 디스크 영속화. **HITL보다 먼저** — interrupt로 멈춘 승인 대기 상태가 재시작에 살아남아야 함. `/query` 응답에 interrupted 상태 + resume 엔드포인트 API 설계 포함 |
 | 08-07 | 관심사 서비스 (①) | 관심사 저장소(VDB 컬렉션) + 문서 작성기 능력(대화 → 템플릿 문서, 유사도 중복 검사 → 기존 편집 제안, 등록 확인 `interrupt`) + 턴 종료 후 훅("대화 내용을 관심사로 등록할까요?" — 싼 모델 1회 판정). 작성기는 ⑤ 실험도구와 템플릿만 갈아끼워 공용 |
 | 08-09 | 추천 검색 (③) + 논문 카탈로그 | ③: **관심사에서 트리거할 때만** 실행 (cron 아님) — 관심사 기준 검색 → ②로 평가 → 랭킹 → 카탈로그에 recommended 기록. 논문 카탈로그(SQLite, DOI 기본 키, `status: recommended/owned/dismissed`) — 등록 시 DOI 매칭으로 recommended → owned 전환(추천에서 내려감). 권위 논문 목록(인용수 기반)도 관심사별 조회·캐시. **검색·평가 내부를 공용 함수로 분리**해 참고문헌 추천기와 공유(추천기는 문맥 기반 온디맨드, QA 풀 호출은 라우터 분기) |

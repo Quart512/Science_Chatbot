@@ -180,8 +180,76 @@ top_k/limit 자체는 "능력 내부 다이얼이라 부모 State에 안 넣는�
 - 2026-07-24 (2): **아키텍처 개편** — 단일 슈퍼바이저 챗봇 → 표면/능력/데이터 3층 구조 (§7). README 목표 아키텍처 전면 교체, RoadMap 예정 순서 재편(논문 분석기 최우선, 스트리밍·SqliteSaver 전진 배치), To Do List 동기화.
 - 2026-07-24 (4): **설계 확장 — 표면 4개 체제**: 라이브러리 표면 신설(관심사·논문·실험도구·지식 노트 관리 통합 — 논문 등록의 주 경로), 피드 재정의(관심사 무관 hype 소식 cron 크롤링 + 키워드 태깅 + 관심사 일치 색 강조·상단 정렬), 추천 검색(③)은 관심사 트리거 온디맨드로 전환, 논문 카탈로그(DOI 기본 키, status로 등록 시 추천에서 자동 하차), 지식 노트(`user_note` 신뢰도 구분). 외부 논문 API(Crossref·Unpaywall·OpenAlex)는 최종 단계 어댑터로 후순위 명시. 프론트 스택 재검토(Streamlit 한계) 노트. architecture.png 재갱신.
 - 2026-07-27: **6-1 실행** — orchestrator.py 분리(래퍼 함수 노드, checkpointer·reset_turn 부모 소속 → reset_turn 자체가 불필요해져 삭제), mock 스모크 테스트 검증. **effort 프로필** 도입(low/medium/high, Claude reasoning effort 패턴 — 숫자 매핑은 능력 내부에 캡슐화). **6-2 실행** — 스트리밍 API(SSE): 당초 계획한 `stream_mode="updates"` 대신 래퍼 함수 노드 패턴 특성상 `get_stream_writer()` + `stream_mode="custom"`으로 능력 내부 진행상황을 직접 흘려보내는 방식으로 조정. §7.3 항목 5(comment 채널 분리) 실행 — `trace`(내부 디버그 로그) 신설, `comment`는 verify의 구조화 출력만 담도록 정리(§8).
+- 2026-07-27 (2): **arxiv API 이슈 해결(6-3 선행)** — `arxiv_api.py` 신설, export.arxiv.org 공식 API 직접 호출로 구조화된 서지정보(제목·저자·연도·arxiv id) 확보. `tool.py`의 DDG `site:arxiv.org` 우회를 `search_arxiv` tool로 교체. 진단 중 curl 대조 테스트로 코드 문제가 아니라 arxiv 자체 rate limit(429/503)임을 확인 → 3초 스로틀링 + `Retry-After` 존중 재시도 추가. 파싱 로직을 네트워크와 분리해 `tests/test_arxiv_api.py`로 톨게이트 테스트화(§9).
 - 2026-07-24 (3): **참고문헌 추천기 설계 추가** — ③과 검색·평가 내부를 공유하는 온디맨드 능력. 참고문헌은 연구 워크플로우가 끌고 다니는 누적 산출물(가설 단계부터 각 단계가 append, 서지+인용 이유+단계 기록 → ⑦이 소비, 목록 밖 인용은 환각 신호). QA(④)는 기본 retrieve 메타데이터 "참고" 부착(추가 호출 0) + 온디맨드 풀 호출. 전제: ② 요약 VDB 메타데이터에 서지정보 포함. README 능력 표·설계 포인트, RoadMap, To Do List 반영.
+- 2026-07-27 (3): **tool 라운드 예산 낭비 버그 수정** — 실전 arxiv 서킷 브레이커 케이스에서, 이미 disabled된 tool 재요청/한도 초과 거부처럼 실행을 시도조차 안 한 라운드까지 `tool_rounds`가 소모되어 fallback tool이 시도될 라운드가 안 남던 문제 발견. `run_tools()`에 `attempted` 플래그 추가해 실제 실행 시도가 있을 때만 라운드 소모하도록 수정(§10). 전역 라운드 캡은 tool별 서킷 브레이커와 목적이 달라(라운드-로빈 실패 패턴 방지) 유지.
+
+## 9. arxiv API 이슈 해결 (6-3 선행 조건)
+
+`tool.py`에 `#ArxivQueryRun(),  #arxiv.org 서버 자체 이슈 (2025-11 이후), langchain_community도 구버전 API 요구`라는 주석과 함께 막혀있던 게 있었다 — 그 우회책으로 DuckDuckGo에 `site:arxiv.org`를 붙여 검색해왔는데, 검색 스니펫만 줄 뿐 논문 분석기(6-3)가 필요로 하는 구조화된 서지정보(제목·저자·연도·arxiv id)는 못 준다. 6-3 착수 전에 반드시 풀어야 하는 선행 조건이었다.
+
+### 9.1 방향 결정
+
+세 가지 옵션을 검토했다 — ① arxiv 공식 API를 직접 호출(Atom XML 파싱), ② `arxiv` PyPI 패키지(전용 클라이언트) 사용, ③ 지금 방식(DDG 검색) 유지하고 LLM이 스니펫에서 메타데이터를 추출. ③은 구조화 정확도가 근본적으로 불안정(환각 위험)해서 제외, ①·② 중 새 의존성이 필요 없고 표준 라이브러리(`xml`)+이미 있는 `requests`만으로 되는 ①을 선택했다.
+
+`arxiv_api.py` 신설 — `export.arxiv.org/api/query`(Atom XML)를 직접 호출·파싱해 `title/authors/year/arxiv_id/summary/pdf_url` 구조화 dict를 반환하는 `arxiv_search()`. `tool.py`는 이걸 감싼 `search_arxiv` tool로 기존 DDG 우회를 교체(물리 QA의 tool-calling 루프에 편입), 원본 dict 반환 함수는 6-3 논문 분석기가 그대로 재사용할 수 있게 남겨뒀다.
+
+### 9.2 실행하며 겪은 문제 — rate limit 진단
+
+로컬에서 처음 돌렸을 때 20초 `ReadTimeout`이 났다. 코드 문제인지 네트워크(방화벽·VPN) 문제인지 구분하기 위해 `curl -v`로 같은 엔드포인트를 직접 찔러봤더니 — curl은 빠르게 `429 Too Many Requests` ("Rate exceeded")를 받았다. 즉 접속 자체는 정상이고, **arxiv 서버가 실제로 요청을 제한**하고 있었던 것 — 타임아웃은 그 제한 상태에서 응답이 지연된 것으로 보인다. 이후 짧은 시간에 curl·python으로 반복 테스트하다 `503`(arxiv 문서상 "서버 과부하, `Retry-After` 헤더 존중" 응답)까지 겪었다. curl과 python 양쪽으로 대조 테스트해서 "코드가 틀렸다"와 "외부 서비스가 제한 중이다"를 구분한 사례 — README_12 §4의 "재빌드 안 됐는데 로직 버그로 오인할 뻔한 것"과 같은 종류의 교훈이다.
+
+대응:
+- 요청 간 3초 스로틀링(`_throttle()`, arxiv 공식 가이드라인)
+- 429/503에 대해 `Retry-After` 헤더를 존중하며 최대 2회 자동 재시도
+- 테스트 중 반복 요청으로 IP가 더 강하게 제한된 구간에선 재시도도 무의미해서, 그냥 대기 후 재확인 — 이후 정상 동작 확인(논문 3건 제목/저자/연도/id/요약 정상 반환)
+
+### 9.3 겸사겸사 — 파싱 로직을 네트워크와 분리해 테스트 가능하게
+
+`_parse_atom_response(xml_text)`를 네트워크 호출(`arxiv_search`)에서 분리했다 — 그래야 실제 arxiv API를 두드리지 않고도(=rate limit 걱정 없이) pytest로 파싱 로직을 검증할 수 있다. arxiv 공식 문서 예시 형식 그대로 만든 샘플 Atom XML로 `tests/test_arxiv_api.py`에 3개 테스트(정상 파싱/summary 공백 정규화/빈 피드) 추가 — 기존 톨게이트 테스트 철학(외부 의존성 없이 1~2초 안에 끝남)을 그대로 따름.
+
+## 10. tool 라운드 예산 낭비 버그 수정
+
+### 증상
+
+실전 대화("최근 얽힘 관련 arxiv 논문 찾아줘")에서 `search_arxiv`가 계속 `ReadTimeout`을 내는 상황을 재현했는데, 최종적으로 `duckduckgo_search`로 fallback했어야 할 결과가 "arXiv 도구가 작동하지 않아 찾을 수 없다"는 답으로 끝났다. verify는 이걸 "제약된 상황에서 정직한 답"으로 통과시켰지만, SSE 트레이스를 전부 까보니 `duckduckgo_search`는 **한 번도 실제로 실행되지 못했다** — `[한도 초과]`로 거부된 것.
+
+### 원인
+
+라운드별 순서를 재구성하면:
+
+1. 1라운드: `search_arxiv` 요청 → `ReadTimeout` (실패 1회차) → `tool_rounds` 1
+2. 2라운드: `search_arxiv` 재요청 → `ReadTimeout` (실패 2회차) → 서킷 브레이커 발동, `disabled_tools`에 추가 → `tool_rounds` 2
+3. 3라운드: LLM이 아직 disabled된 걸 모르고 `search_arxiv`를 또 요청 → `run_tools()`가 `[사용 불가]`로 즉시 거부(실행 자체를 안 함) → 그런데도 `tool_rounds`가 3으로 올라감
+4. LLM이 `duckduckgo_search`로 전환해도, 이미 `tool_rounds >= MAX_TOOL_ROUNDS(3)`라 `[한도 초과]`로 거부 — 실행 기회 자체가 없음
+
+즉 `run_tools()`가 `tool_rounds`를 "실제로 tool을 실행해봤는지"와 무관하게 **호출 1번당 무조건 +1**로 세고 있었다. `[한도 초과]`/`[사용 불가]`처럼 실행을 시도조차 안 한 조기 거부까지 라운드로 소모되면서, 정작 fallback tool이 시도될 라운드가 남지 않았다.
+
+전역 라운드 캡 자체를 없애고 "tool별 연속 실패 횟수"만으로 대체하는 방안도 검토했지만 기각했다 — 서킷 브레이커는 이미 tool별로 따로 돌고 있고(`tool_failures`), 전역 캡은 그것과 다른 문제(여러 tool을 번갈아 실패하는 라운드-로빈 패턴에서 tool 호출이 무한정 늘어나는 것)를 막는 별개의 안전장치라, 없애면 이 시나리오의 무한루프 방지가 안 된다.
+
+### 수정
+
+`run_tools()`에 `attempted` 플래그를 추가해, 실제로 `tool_map[name].invoke()`를 시도한 tool_call이 이번 호출에 하나라도 있었을 때만 `tool_rounds`를 올리도록 바꿨다.
+
+```python
+attempted = False
+for tc in last.tool_calls:
+    ...
+    if rounds >= MAX_TOOL_ROUNDS:
+        ...; continue  # 실행 안 함 → attempted 그대로
+    if name not in tool_map or name in disabled:
+        ...; continue  # 실행 안 함 → attempted 그대로
+    attempted = True
+    try:
+        result = str(tool_map[name].invoke(tc["args"]))[:4000]
+    ...
+
+return {..., "tool_rounds": rounds + 1 if attempted else rounds, ...}
+```
+
+이렇게 하면 위 3라운드의 거부는 예산을 안 깎고, LLM이 다음에 `duckduckgo_search`로 전환했을 때 실제로 실행될 라운드가 남는다.
 
 ## 회고
 
 verify에 대화 이력을 안 넘기고 있었다는 게 코드를 짜고 나서야 실제 멀티턴 대화로 써보다가 드러났다 — `route_by_fix`/`reset_turn`처럼 순수 함수 단위 pytest로는 애초에 잡을 수 없는 종류의 버그였다(여러 노드에 걸친 "이 정보가 이 노드까지 전달되는가" 통합 이슈). 톨게이트 테스트가 커버하는 범위와, 실제로 대화해봐야 드러나는 범위가 다르다는 걸 다시 확인했다. 재빌드가 안 됐는데 로직 버그로 오인할 뻔한 것도 비슷한 교훈 — 로그만 보고 판단하지 말고 컨테이너 안을 직접 까봐야 확실해진다.
+
+tool 라운드 예산 버그도 같은 계열이다 — `run_tools()`/`generate()` 각각은 단위 테스트로 봐도 이상이 없어 보였는데(서킷 브레이커도 정상 발동, active_tools 필터링도 정상), 실제 실패가 여러 라운드에 걸쳐 누적되는 실전 시나리오를 SSE 트레이스로 라운드 단위까지 재구성하고 나서야 "거부도 라운드를 먹는다"는 상호작용이 드러났다. 개별 함수가 맞아도 여러 라운드/여러 노드에 걸친 예산 계산은 따로 검증해야 한다는 교훈.
