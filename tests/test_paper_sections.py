@@ -1,0 +1,184 @@
+"""
+split_into_sections — paper_sections.py의 순수 함수. LLM·PDF 파싱 없이 마크다운
+문자열만 가지고 도는 톨게이트 테스트. 검증 대상: index 순서, 짧은 섹션 병합,
+오버랩 삽입, 섹션 하나가 max_chars를 넘을 때의 줄 단위 분할 폴백(원래 문단
+단위로 계획했다가 MarkdownHeaderTextSplitter가 빈 줄 구분을 안 지켜서 줄
+단위로 바꾼 이유는 paper_sections.py 모듈 docstring 참고), 줄마저 너무 큰
+극단적 경우의 최종 처리.
+"""
+from paper_sections import _is_references_header, split_for_embedding, split_into_sections
+
+SAMPLE_MD = """# Title
+
+Intro paragraph before any subsection.
+
+## Author Name
+
+## A. First Section
+
+""" + ("첫 번째 섹션 내용. " * 20) + """
+
+## B. Second Section
+
+""" + ("두 번째 섹션 내용. " * 20) + """
+
+## C. Third Section
+
+""" + ("세 번째 섹션 내용. " * 20)
+
+# B 섹션 하나가 그 자체로 max_chars(아래 테스트에서 300 사용)를 넘도록, 짧은
+# 문단 여러 개로 구성된 큰 섹션 — 문단 분할 폴백이 이 안에서 자연스럽게
+# 재조립되는지 확인하는 데 씀
+OVERSIZED_SECTION_MD = "# Title\n\n## Huge Section\n\n" + "\n\n".join(
+    f"문단 {i}번 내용입니다." * 3 for i in range(30)
+)
+
+# 문단 구분(빈 줄)이 아예 없는, 그 자체로 거대한 단일 덩어리 — 3단계(문장 분할)는
+# 아직 없으므로 그대로 하나의 큰 청크로 남아야 하는 극단적 케이스
+NO_PARAGRAPH_BREAK_MD = "# Title\n\n## One Giant Blob\n\n" + ("x" * 5000)
+
+
+def test_index_is_sequential_from_zero():
+    chunks = split_into_sections(SAMPLE_MD, max_chars=4000, overlap_chars=100)
+    assert [c["index"] for c in chunks] == list(range(len(chunks)))
+
+
+def test_short_header_gets_merged_not_isolated():
+    # "Author Name"처럼 내용이 거의 없는 헤더는 옆 섹션과 합쳐져야 한다 —
+    # 독립된 청크로 살아남으면(즉 헤더 수만큼 청크가 나오면) 병합이 안 된 것
+    chunks = split_into_sections(SAMPLE_MD, max_chars=4000, overlap_chars=0)
+    all_headers = [h for c in chunks for h in c["headers"]]
+    assert "Author Name" in all_headers
+    # 헤더는 5개(Title/Author Name/A/B/C)인데 병합 덕에 청크 수는 그보다 적어야 함
+    assert len(chunks) < 5
+
+
+def test_no_content_lost_across_chunks():
+    chunks = split_into_sections(SAMPLE_MD, max_chars=4000, overlap_chars=0)
+    combined = "".join(c["text"] for c in chunks)
+    assert "첫 번째 섹션 내용." in combined
+    assert "두 번째 섹션 내용." in combined
+    assert "세 번째 섹션 내용." in combined
+
+
+def test_overlap_prefix_present_on_non_first_chunks():
+    # max_chars를 작게 줘서 강제로 여러 청크가 나오게 함
+    chunks = split_into_sections(SAMPLE_MD, max_chars=200, overlap_chars=50)
+    assert len(chunks) > 1
+    for c in chunks[1:]:
+        assert c["text"].startswith("(...이전 내용에서 이어짐)")
+    assert not chunks[0]["text"].startswith("(...이전 내용에서 이어짐)")
+
+
+def test_oversized_section_falls_back_to_line_split():
+    # "Huge Section" 하나가 max_chars(300)보다 훨씬 큼 -> 줄 단위로 쪼개져
+    # 여러 청크로 재조립돼야 한다. 줄 자체는 훨씬 작으므로(각 줄 30자 안팎)
+    # 결과 청크들이 max_chars를 훌쩍 넘는 채로 남아있으면 안 됨(오버랩 몫만 허용)
+    chunks = split_into_sections(OVERSIZED_SECTION_MD, max_chars=300, overlap_chars=0)
+    assert len(chunks) > 1
+    assert all(len(c["text"]) <= 300 for c in chunks)
+    # 내용도 안 없어졌는지 확인
+    combined = "".join(c["text"] for c in chunks)
+    assert "문단 0번 내용입니다." in combined
+    assert "문단 29번 내용입니다." in combined
+
+
+def test_line_itself_too_big_is_returned_as_is():
+    # 빈 줄로 나눌 지점이 아예 없는 5000자짜리 덩어리 -> 문장 분할(3단계)은
+    # 아직 없으므로, 이 함수는 그걸 그대로 하나의(예산 초과) 청크로 반환해야
+    # 한다 — 여기서 죽거나 내용을 잘라버리면 안 됨. 이 잔여 케이스를 실제로
+    # 막는 건 models.py의 check_context_budget()(호출 직전 안전망)의 몫.
+    chunks = split_into_sections(NO_PARAGRAPH_BREAK_MD, max_chars=300, overlap_chars=0)
+    assert any(len(c["text"]) > 300 for c in chunks)
+    combined = "".join(c["text"] for c in chunks)
+    assert "x" * 5000 in combined
+
+
+# --- References 헤더 판별 (07-28) ---------------------------------------
+
+
+def test_is_references_header_matches_plain_english():
+    assert _is_references_header("REFERENCES")
+    assert _is_references_header("References")
+
+
+def test_is_references_header_matches_markdown_bold():
+    # "**REFERENCES**"처럼 볼드 기호가 섞여 들어오는 실제 케이스
+    assert _is_references_header("**REFERENCES**")
+
+
+def test_is_references_header_matches_bibliography_and_works_cited():
+    assert _is_references_header("Bibliography")
+    assert _is_references_header("Works Cited")
+
+
+def test_is_references_header_matches_korean():
+    assert _is_references_header("참고문헌")
+    assert _is_references_header("참고 문헌")  # 띄어쓰기 변형
+
+
+def test_is_references_header_rejects_normal_section():
+    assert not _is_references_header("I. 서론")
+    assert not _is_references_header("A. First Section")
+
+
+def test_is_references_header_rejects_word_mid_sentence():
+    # 헤더 텍스트가 "references"로 시작하지 않으면 오탐하지 않는다 — 문장
+    # 중간에 그 단어가 섞인 경우까지 잡으면 오탐 위험이 커진다.
+    assert not _is_references_header("See references section")
+
+
+# --- split_into_sections()의 is_references 필드 --------------------------
+
+REFERENCES_MD = (
+    SAMPLE_MD
+    + "\n\n## References\n\n"
+    + "[1] Some Author, Some Title, Some Journal, 2020.\n" * 20
+)
+
+
+def test_normal_chunks_are_not_flagged_as_references():
+    chunks = split_into_sections(SAMPLE_MD, max_chars=4000, overlap_chars=0)
+    assert all(c["is_references"] is False for c in chunks)
+
+
+def test_references_chunk_is_flagged_but_not_dropped():
+    chunks = split_into_sections(REFERENCES_MD, max_chars=4000, overlap_chars=0)
+    ref_chunks = [c for c in chunks if c["is_references"]]
+    assert ref_chunks, "References 헤더를 포함한 청크가 최소 하나는 있어야 함"
+    # 버리지 않고 원문 그대로 남겨둬야 한다(모듈 docstring 참고)
+    combined = "".join(c["text"] for c in ref_chunks)
+    assert "Some Author, Some Title" in combined
+
+
+# --- split_for_embedding() — 임베딩·검색용 청킹 (split_into_sections과 별개 함수) ------
+
+def test_split_for_embedding_index_is_sequential_from_zero():
+    pieces = split_for_embedding(SAMPLE_MD, chunk_size=500, chunk_overlap=50)
+    assert [p["index"] for p in pieces] == list(range(len(pieces)))
+
+
+def test_split_for_embedding_chunks_are_small():
+    # split_into_sections과 달리 여기는 조각이 작아야 한다(기본 500자 근방) —
+    # 헤더 섹션 하나 전체가 통째로 나오면 잘게 쪼개는 목적 자체가 실패한 것
+    pieces = split_for_embedding(SAMPLE_MD, chunk_size=500, chunk_overlap=50)
+    assert len(pieces) > 3  # 최소한 섹션 수(5개 헤더)보다는 많이 쪼개져야 함(각 섹션이 500자보다 김)
+    assert all(len(p["text"]) <= 600 for p in pieces)  # 약간의 여유(오버랩 등)만 허용
+
+
+def test_split_for_embedding_no_content_lost():
+    pieces = split_for_embedding(SAMPLE_MD, chunk_size=500, chunk_overlap=50)
+    combined = "".join(p["text"] for p in pieces)
+    assert "첫 번째 섹션 내용." in combined
+    assert "두 번째 섹션 내용." in combined
+    assert "세 번째 섹션 내용." in combined
+
+
+def test_split_for_embedding_flags_references_pieces():
+    pieces = split_for_embedding(REFERENCES_MD, chunk_size=500, chunk_overlap=50)
+    ref_pieces = [p for p in pieces if p["is_references"]]
+    non_ref_pieces = [p for p in pieces if not p["is_references"]]
+    assert ref_pieces, "References 헤더 아래 조각이 최소 하나는 있어야 함"
+    assert non_ref_pieces, "일반 섹션 조각도 그대로 있어야 함(버리지 않음)"
+    combined_refs = "".join(p["text"] for p in ref_pieces)
+    assert "Some Author, Some Title" in combined_refs

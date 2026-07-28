@@ -12,7 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 
 from models import invoke_with_fallback
 from tool import tools_list, tool_map
-from retrieval import vectorstore
+from retrieval import vectorstore, papers_vectorstore
 
 # =========================================================
 # Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력 (서브그래프)
@@ -95,10 +95,18 @@ def retrieve(state: State) -> dict:
         print(f"질문: {state.question}")
     k = state.top_k + (1 if state.needs_more_context else 0)
     docs = vectorstore.as_retriever(search_kwargs={"k": k}).invoke(state.question)
+    # 논문 라이브러리(②a, paper_ingest.py가 채우는 papers_vectorstore)도 같은 질문으로 검색해
+    # "참고"로 붙인다 — 별도 LLM 호출 없이 retrieve 시점 벡터 검색만으로 되므로 추가 비용 0
+    # (To Do "완성 직후 QA에 참고 부착... 추가 호출 0" 참고). fulltext_chunk/summary 어느 쪽이든
+    # 검색 대상이고, 어느 논문·어느 doc_type에서 왔는지는 문서 metadata(paper_id/doc_type)로
+    # 이미 구분되니 여기서 더 나눌 필요 없이 그냥 같은 컨텍스트 리스트에 합친다. 등록된 논문이
+    # 없으면(컬렉션이 비어있으면) 빈 리스트가 돌아올 뿐이라 안전 — feynman 전용이던 기존 동작을
+    # 깨지 않는다(eval.json 평가 코퍼스에는 논문이 등록돼 있지 않으므로 기존 점수도 그대로).
+    paper_docs = papers_vectorstore.as_retriever(search_kwargs={"k": k}).invoke(state.question)
     # 재검색 시 벡터DB 문서는 새것으로 교체하되(단순 합치면 겹치는 문서가 중복 누적),
     # tool로 수집한 증거는 보존 — tool 문서는 metadata source가 tool 이름 (chroma 문서는 "feynman")
     tool_docs = [d for d in state.context if d.metadata.get("source") in tool_map]
-    return {"context": docs + tool_docs, "needs_more_context": False, "top_k": k}
+    return {"context": docs + paper_docs + tool_docs, "needs_more_context": False, "top_k": k}
 
 # 문서 기반으로 답변 생성. tool 실행은 별도 tools 노드가 담당 (ReAct 루프를 그래프 구조로).
 # system prompt는 state에 안 쌓고 매번 최신 context로 새로 조립 — messages에는 Human/AI/Tool만 쌓인다

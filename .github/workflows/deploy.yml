@@ -4,19 +4,13 @@ on:
   push:
     branches: [main]
 jobs:
+  # test.yml을 재사용(workflow_call) — pytest 스텝 자체는 test.yml 하나에만 두고
+  # 여기선 그걸 그대로 호출만 한다. test.yml은 PR에도 pull_request 트리거로 따로 붙어있어
+  # merge 전에 PR 화면에서 먼저 통과 여부가 보이고, main에 push(=merge)된 뒤 이 워크플로우가
+  # 다시 한번 같은 테스트를 돌려 배포 게이트로 쓴다(하나로 합치면 배포 직전 실패를 PR에서
+  # 미리 못 잡음 — 두 트리거를 유지하는 이유).
   test:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: 코드 체크아웃
-        uses: actions/checkout@v4
-
-      - name: uv 설치
-        uses: astral-sh/setup-uv@v3
-
-      - name: 테스트 (톨게이트)
-        run: |
-          uv sync
-          uv run pytest
+    uses: ./.github/workflows/test.yml
 
   deploy:
     needs: test # test job이 실패(또는 취소)하면 이 job은 시작조차 안 함

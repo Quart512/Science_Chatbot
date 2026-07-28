@@ -13,9 +13,10 @@ route_by_fix처럼 vectorstore를 전혀 쓰지 않는 순수 함수를 테스�
 먼저 등록해 진짜 retrieval.py(무거운 로딩)가 실행되지 않도록 막는다.
 
 --- retrieve() 노드처럼 vectorstore가 실제로 필요한 테스트를 나중에 추가한다면 ---
-graph.py는 `from retrieval import vectorstore`로 가져오므로, graph 모듈 안에도
-`vectorstore`라는 이름이 그대로 생긴다. 개별 테스트에서
+graph.py는 `from retrieval import vectorstore, papers_vectorstore`로 가져오므로, graph
+모듈 안에도 두 이름이 그대로 생긴다. 개별 테스트에서
     monkeypatch.setattr("graph.vectorstore", 원하는_가짜객체)
+    monkeypatch.setattr("graph.papers_vectorstore", 원하는_가짜객체)
 로 그때그때 원하는 가짜 객체를 넣으면 된다 — 이 conftest.py를 다시 건드릴 필요 없음.
 
 --- API 키 더미값 ---
@@ -37,7 +38,7 @@ import pytest
 os.environ.setdefault("GOOGLE_API_KEY", "test-dummy-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
-sys.modules.setdefault("retrieval", SimpleNamespace(vectorstore=None))
+sys.modules.setdefault("retrieval", SimpleNamespace(vectorstore=None, papers_vectorstore=None))
 
 
 @pytest.fixture

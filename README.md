@@ -10,9 +10,9 @@
 |---|---|---|
 | **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
-| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 | 상시 — 진행 상황이 바뀔 때마다 |
+| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다 |
 | **To Do List** (Obsidian 칸반) | 실행 단위 할 일 | 상시 — RoadMap과 짝으로 동기화 |
-| **docs/README_08~11.md** | 주차별 개발 회고 (아카이브) | 해당 주차 마무리 시 1회 |
+| **docs/README_08~12.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
 > 평소엔 **RoadMap ↔ To Do List**만 동기화하면 된다. 완료한 기능이 현황을 바꾸는 순간(예: 프론트엔드 추가 → 실행법 변경)에만 README/DEPLOY도 함께 손본다.
 
@@ -38,7 +38,7 @@
 | 능력 | 역할 | 핵심 기법 | 재사용처 |
 |---|---|---|---|
 | 물리 QA | 물리 지식 설명 | Self-RAG ← **현재 구현** | 메인 챗 |
-| 논문 요약기 (②a) | **보유 논문 전문** → 구조화 추출(핵심 주장 / 근거의 종류 / **저자가 밝힌 한계**·미해결 지점 / preprint·코드 공개 여부) → 논문 VDB 저장. lazy 생성 후 캐시. **품질 판정은 하지 않는다**(아래 설계 포인트) | 파이프라인 서브그래프 | 라이브러리 논문 탭(요약 요청) · 물리 QA(④) · 논문 작성(⑦) |
+| 논문 요약기 (②a) | **보유 논문 전문** → 구조화 추출(핵심 주장 / 근거의 종류 / **저자가 밝힌 한계**·미해결 지점 / preprint·코드 공개 여부) → 논문 VDB 저장. lazy 생성 후 캐시. **품질 판정은 하지 않는다**(아래 설계 포인트) ← **현재 구현**(`paper_ingest.py` — 상세는 아래 "논문 요약기(②a) — 현재 구현" 절) | 함수 조합(그래프 아님) | 라이브러리 논문 탭(요약 요청, 미구현) · 물리 QA(④, 연동됨) · 논문 작성(⑦, 미구현) |
 | 논문 스크리닝 (②b) | **abstract만** 보고 관련도 판정(유일한 LLM 판단) + 확인 가능한 축 병기: peer-review 여부(arXiv `journal_ref`), 연간 인용수, 출판 연도. 전문을 읽지 않는다(유료 저널은 읽을 수도 없음). **단일 점수로 합치지 않는다** | 경량 판정 (LLM은 관련도만, 나머지는 계산·조회) | 추천 검색(③) · 참고문헌 추천기 |
 | 논문 검색 (어댑터) | 쿼리 → 후보 목록(abstract + 서지 + 지표). arxiv·웹 검색 → 나중에 Crossref/OpenAlex로 교체 | 검색 함수 (LLM 거의 불필요) | 추천 검색(③) · 참고문헌 추천기 |
 | 문서 작성기 (①⑤ 공용) | 대화 → 템플릿 문서 변환, 유사도 중복 검사(신규 대신 기존 편집 제안), 등록 확인 `interrupt` | HITL | 모든 표면 — 템플릿만 갈아끼움(관심사/실험도구) |
@@ -56,7 +56,7 @@
 | 저장소 | 내용 | 형태 |
 |---|---|---|
 | 관심사 저장소 (①) | 사용자 관심사 문서 (템플릿 기반) | VDB 컬렉션 — 유사도 검색으로 중복 검사 |
-| 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** | VDB 컬렉션 — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
+| 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** ← **현재 구현**(`retrieval.py`의 `papers_vectorstore`) | VDB 컬렉션(`feynman`과 별도) — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
 | 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite). 기본 키는 **정규화된 `paper_id`**(`doi:...` → `arxiv:...` → 내용 해시 순), DOI는 별도 nullable·unique 컬럼 — arXiv preprint는 DOI가 없고 업로드 PDF는 둘 다 없을 수 있으며, 나중에 게재돼 DOI가 생겨도 `paper_id`는 불변. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
 | 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | VDB 컬렉션 — `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분** (RAG 검색은 되지만 사실 근거로는 논문·코퍼스 우선) |
 | 실험도구 DB (⑤) | 장비 spec 문서 | 구조화 레코드(정확 조회 필요) + 선택적 임베딩 |
@@ -112,6 +112,16 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - **로컬 임베딩** (BAAI/bge-m3): 임베딩에 API rate limit·비용 없음, 검색 시 외부 의존 없음
 - **LangSmith tracing** + LLM-as-judge 평가 (아래 [평가](#평가) 참고)
 
+## 논문 요약기 (②a) — 현재 구현
+
+`paper_ingest.py`가 등록(`register_paper`)과 조회 시 lazy 요약(`get_paper_summary`) 두 함수로 최소 구현되어 있다. 그래프가 아니라 평범한 함수 조합 — 지금 범위엔 조건 분기·HITL이 필요 없어 LangGraph로 감쌀 이유가 없었다.
+
+- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_sections.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy).
+- `get_paper_summary(paper_id)`: 캐시(`doc_type: summary`)가 있으면 그대로 반환(추가 LLM 호출 0). 없으면 등록된 청크(References 제외)를 모아 `paper_extraction.py`의 구조화 스키마로 LLM을 한 번 호출한다 — 컨텍스트 예산을 넘으면 `ContextBudgetExceeded`를 그대로 전파(단순 경로 우선, map-reduce 재귀 분할은 아직 미구현).
+- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다.
+
+미구현: 라이브러리 등록 폼(UI), "요약 부재 시 전문 청크로 답하고 백그라운드에서 요약 생성", 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
+
 ## 파일 구조
 
 ```
@@ -125,12 +135,19 @@ Science_Chatbot/
 │   ├── README_09.md         # 개발 회고 (9주차: QLoRA 파인튜닝·양자화·GGUF)
 │   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
 │   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
+│   ├── README_12.md         # 개발 회고 (CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
 ├── tests/
 │   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
-│   └── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
+│   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
+│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 (네트워크 없이)
+│   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
+│   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
+│   ├── test_paper_sections.py       # 헤더 분할·References 태깅·임베딩용 청킹
+│   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
+│   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -142,10 +159,15 @@ Science_Chatbot/
 ├── chroma_db/            # ChromaDB 영구 저장소
 ├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
-├── models.py             # model_map + invoke_with_fallback (모델 등록·fallback 정책의 단일 지점)
+├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
-├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 분석기·arxiv 검색 tool이 공유)
-├── retrieval.py          # 임베딩 + 벡터스토어 (ingest와 공유 — 임베딩 모델 불일치를 구조로 방지)
+├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 요약기·arxiv 검색 tool이 공유)
+├── pdf_parse.py          # PDF 파싱 어댑터 (PyMuPDF/pymupdf4llm 격리, AGPL 고지)
+├── paper_sections.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
+├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
+├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
+├── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
+├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
@@ -177,6 +199,9 @@ uv run fastapi dev main.py
 # 단독 실행 (터미널 테스트)
 uv run graph.py
 
+# (선택) 논문 한 편 등록 + 요약 생성 — 라이브러리 UI 전, 수동 등록 경로
+uv run paper_ingest.py <PDF 경로> [arxiv_id]
+
 # (선택) 자체 파인튜닝 모델 서빙 — model: "Qwen-tuned" 사용 시 필요
 llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
 ```
@@ -191,15 +216,18 @@ llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
 uv run pytest
 ```
 
-실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 1~2초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"만 골라서 검증한다 — 어떤 노드가 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙:
+실제 LLM 호출·벡터DB·임베딩 모델 없이(모두 모킹 또는 회피) 몇 초 안에 끝나는 유닛 테스트. "노드 내부 구현"이 아니라 "여러 노드가 공유하는 지점"·순수 함수·명시적 설계 결정만 골라서 검증한다 — 어떤 구현이 어떻게 바뀌든, 그 지점을 통과하는 입출력이 규격만 지키면 테스트는 그대로 유효하다는 원칙. 대표적으로:
 
 - `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
-- `_add_tokens` — 토큰 누적 헬퍼 (provider가 얹어주는 낯선 키를 무시하는지)
 - `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
+- `paper_id.normalize_paper_id` — DOI > arXiv > 파일 해시 우선순위, 재등록 멱등성
+- `paper_sections.split_into_sections`/`split_for_embedding` — 헤더 분할·병합, References 태깅
+- `paper_ingest.register_paper`/`get_paper_summary` — 가짜 vectorstore·가짜 LLM 응답을 주입해 등록·lazy 요약·캐시 로직만 검증
+- `graph.retrieve` — feynman·papers 두 컬렉션 검색 결과 병합 (가짜 vectorstore 주입)
 
 `tests/conftest.py`가 두 가지 import-time 문제를 미리 막아준다: `retrieval.py`의 무거운 임베딩 모델 로딩(가짜 모듈로 대체), `models.py`의 `model_map` 생성 시 API 키 존재 검사(더미 키로 통과, 로컬 `.env` 값은 덮어쓰지 않음). 그래서 CI에도 별도 API 키 Secret 없이 그대로 돈다.
 
-`.github/workflows/deploy.yml`의 `test` job이 이 테스트를 빌드·배포 전에 자동 실행하는 게이트 역할을 한다 — 실패하면 `deploy` job(이미지 빌드+push+EC2 배포)은 시작조차 안 됨. 상세: [docs/README_11.md](docs/README_11.md#8-테스트-게이트).
+CI는 `.github/workflows/test.yml`(재사용 워크플로우)에 pytest 실행 스텝을 하나만 두고 두 군데서 쓴다: PR(main 대상)에 직접 붙어 merge 전에 결과가 보이고, `deploy.yml`의 `test` job이 이걸 `uses:`로 재사용해 push(main) 시 배포 게이트로도 쓴다 — 실패하면 `deploy` job(이미지 빌드+push+EC2 배포)은 시작조차 안 됨. 상세: [docs/README_11.md](docs/README_11.md#8-테스트-게이트), [docs/README_12.md](docs/README_12.md#1-배포-전-테스트-게이트-ci).
 
 ## API
 
@@ -248,7 +276,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 지금까지의 진행 과정과 앞으로의 계획은 별도 문서에 정리되어 있다:
 
 - **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 진행 중, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
-- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD)
+- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD) · [README_12](docs/README_12.md)(CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
 
 ## 데이터 & 감사
 
@@ -264,6 +292,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 - `langchain-huggingface` — 로컬 임베딩 (bge-m3)
 - `langchain-chroma` — 벡터 저장소
 - `langchain-community` + `ddgs` — 웹 검색 tool
+- `pymupdf` + `pymupdf4llm` — PDF 파싱(마크다운 변환, `pdf_parse.py` 뒤에 격리). AGPL-3.0 듀얼 라이선스 — [docs/RoadMap.md](docs/RoadMap.md) "PDF 파싱 라이브러리 선택" 참고
 - `pydantic` — 구조화 출력·State 스키마
 - `fastapi` + `uvicorn` — REST API
 - `langsmith` — tracing·평가
