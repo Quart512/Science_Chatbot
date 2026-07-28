@@ -39,13 +39,13 @@ def test_parses_single_entry():
     assert p["year"] == "2023"
     assert p["arxiv_id"] == "2301.00001v2"  # 버전 접미사(v2)까지 그대로 유지
     assert p["pdf_url"] == "http://arxiv.org/pdf/2301.00001v2"
-    assert "many-body" in p["summary"]
+    assert "many-body" in p["abstract"]
 
 
-def test_summary_whitespace_normalized():
-    # arxiv summary는 원문에 줄바꿈·들여쓰기가 그대로 들어있음 — 한 줄로 정규화돼야 함
+def test_abstract_whitespace_normalized():
+    # arxiv abstract는 원문에 줄바꿈·들여쓰기가 그대로 들어있음 — 한 줄로 정규화돼야 함
     papers = _parse_atom_response(SAMPLE_ATOM_XML)
-    assert "\n" not in papers[0]["summary"]
+    assert "\n" not in papers[0]["abstract"]
 
 
 def test_empty_feed_returns_empty_list():

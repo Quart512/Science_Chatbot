@@ -52,6 +52,18 @@ EFFORT_PROFILES: dict[str, dict[str, int]] = {
     "high":   {"top_k": 5, "limit": 6},
 }
 
+# retrieve()가 feynman·papers를 점수로 병합한 뒤, 같은 paper_id의 문서를 몇 개까지
+# 허용할지(07-28, 리뷰 지적) — 점수 병합만 하면 논문 한 편이 k 슬롯을 전부 차지할 수
+# 있다. 한 논문 내부에 중복 원인이 여러 겹 있기 때문이다: (1) 같은 논문의 summary와
+# fulltext_chunk가 둘 다 검색 대상이라 내용이 구조적으로 겹치고, (2)
+# paper_chunking.split_for_embedding()의 chunk_overlap=50 때문에 인접 청크가 텍스트를
+# 공유하고, (3) 한 논문의 여러 청크가 같은 주장을 반복 서술하는 경우가 흔하다.
+# effort="low"(top_k=2)에서 관련 논문 한 편만 등록돼 있어도 context가 그 논문의
+# summary+청크 하나로 다 채워지고 feynman 문서가 0개가 될 수 있다(eval.json 코퍼스엔
+# 논문이 없어 이 문제를 평가가 못 잡음). MAX_CHUNKS_PER_PAPER는 그래서 둔 상한 —
+# feynman 문서는 paper_id가 없으므로 이 제한에 안 걸린다.
+MAX_CHUNKS_PER_PAPER = 2
+
 
 #LangGraph State 구성 - 그래프 전체 노드가 공유하는 상태
 class State(BaseModel):
@@ -90,36 +102,79 @@ class State(BaseModel):
             self.limit = profile["limit"]
         return self
 
+def _cap_docs_per_paper(scored_sorted: list, k: int, max_per_paper: int = MAX_CHUNKS_PER_PAPER) -> list:
+    """이미 점수순으로 정렬된 (doc, score) 목록에서 상위 k개를 뽑되, 같은 paper_id를
+    가진 문서는 max_per_paper개까지만 담는다(MAX_CHUNKS_PER_PAPER 모듈 상수 참고 —
+    feynman 문서는 metadata에 paper_id가 없어 이 제한과 무관하다).
+
+    캡에 걸려 건너뛴 자리는 그대로 비우지 않고, 정렬 순서상 그다음으로 점수 좋은
+    후보(다른 논문이든 feynman이든)가 자연스럽게 채운다 — "feynman 몫을 최소
+    보장"하는 별도 컬렉션 쿼터는 두지 않는다(07-28, 리뷰 지적: 특정 논문에 관한
+    질문에 feynman 문서를 억지로 끼워 넣으면 07-15에 고친 근접-오검색을 반대
+    방향으로 재현하는 셈이라 오히려 안 하는 게 맞다).
+    """
+    docs = []
+    counts: dict[str, int] = {}
+    for doc, _score in scored_sorted:
+        if len(docs) >= k:
+            break
+        paper_id = doc.metadata.get("paper_id")
+        if paper_id is not None:
+            if counts.get(paper_id, 0) >= max_per_paper:
+                continue
+            counts[paper_id] = counts.get(paper_id, 0) + 1
+        docs.append(doc)
+    return docs
+
+
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
     if state.try_count==0:
         print(f"질문: {state.question}")
     k = state.top_k + (1 if state.needs_more_context else 0)
-    docs = vectorstore.as_retriever(search_kwargs={"k": k}).invoke(state.question)
-    # 논문 라이브러리(②a, paper_ingest.py가 채우는 papers_vectorstore)도 같은 질문으로 검색해
-    # "참고"로 붙인다 — 별도 LLM 호출 없이 retrieve 시점 벡터 검색만으로 되므로 추가 비용 0
-    # (To Do "완성 직후 QA에 참고 부착... 추가 호출 0" 참고). fulltext_chunk/summary 어느 쪽이든
-    # 검색 대상이고, 어느 논문·어느 doc_type에서 왔는지는 문서 metadata(paper_id/doc_type)로
-    # 이미 구분되니 여기서 더 나눌 필요 없이 그냥 같은 컨텍스트 리스트에 합친다. 등록된 논문이
-    # 없으면(컬렉션이 비어있으면) 빈 리스트가 돌아올 뿐이라 안전 — feynman 전용이던 기존 동작을
-    # 깨지 않는다(eval.json 평가 코퍼스에는 논문이 등록돼 있지 않으므로 기존 점수도 그대로).
-    paper_docs = papers_vectorstore.as_retriever(search_kwargs={"k": k}).invoke(state.question)
+
+    # feynman(물리 강의록)과 papers_vectorstore(②a 논문 라이브러리, paper_ingest.py가 채움)를
+    # 같은 질문으로 둘 다 검색해 "참고"로 붙인다 — 별도 LLM 호출 없이 벡터 검색만으로 되므로
+    # 추가 비용 0(To Do "완성 직후 QA에 참고 부착... 추가 호출 0" 참고).
+    #
+    # 점수 기준으로 병합해 최종 문서 수를 k로 맞춘다(07-28, 리뷰 반영) — 예전엔 두 컬렉션에서
+    # 각각 k개씩 가져와 단순히 이어붙였는데, 그러면 논문이 하나라도 등록된 순간부터 매번
+    # 최대 2k개가 context에 들어갔다. top_k는 effort 프로필이 정하는 비용 다이얼인데
+    # "컬렉션당 몇 개"가 아니라 "총 몇 개의 문서를 볼지"가 원래 의도이므로, 두 컬렉션의
+    # 후보를 유사도 점수 기준 하나의 랭킹으로 합친 뒤 상위 k개만 취한다. 같은 임베딩
+    # 모델(bge-m3)·같은 거리 함수(Chroma 기본 L2, 값이 작을수록 더 유사)를 쓰는 두
+    # 컬렉션이라 점수를 직접 비교해도 된다. 등록된 논문이 없으면(컬렉션이 비어있으면)
+    # papers 쪽 후보가 없을 뿐이라 안전 — feynman 전용이던 기존 동작을 깨지 않는다
+    # (eval.json 평가 코퍼스에는 논문이 등록돼 있지 않으므로 기존 점수도 그대로).
+    #
+    # 단순 점수 병합만으로는 논문 한 편이 k 슬롯을 전부 차지할 수 있다(위
+    # MAX_CHUNKS_PER_PAPER 모듈 상수 참고) — _cap_docs_per_paper()로 paper_id별
+    # 개수를 제한하면서 상위 k개를 뽑는다.
+    feynman_scored = vectorstore.similarity_search_with_score(state.question, k=k)
+    paper_scored = papers_vectorstore.similarity_search_with_score(state.question, k=k)
+    merged_sorted = sorted(feynman_scored + paper_scored, key=lambda pair: pair[1])
+    docs = _cap_docs_per_paper(merged_sorted, k)
 
     # QA 중 요약 부재 시 전문 청크로 답하고 요약 생성은 백그라운드로(To Do 6-3). "전문
     # 청크로 답한다" 쪽은 이미 그냥 되는 동작이다 — summary 문서가 없으면 위 유사도 검색이
     # 애초에 fulltext_chunk만 돌려주기 때문에 이 함수는 항상 하던 대로 답변용 문서를 모을
     # 뿐이다. 여기서 하는 일은 그 "요약이 아직 없다"는 걸 감지해서 백그라운드 생성을
     # 트리거하는 것뿐 — 이번 턴 응답을 막지 않는다(paper_ingest.py의
-    # ensure_summary_in_background 모듈 docstring 참고). papers_vectorstore를 그대로
-    # 넘기는 이유: 위에서 검색(as_retriever)에도 쓴 같은 Chroma 객체라 get/delete/add_texts도
-    # 지원한다 — 별도 커넥션을 새로 만들 필요가 없다.
+    # ensure_summary_in_background 모듈 docstring 참고). 후보는 위 점수 병합에서 살아남아
+    # 실제로 이번 context에 들어간 문서만 본다 — 병합에서 밀려난(점수가 낮아 잘린) 논문까지
+    # 백그라운드 생성 대상으로 삼을 이유는 없다. papers_vectorstore를 그대로 넘기는 이유:
+    # 위에서 검색에도 쓴 같은 Chroma 객체라 get/delete/add_texts도 지원한다 — 별도 커넥션을
+    # 새로 만들 필요가 없다. model은 일부러 안 넘긴다(07-28, 리뷰 지적) — 요약은 모든
+    # 사용자·모든 턴이 공유하는 캐시 산출물이라 그 턴에 우연히 고른 state.model(예: 예산이
+    # 작은 Qwen-tuned)을 따라가면 안 된다. paper_ingest.py의 기본값(BACKGROUND_SUMMARY_MODEL,
+    # 예산이 가장 넉넉한 모델로 고정)을 그대로 쓴다.
     candidate_paper_ids = {
-        d.metadata["paper_id"] for d in paper_docs
+        d.metadata["paper_id"] for d in docs
         if d.metadata.get("doc_type") == "fulltext_chunk" and "paper_id" in d.metadata
     }
     started = [
         pid for pid in candidate_paper_ids
-        if paper_ingest.ensure_summary_in_background(pid, model=state.model, vectorstore=papers_vectorstore)
+        if paper_ingest.ensure_summary_in_background(pid, vectorstore=papers_vectorstore)
     ]
 
     # 재검색 시 벡터DB 문서는 새것으로 교체하되(단순 합치면 겹치는 문서가 중복 누적),
@@ -127,7 +182,7 @@ def retrieve(state: State) -> dict:
     tool_docs = [d for d in state.context if d.metadata.get("source") in tool_map]
     trace_note = f"\n논문 {started} 요약 생성을 백그라운드로 시작함(다음 조회부터 캐시됨)" if started else ""
     return {
-        "context": docs + paper_docs + tool_docs,
+        "context": docs + tool_docs,
         "needs_more_context": False,
         "top_k": k,
         "trace": state.trace + trace_note,

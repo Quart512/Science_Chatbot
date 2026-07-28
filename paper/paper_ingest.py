@@ -1,5 +1,5 @@
 # =========================================================
-# 논문 요약기(②a) 오케스트레이션 — pdf_parse.py → paper_sections.py → paper_id.py →
+# 논문 요약기(②a) 오케스트레이션 — pdf_parse.py → paper_chunking.py → paper_id.py →
 # paper_extraction.py(LLM 구조화 추출) → 논문 VDB(retrieval.py의 papers_vectorstore)를
 # 잇는다. To Do "과학챗봇 6-3" / RoadMap "논문 처리 3분할"·"전문 처리" 설계 노트 참고.
 #
@@ -39,9 +39,9 @@
 # "참고"로 both 검색해 인용할 수 있다 — 요약이 생기고 나면 추가 호출 없이 그냥 검색 결과에
 # 섞여 들어온다(To Do "완성 직후 QA에 참고 부착... 추가 호출 0").
 #
-# is_references 필터링: paper_sections.py가 태깅해둔 is_references는 (1) 임베딩 시에는 그대로
+# is_references 필터링: paper_chunking.py가 태깅해둔 is_references는 (1) 임베딩 시에는 그대로
 # 저장하되(버리지 않음 — 나중 서지 추출용 원문 보관), (2) 구조화 추출 LLM 입력을 조립할 때는
-# 제외한다 — 인용 문자열 덩어리가 추출 LLM을 오염시키는 걸 막는다(paper_sections.py 모듈
+# 제외한다 — 인용 문자열 덩어리가 추출 LLM을 오염시키는 걸 막는다(paper_chunking.py 모듈
 # docstring "References 청크 표시" 참고).
 #
 # 재등록 처리: register_paper()는 삽입 "전에" 같은 paper_id의 기존 문서를 전부 지운다
@@ -60,24 +60,43 @@
 # 이유). 테스트는 이 자리에 가짜 vectorstore(인메모리 dict 흉내)를 주입하고, parse_pdf/
 # invoke_with_fallback은 monkeypatch로 갈아끼워 실제 PDF·임베딩·LLM 호출 없이 순수 로직만 검증한다.
 #
-# 패키지 구조 (07-28): 이 5개 파일(pdf_parse/paper_sections/paper_id/paper_extraction/
+# 패키지 구조 (07-28): 이 5개 파일(pdf_parse/paper_chunking(구 paper_sections)/paper_id/paper_extraction/
 # paper_ingest)은 paper/ 패키지로 묶여 있다 — 전부 "논문 하나를 파싱→분할→식별→추출→
 # 저장"하는 한 파이프라인의 단계들이라 경계가 뚜렷하다. retrieval.py(feynman QA와 papers_
 # vectorstore를 둘 다 담당하는 공용 인프라)와 arxiv_api.py(tool.py의 일반 검색 tool도 쓰는
 # 범용 외부 API 어댑터)는 이 파이프라인 전용이 아니라서 루트에 그대로 남겨뒀다.
+#
+# 실사용 리뷰로 발견된 수정 (07-28): (1) bibliographic을 화이트리스트 없이 통째로 받으면
+# arxiv abstract 같은 긴 필드가 청크 수만큼 그대로 복제돼 VDB에 쌓인다 — _BIBLIOGRAPHIC_
+# WHITELIST로 막음. (2) 백그라운드 요약 생성이 state.model을 따라가면 예산이 작은 모델이
+# 선택된 턴에 캐시가 영영 안 생긴다 — BACKGROUND_SUMMARY_MODEL로 고정하고, 그래도 나는
+# ContextBudgetExceeded(결정론적 실패)는 _PERMANENTLY_FAILED로 기록해 매 조회마다 재시도
+# 안 함(그 외 일시적 실패는 계속 재시도됨 — 아래 ensure_summary_in_background 참고).
+# (3) _fetch_summary가 metadatas[0]["extraction_json"]을 대괄호로 바로 읽으면 스키마가
+# 바뀌었을 때 KeyError로 조회 자체가 터진다 — .get()으로 받고 없으면 캐시 미스로 취급.
+# (4) register_paper()가 파일을 두 번(해시용 + parse_pdf 내부의 fitz.open(path)) 읽던
+# 것을 한 번만 읽어 재사용하도록 parse_pdf()를 경로가 아니라 바이트를 받게 바꿈.
 # =========================================================
 
 import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from models import check_context_budget, invoke_with_fallback
+from models import ContextBudgetExceeded, check_context_budget, invoke_with_fallback
 from paper.paper_extraction import PaperExtraction
 from paper.paper_id import normalize_paper_id
-from paper.paper_sections import split_for_embedding
+from paper.paper_chunking import split_for_embedding  # 구 paper_sections.py
 from paper.pdf_parse import parse_pdf
 
 FORMULA_DISCLAIMER = "(주의: 수식·이미지는 파싱 과정에서 신뢰할 수 없어 이 요약에 반영하지 않았습니다.)"
+
+# 백그라운드 요약 생성에 쓸 고정 모델(07-28, 리뷰 지적): ensure_summary_in_background()가
+# 그 턴에 사용자가 고른 모델(graph.py의 state.model)을 그대로 따라가면 안 된다 — 요약은
+# 한 번 생성되면 모든 사용자·모든 턴이 공유하는 캐시 산출물인데, 성공 여부와 품질이
+# "우연히 그 턴에 선택된 모델"에 좌우되면 안 된다. 특히 Qwen-tuned(CONTEXT_BUDGET_CHARS
+# 6,000자)로 걸리면 논문 대부분이 매 턴 ContextBudgetExceeded로 실패하고 캐시가 영영 안
+# 생긴다. 그래서 예산이 가장 넉넉한 모델(gemini, 800,000자, models.py 참고)로 고정한다.
+BACKGROUND_SUMMARY_MODEL = "gemini"
 
 EXTRACTION_SYSTEM_PROMPT = """너는 논문에서 구조화된 정보를 추출하는 어시스턴트다. 판단이나 품질
 평가를 하지 마라 — 오직 본문에 있는 내용만 추출해라. 본문에 없는 내용은 추론해서 채우지 말고
@@ -92,8 +111,21 @@ def _get_papers_vectorstore():
     return papers_vectorstore
 
 
+# register_paper()가 청크마다(!) 메타데이터로 복제해도 되는 서지 필드 화이트리스트
+# (07-28, 리뷰 지적): arxiv_search()가 주는 abstract는 1~2천자짜리 긴 텍스트라, 화이트
+# 리스트 없이 bibliographic dict를 통째로 받으면 논문 한 편이 N개 청크로 쪼개질 때 그
+# abstract가 N번 그대로 Chroma에 들어간다(60청크 논문이면 abstract 60부). 지금은
+# abstract를 아예 받지 않는다 — 소비하는 곳이 없어서(PaperExtraction 스키마에도 abstract
+# 필드가 없다) 미리 어딘가에 심어봤자 검증할 방법이 없다(품질 평가를 소비처 생길 때까지
+# 미룬 것과 같은 논리, paper_chunking.py 모듈 docstring 참고). 나중에 필요해지면 청크마다
+# 복제하지 말고 summary 문서(_store_summary가 만드는 doc_type="summary" 문서) 메타데이터에
+# 한 번만 넣는 방식으로 추가할 것.
+_BIBLIOGRAPHIC_WHITELIST = ("title", "authors", "year", "arxiv_id", "pdf_url")
+
+
 def _flatten_bibliographic(bibliographic: dict | None) -> dict:
-    """arxiv_search() 등이 주는 서지정보 dict를 Chroma 메타데이터로 쓸 수 있게 편다.
+    """arxiv_search() 등이 주는 서지정보 dict에서 화이트리스트(_BIBLIOGRAPHIC_WHITELIST)에
+    있는 키만 골라 Chroma 메타데이터로 쓸 수 있게 편다.
 
     Chroma 메타데이터 값은 str/int/float/bool만 허용(리스트·None 불가) — authors 같은
     list[str] 필드는 문자열로 합치고, None 값은 키 자체를 생략한다(빈 문자열로 채우면
@@ -102,7 +134,8 @@ def _flatten_bibliographic(bibliographic: dict | None) -> dict:
     if not bibliographic:
         return {}
     flat = {}
-    for k, v in bibliographic.items():
+    for k in _BIBLIOGRAPHIC_WHITELIST:
+        v = bibliographic.get(k)
         if v is None:
             continue
         if isinstance(v, list):
@@ -131,10 +164,14 @@ def register_paper(
     스캔본(text_extractable=False)이면 chunk_count=0으로 정직하게 보고하고 아무것도 저장하지
     않는다 — OCR을 붙이지 않는다는 pdf_parse.py의 원칙을 그대로 물려받는다.
     """
+    # 파일을 한 번만 읽는다(07-28, 리뷰 지적) — 이 file_bytes를 paper_id 계산(해시)과
+    # parse_pdf() 양쪽에 그대로 재사용한다. 예전엔 여기서 읽은 뒤 parse_pdf(pdf_path)가
+    # 내부에서 fitz.open(path)로 같은 파일을 디스크에서 또 읽었다 — 큰 PDF에서 불필요한
+    # 중복 I/O였다.
     with open(pdf_path, "rb") as f:
         file_bytes = f.read()
 
-    parsed = parse_pdf(pdf_path)
+    parsed = parse_pdf(file_bytes)
     paper_id = normalize_paper_id(doi=doi, arxiv_id=arxiv_id, file_bytes=file_bytes)
 
     if not parsed["text_extractable"]:
@@ -172,6 +209,12 @@ def register_paper(
     if texts:
         vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
 
+    # 재등록 = 요약 캐시 무효화와 같은 논리로, "영구 실패" 기록도 같이 지운다 — 전문
+    # 내용이 바뀌었으면(예: 불필요한 섹션 제거, 더 짧은 판본으로 교체) 전에는 예산을
+    # 넘었던 논문이 이번엔 안 넘을 수 있다. 옛 판정을 그대로 들고 있으면 재등록해도
+    # 영원히 재시도가 안 된다(아래 ensure_summary_in_background 모듈 docstring 참고).
+    _PERMANENTLY_FAILED.discard(paper_id)
+
     return {
         "paper_id": paper_id,
         "text_extractable": True,
@@ -197,7 +240,15 @@ def _fetch_summary(vectorstore, paper_id: str) -> PaperExtraction | None:
     metadatas = result.get("metadatas", [])
     if not metadatas:
         return None
-    return PaperExtraction.model_validate_json(metadatas[0]["extraction_json"])
+    # .get()으로 받는다(07-28, 리뷰 지적) — extraction_json은 이 코드가 직접 넣은 필드라
+    # 정상 경로에선 항상 있지만, 스키마가 바뀌거나 다른 경로로 doc_type="summary" 문서가
+    # 생기면 metadatas[0]["extraction_json"]이 KeyError로 조회 자체를 터뜨린다. 없으면
+    # "캐시 없음"(None)으로 취급 — 어차피 이 경우 재생성이 정답이므로 캐시 미스와 같은
+    # 처리로 충분하다.
+    extraction_json = metadatas[0].get("extraction_json")
+    if extraction_json is None:
+        return None
+    return PaperExtraction.model_validate_json(extraction_json)
 
 
 def _render_summary_text(extraction: PaperExtraction) -> str:
@@ -241,8 +292,12 @@ def _store_summary(vectorstore, paper_id: str, extraction: PaperExtraction) -> N
     )
 
 
-def get_paper_summary(paper_id: str, *, model: str = "gemini", vectorstore=None) -> dict:
+def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, vectorstore=None) -> dict:
     """paper_id의 구조화 요약을 lazy 생성 후 캐시해 반환한다.
+
+    model 기본값은 리터럴 "gemini"가 아니라 BACKGROUND_SUMMARY_MODEL을 그대로 참조한다
+    (07-28, 리뷰 지적) — 나중에 그 상수를 바꿀 때 이 함수의 기본값(예: 라이브러리 UI가
+    model 없이 그냥 호출하는 경로)만 옛 모델에 남아 어긋나는 일이 없게 한다.
 
     이미 만든 적 있으면(doc_type=summary 캐시) 그대로 반환 — 추가 LLM 호출 0. 없으면
     register_paper()가 저장해둔 fulltext_chunk를 모아(is_references 제외) 한 번에
@@ -301,6 +356,17 @@ def get_paper_summary(paper_id: str, *, model: str = "gemini", vectorstore=None)
 _IN_FLIGHT: set[str] = set()
 _IN_FLIGHT_LOCK = threading.Lock()
 
+# "재시도해도 결과가 똑같이 실패할 게 확실한" paper_id 집합(07-28, 리뷰 지적) —
+# ContextBudgetExceeded는 같은 모델(BACKGROUND_SUMMARY_MODEL로 고정돼 있으므로 항상
+# 같은 예산)로 같은 전문 텍스트를 보내면 항상 다시 예산을 넘는다. 이 실패를 기록 안
+# 하면 논문을 볼 때마다(멀티턴 대화라면 매 턴) retrieve()가 매번 새 스레드를 띄운다 —
+# 예산 초과 자체는 API 호출 전이라 비용은 0이지만, 무의미한 스레드 기동이 계속 반복된다.
+# 반대로 다른 예외(네트워크 순단, rate limit 등 일시적 실패)는 여기 안 넣는다 — 그런
+# 실패는 다음 시도에서 성공할 수 있으므로 계속 재시도돼야 한다(기존 동작 그대로 유지).
+# register_paper()가 재등록 시 이 집합에서 해당 paper_id를 지운다(위 register_paper
+# 참고) — 전문이 바뀌면 예산 초과 여부도 다시 확인해볼 가치가 있다.
+_PERMANENTLY_FAILED: set[str] = set()
+
 
 def _spawn_background(fn) -> None:
     """실제로 daemon thread를 띄우는 부분만 분리해둔 한 줄짜리 함수 — 테스트에서
@@ -308,17 +374,28 @@ def _spawn_background(fn) -> None:
     threading.Thread(target=fn, daemon=True).start()
 
 
-def ensure_summary_in_background(paper_id: str, *, model: str = "gemini", vectorstore=None) -> bool:
+def ensure_summary_in_background(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, vectorstore=None) -> bool:
     """paper_id에 캐시된 요약이 없으면 백그라운드에서 생성을 시작한다(모듈 docstring
     "ensure_summary_in_background" 항목 참고). 이번 턴의 응답은 막지 않는다 — QA는 그동안
     (이미 그렇게 동작하던 대로) 전문 청크로 답한다.
 
-    이미 요약이 있거나, 이미 같은 paper_id에 대해 생성이 진행 중이면 아무것도 안 하고
-    False를 반환한다. 새로 생성을 시작했으면 True — 호출자(retrieve())가 이 값으로
-    trace에 "백그라운드로 시작함"을 기록하는 데 쓴다(실제 완료 여부와는 무관 — 완료는
-    다음 조회 때 캐시로 확인된다).
+    model은 호출하는 쪽(graph.py의 retrieve())이 그 턴의 state.model을 넘기면 안 된다
+    (07-28, 리뷰 지적) — 요약은 모든 사용자·모든 턴이 공유하는 캐시 산출물이라 기본값
+    BACKGROUND_SUMMARY_MODEL(예산이 가장 넉넉한 모델)로 고정해서 쓴다.
+
+    이미 요약이 있거나, 이미 같은 paper_id에 대해 생성이 진행 중이거나, 전에 시도했다가
+    영구 실패로 기록됐으면(_PERMANENTLY_FAILED — ContextBudgetExceeded, 아래 참고)
+    아무것도 안 하고 False를 반환한다. 새로 생성을 시작했으면 True — 호출자(retrieve())가
+    이 값으로 trace에 "백그라운드로 시작함"을 기록하는 데 쓴다(실제 완료 여부와는 무관 —
+    완료는 다음 조회 때 캐시로 확인된다).
     """
     vectorstore = vectorstore or _get_papers_vectorstore()
+
+    # 영구 실패 집합 확인이 먼저다(07-28, 리뷰 지적) — 이건 프로세스 메모리 안 set
+    # 조회라 사실상 공짜지만, _fetch_summary()는 vectorstore.get() 호출(DB 조회)이라
+    # 비용이 있다. 영구 실패로 이미 아는 논문이면 굳이 DB까지 갈 필요가 없다.
+    if paper_id in _PERMANENTLY_FAILED:
+        return False
 
     if _fetch_summary(vectorstore, paper_id) is not None:
         return False
@@ -331,10 +408,18 @@ def ensure_summary_in_background(paper_id: str, *, model: str = "gemini", vector
     def _run():
         try:
             get_paper_summary(paper_id, model=model, vectorstore=vectorstore)
+        except ContextBudgetExceeded as e:
+            # 같은 모델(고정됨)·같은 전문 텍스트로는 다시 불러도 항상 똑같이 예산을
+            # 넘는다 — 재시도해도 결과가 바뀌지 않는 결정론적 실패이므로 영구 실패로
+            # 기록해 매 조회마다 스레드를 새로 띄우는 낭비를 막는다(위 _PERMANENTLY_FAILED
+            # 참고). register_paper()가 재등록 시 이 기록을 지운다.
+            _PERMANENTLY_FAILED.add(paper_id)
+            print(f"백그라운드 요약 생성 영구 실패(재등록 전까지 재시도 안 함, paper_id={paper_id}): {e}")
         except Exception as e:
-            # 백그라운드라 이 예외를 돌려줄 곳(사용자·호출 스택)이 없다 — 완전히 조용히
-            # 삼켜지면 디버깅이 불가능해지므로 최소한 콘솔에는 남긴다. 다음 조회 때 캐시가
-            # 여전히 없으므로 자연히 재시도된다(별도 재시도 로직 불필요).
+            # 그 외 실패(파싱 에러, 일시적 네트워크·rate limit 등)는 다음 시도에서
+            # 성공할 수 있으므로 영구 실패로 기록하지 않는다 — 백그라운드라 이 예외를
+            # 돌려줄 곳(사용자·호출 스택)이 없어 최소한 콘솔에는 남긴다. 다음 조회 때
+            # 캐시가 여전히 없으므로 자연히 재시도된다(별도 재시도 로직 불필요).
             print(f"백그라운드 요약 생성 실패 (paper_id={paper_id}): {type(e).__name__}: {e}")
         finally:
             with _IN_FLIGHT_LOCK:

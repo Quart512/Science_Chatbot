@@ -1,12 +1,12 @@
 """
-split_into_sections — paper_sections.py의 순수 함수. LLM·PDF 파싱 없이 마크다운
+split_into_sections — paper_chunking.py의 순수 함수. LLM·PDF 파싱 없이 마크다운
 문자열만 가지고 도는 톨게이트 테스트. 검증 대상: index 순서, 짧은 섹션 병합,
 오버랩 삽입, 섹션 하나가 max_chars를 넘을 때의 줄 단위 분할 폴백(원래 문단
 단위로 계획했다가 MarkdownHeaderTextSplitter가 빈 줄 구분을 안 지켜서 줄
-단위로 바꾼 이유는 paper_sections.py 모듈 docstring 참고), 줄마저 너무 큰
+단위로 바꾼 이유는 paper_chunking.py 모듈 docstring 참고), 줄마저 너무 큰
 극단적 경우의 최종 처리.
 """
-from paper.paper_sections import _is_references_header, split_for_embedding, split_into_sections
+from paper.paper_chunking import _is_references_header, split_for_embedding, split_into_sections
 
 SAMPLE_MD = """# Title
 
@@ -167,6 +167,25 @@ def test_reference_boundary_forces_separate_chunk_without_overlap():
     assert not ref_chunks[0]["text"].startswith("(...이전 내용에서 이어짐)")
 
 
+# References(h1) 아래에 그 자체로는 References로 안 읽히는 하위섹션(h2)이 있는 경우 —
+# 라벨(가장 깊은 헤더 하나, "Appendix A")만 보면 References 정규식에 안 걸리지만,
+# 실제로는 References 섹션 소속이므로 is_references=True로 잡혀야 한다(07-28 버그)
+REFERENCES_WITH_SUBSECTION_MD = (
+    "# Title\n\n## Intro\n\n" + "본문 내용입니다. " * 30
+    + "\n\n# References\n\n## Appendix A\n\n[1] Some Author, Some Title, Some Journal, 2020.\n"
+)
+
+
+def test_references_detected_even_under_non_matching_subsection_label():
+    # header_label(표시용, 가장 깊은 헤더 하나)만 보고 판정했다면 "Appendix A"라 놓쳤을
+    # 케이스 — is_references는 헤더 계층 전체(h1=References 포함)를 봐야 한다.
+    chunks = split_into_sections(REFERENCES_WITH_SUBSECTION_MD, max_chars=4000, overlap_chars=0)
+    ref_chunks = [c for c in chunks if c["is_references"]]
+    assert ref_chunks, "References(h1) 아래 하위섹션 청크도 is_references=True여야 함"
+    combined = "".join(c["text"] for c in ref_chunks)
+    assert "Some Author, Some Title" in combined
+
+
 # --- split_for_embedding() — 임베딩·검색용 청킹 (split_into_sections과 별개 함수) ------
 
 def test_split_for_embedding_index_is_sequential_from_zero():
@@ -198,3 +217,13 @@ def test_split_for_embedding_flags_references_pieces():
     assert non_ref_pieces, "일반 섹션 조각도 그대로 있어야 함(버리지 않음)"
     combined_refs = "".join(p["text"] for p in ref_pieces)
     assert "Some Author, Some Title" in combined_refs
+
+
+def test_split_for_embedding_detects_references_under_non_matching_subsection_label():
+    # split_into_sections()의 같은 버그(07-28)를 split_for_embedding()도 공유했다 —
+    # 라벨(가장 깊은 헤더, "Appendix A")만 보면 놓치는 케이스를 헤더 계층 전체로 잡는지 확인.
+    pieces = split_for_embedding(REFERENCES_WITH_SUBSECTION_MD, chunk_size=500, chunk_overlap=50)
+    ref_pieces = [p for p in pieces if p["is_references"]]
+    assert ref_pieces, "References(h1) 아래 하위섹션 조각도 is_references=True여야 함"
+    combined = "".join(p["text"] for p in ref_pieces)
+    assert "Some Author, Some Title" in combined

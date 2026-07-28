@@ -68,7 +68,7 @@
 - **논문 처리를 요약(②a) / 스크리닝(②b) / 검색으로 3분할**: "abstract 트리아지 → 통과하면 전문 요약"이라는 단일 파이프라인은 성립하지 않는다 — 유료 저널은 트리아지를 통과해도 전문을 읽을 수 없고, 반대로 라이브러리 보유 논문은 이미 선별이 끝나 트리아지가 불필요하다. 입력(전문 vs abstract+지표)·비용(비싸고 드묾 vs 싸고 대량)·호출자가 전부 다르므로 별개 능력으로 나눈다.
 - **등록 시 인코딩, 요약은 lazy**: 논문 등록 시점에는 전문 청킹·임베딩만 해서 검색 가능하게 만들고(인코딩 ≠ 요약), 요약은 라이브러리에서 요청받거나 QA·논문 작성이 필요로 할 때 생성 후 캐시. **QA 중 요약이 없으면 전문 청크로 답하고 요약 생성은 백그라운드로** — 인라인 생성은 응답을 수십 초 늘린다(스트리밍 도입으로 생기는 진행상황 채널에 얹는다).
 - **권위 판단은 LLM이 아니라 지표로**: 스크리닝에서 LLM은 "관심사와 관련 있나"(abstract 기반)만 담당하고, 신뢰도·권위는 저널·인용수 계산으로 낸다 — LLM에게 권위를 물으면 환각한다. 지표는 API 어댑터가 붙기 전엔 비어 있으므로 관련도만으로 랭킹하고, 필드는 미리 준비해둔다. 저자 h-index 같은 명성 지표는 쓰지 않는다(논문을 사람으로 판단하는 편향).
-- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록
+- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록. **References 판정은 대표 라벨이 아니라 헤더 계층 전체로**(07-28 수정) — 조각마다 표시용 대표 라벨은 가장 깊은 헤더 하나만 남기지만, `is_references` 분류는 그 라벨 하나가 아니라 헤더 계층 전체에 `any()`로 판정해 "References 아래 하위헤더"가 있는 조각도 빠짐없이 잡음
 - **논문 "품질 평가"는 보류 — 평가 대신 추출**: 실험 설계의 건전성·통계적 타당성·분야 내 신규성 판정은 피어 리뷰의 영역이고 도메인 전문성이 필요하다. LLM에 "신뢰도 점수"를 물으면 그럴듯한 노이즈가 나오는데, 하류(⑦ 인용·가설 수립)가 그걸 신호로 취급하므로 없는 것보다 나쁘다. 07-15에 verify 판정 기준을 "사실 오류만"으로 좁힌 것과 같은 실패 양상 — 모호한 품질 판정을 요구하면 모델이 아무 말이나 만들어낸다. 그래서 ②a는 판정 대신 **저자 자신의 진술을 추출**한다(추출은 판단이 아니라 신뢰 가능). 품질 평가 자체는 **논문 작성(⑦)이 실제로 그것을 소비할 수 있게 된 시점에 재검토** — 소비처가 없으면 기준을 검증할 방법도 없다.
 - **스크리닝 축을 합치지 않는다**: 관련도·최근성·인용·peer-review는 성격이 다른 축이라 하나의 점수로 합치면 가중치가 임의적이고 정보가 사라진다. 관련도로 1차 필터만 하고 나머지는 나란히 표시해 사용자가 정렬하게 한다("추천에서 끝나고 결정은 사람이" 방침과 일치). 최신이 항상 좋은 것도 아니다 — 기초 물리는 오래된 정전이, 실험 기법은 최신이 중요하므로 방향은 관심사별로 다르다.
 - **기각 이력이 평가 기준의 정답 레이블**: 카탈로그의 `status: dismissed`가 사용자의 판단 기록이므로, 스크리닝 기준을 바꿨을 때 "예전에 기각한 논문을 여전히 상위에 올리나"로 비교할 수 있다 — 별도 데이터 수집 없이 얻는 평가셋.
@@ -116,10 +116,10 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 
 `paper_ingest.py`가 등록(`register_paper`)과 조회 시 lazy 요약(`get_paper_summary`) 두 함수로 최소 구현되어 있다. 그래프가 아니라 평범한 함수 조합 — 지금 범위엔 조건 분기·HITL이 필요 없어 LangGraph로 감쌀 이유가 없었다.
 
-- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_sections.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy).
+- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_chunking.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy). `bibliographic`은 화이트리스트(title/authors/year/arxiv_id/pdf_url)만 청크 메타데이터로 복제한다 — abstract 같은 긴 필드를 그대로 받으면 청크 수만큼 그대로 복제돼 쌓인다(07-28 리뷰로 발견·수정).
 - `get_paper_summary(paper_id)`: 캐시(`doc_type: summary`)가 있으면 그대로 반환(추가 LLM 호출 0). 없으면 등록된 청크(References 제외)를 모아 `paper_extraction.py`의 구조화 스키마로 LLM을 한 번 호출한다 — 컨텍스트 예산을 넘으면 `ContextBudgetExceeded`를 그대로 전파(단순 경로 우선, map-reduce 재귀 분할은 아직 미구현).
-- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다.
-- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다.
+- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택 — 컬렉션별로 top_k씩 이어붙이면 항상 최대 2×top_k가 들어가던 문제를 수정(07-28 리뷰). 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(07-15 근접-오검색을 반대 방향으로 재현하므로).
+- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림) — 07-28 리뷰로 발견·수정.
 
 미구현: 라이브러리 등록 폼(UI), 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
 
@@ -146,7 +146,7 @@ Science_Chatbot/
 │   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 (네트워크 없이)
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
 │   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
-│   ├── test_paper_sections.py       # 헤더 분할·References 태깅·임베딩용 청킹
+│   ├── test_paper_chunking.py       # 헤더 분할·References 태깅·임베딩용 청킹
 │   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
 │   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 ├── evaluation/
@@ -165,7 +165,7 @@ Science_Chatbot/
 ├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 요약기·arxiv 검색 tool이 공유)
 ├── paper/                # 논문 파이프라인(파싱→분할→식별→추출→저장, 07-28 디렉토리로 묶음)
 │   ├── pdf_parse.py          # PDF 파싱 어댑터 (PyMuPDF/pymupdf4llm 격리, AGPL 고지)
-│   ├── paper_sections.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
+│   ├── paper_chunking.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
 │   ├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
 │   ├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
 │   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
@@ -223,7 +223,7 @@ uv run pytest
 - `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
 - `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
 - `paper_id.normalize_paper_id` — DOI > arXiv > 파일 해시 우선순위, 재등록 멱등성
-- `paper_sections.split_into_sections`/`split_for_embedding` — 헤더 분할·병합, References 태깅
+- `paper_chunking.split_into_sections`/`split_for_embedding` — 헤더 분할·병합, References 태깅
 - `paper_ingest.register_paper`/`get_paper_summary` — 가짜 vectorstore·가짜 LLM 응답을 주입해 등록·lazy 요약·캐시 로직만 검증
 - `graph.retrieve` — feynman·papers 두 컬렉션 검색 결과 병합 (가짜 vectorstore 주입)
 

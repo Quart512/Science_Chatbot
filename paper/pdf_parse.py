@@ -24,16 +24,31 @@ import pymupdf4llm
 # OCR은 붙이지 않는다 — 스캔본이면 그대로 정직하게 보고한다 (To Do "스캔본 감지" 참고).
 SCANNED_CHAR_THRESHOLD_PER_PAGE = 20
 
+# 스캔본 판별에 쓸 표본 페이지 수(07-28, 리뷰 지적): 전체 페이지를 다 훑을 필요가
+# 없다 — 스캔본이면 앞쪽 몇 페이지만 봐도 텍스트 레이어 부재가 이미 명백하고, 텍스트가
+# 있는 논문이면 첫 페이지부터 이미 있다. 전체를 다 훑으면 어차피 뒤에서 pymupdf4llm.
+# to_markdown()이 전체를 다시 추출할 큰 논문에서 같은 페이지를 두 번 순회하는 중복
+# 작업이 된다.
+SCANNED_DETECTION_SAMPLE_PAGES = 5
+
 
 def _looks_scanned(doc: fitz.Document) -> bool:
-    """페이지당 평균 추출 문자수로 텍스트 레이어 존재 여부를 판단한다."""
-    total_chars = sum(len(page.get_text("text")) for page in doc)
-    avg_chars_per_page = total_chars / max(len(doc), 1)
+    """앞쪽 최대 SCANNED_DETECTION_SAMPLE_PAGES 페이지만 표본으로 추출 문자수 평균을
+    내 텍스트 레이어 존재 여부를 판단한다(전체 페이지 순회 안 함 — 위 모듈 상수 참고)."""
+    sample_page_count = min(SCANNED_DETECTION_SAMPLE_PAGES, len(doc))
+    total_chars = sum(len(doc[i].get_text("text")) for i in range(sample_page_count))
+    avg_chars_per_page = total_chars / max(sample_page_count, 1)
     return avg_chars_per_page < SCANNED_CHAR_THRESHOLD_PER_PAGE
 
 
-def parse_pdf(path: str) -> dict:
+def parse_pdf(file_bytes: bytes) -> dict:
     """PDF 파일을 파싱해 마크다운 텍스트(헤딩 보존 시도)와 메타데이터를 반환한다.
+
+    file_bytes: PDF 원본 바이트. 경로 문자열이 아니라 바이트를 받는 이유(07-28, 리뷰
+    지적): 호출하는 쪽(register_paper())이 paper_id 계산(파일 해시)에도 같은 바이트가
+    필요해서 이미 파일을 한 번 읽어둔다 — 여기서 다시 경로로 fitz.open(path)를 하면
+    디스크에서 같은 파일을 또 읽는 중복 I/O가 생긴다. 이미 메모리에 있는 바이트를
+    stream=으로 그대로 넘겨 재사용한다.
 
     반환 키:
         text_extractable: bool — False면 스캔본(텍스트 레이어 없음), markdown은 빈 문자열
@@ -49,7 +64,7 @@ def parse_pdf(path: str) -> dict:
     # fitz.Document는 context manager를 지원한다 — with 블록을 빠져나갈 때(정상 종료든
     # 예외든 return이든) 파이썬이 알아서 doc.close()를 호출해준다. try/finally로 직접
     # close()를 챙기던 걸 이걸로 대체 — 동작은 동일하고 명시적으로 챙길 게 하나 준다.
-    with fitz.open(path) as doc:
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         page_count = len(doc)
 
         if _looks_scanned(doc):
@@ -77,7 +92,8 @@ if __name__ == "__main__":
         print("사용법: uv run paper/pdf_parse.py <PDF 경로>")
         sys.exit(1)
 
-    result = parse_pdf(sys.argv[1])
+    with open(sys.argv[1], "rb") as f:
+        result = parse_pdf(f.read())
     print(f"페이지 수: {result['page_count']}")
     print(f"텍스트 추출 가능: {result['text_extractable']}")
     if result["text_extractable"]:

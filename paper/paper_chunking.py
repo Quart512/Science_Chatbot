@@ -92,6 +92,23 @@
 # 경계로 강제한다 — 이러면 References 청크는 항상 순수하게 References만 담는다(본문 조각이
 # 섞여 들어올 일이 없음). 이 강제 flush에는 overlap도 안 붙인다 — 본문↔참고문헌은 "문장이
 # 뚝 끊긴 경계"가 아니라 "성격이 다른 섹션의 경계"라 이어붙일 이유가 없다.
+#
+# 파일명(07-28): paper_sections.py에서 paper_chunking.py로 변경 — 이 파일의 산출물은
+# 결국 둘 다 "청크"(index/text/is_references를 갖는 dict)이고, split_into_sections()의
+# "섹션"은 그 청크를 만드는 1단계 방법(헤더 기준 분할)일 뿐이라 파일 전체를 대표하는
+# 이름으로는 "청킹"이 더 맞는다고 판단.
+#
+# References 판정은 라벨이 아니라 헤더 계층 전체를 본다(07-28, 리뷰 지적): doc.metadata의
+# 값들(h1/h2/h3 순서로 쌓임) 중 "가장 깊은 것 하나"만 header_label로 뽑아 쓰는데, 이건
+# 어디까지나 "이 청크를 대략 어디라고 부를지" 표시용이다(위 "헤더 라벨의 신뢰도" 문단
+# 참고). 그런데 처음엔 References 판정도 이 라벨 하나만 보고 했다 — "# References" 밑에
+# "## 부록 A" 같은 하위섹션이 있으면(드물지만 가능), 라벨은 "부록 A"라 References
+# 정규식에 안 걸려서 그 조각이 is_references=False로 잘못 분류됐다. 실제로는 References
+# 섹션 소속인데도 놓치는 것 — 위 "References 경계는 병합 max_chars와 별개로 강제 flush"
+# 문단이 막으려던 것과 똑같은 사고(인용 문헌이 추출 LLM 입력에 새어 들어감)를 다른 경로로
+# 재현하는 셈이었다. 그래서 is_references만은 header_values 전체 중 하나라도 매치하면
+# True로 잡는다 — 라벨(header_label, 표시용)과 is_references(판정용)를 그 시점부터
+# 서로 다른 정보에 근거하게 분리했다.
 # =========================================================
 
 import re
@@ -179,37 +196,45 @@ def split_into_sections(
     # 보다 크면 2단계(줄 단위 분할)로 더 쪼개 여러 조각을 낸다 — 이러면 아래 병합
     # 루프가 "헤더에서 곧장 온 조각"과 "줄로 더 쪼개진 조각"을 구분할 필요
     # 없이 완전히 동일하게 취급할 수 있다.
-    pieces: list[tuple[str, str]] = []  # (header_label, text)
+    pieces: list[tuple[str, str, bool]] = []  # (header_label, text, is_references)
     for doc in docs:
         # metadata는 {"h1": "...", "h2": "...", ...} 형태 — 이 섹션이 속한 가장
-        # 깊은(마지막) 헤더 하나만 대표로 기록한다.
+        # 깊은(마지막) 헤더 하나만 표시용 라벨로 기록한다.
         header_values = list(doc.metadata.values())
         header_label = header_values[-1] if header_values else ""
+        # is_references만은 라벨(가장 깊은 것 하나)이 아니라 header_values 전체를 본다 —
+        # 위 모듈 docstring "References 판정은 라벨이 아니라 헤더 계층 전체를 본다" 참고.
+        is_ref = any(_is_references_header(v) for v in header_values)
 
         if len(doc.page_content) > max_chars:
             for line in _split_oversized_section(doc.page_content, max_chars):
-                pieces.append((header_label, line))
+                pieces.append((header_label, line, is_ref))
         else:
-            pieces.append((header_label, doc.page_content))
+            pieces.append((header_label, doc.page_content, is_ref))
 
     # 2단계: 조각을 문서 순서대로 병합 — max_chars 넘기 전까지 계속 이어붙이고,
     # 넘치면 flush 후 오버랩을 남기고 새 청크를 시작한다.
     merged: list[dict] = []
     current_texts: list[str] = []
     current_headers: list[str] = []
+    current_is_ref = False
     current_len = 0
 
-    for header_label, text in pieces:
+    for header_label, text, piece_is_ref in pieces:
         piece_len = len(text)
-        piece_is_ref = _is_references_header(header_label)
-        current_is_ref = any(_is_references_header(h) for h in current_headers)
-        # is_references는 청크 단위로 any(...)로 매겨지는데, 병합이 References 여부를
-        # 신경 안 쓰고 진행되면 References 조각 하나가 옆의 진짜 본문(예: Conclusion
-        # 끝부분)과 같은 청크로 묶여버려 그 청크 전체가 is_references=True로 잘못
-        # 태깅된다 — 그러면 추출 LLM 입력에서 진짜 본문까지 통째로 걸러지는 사고가
-        # 난다(호출부는 is_references만 보고 거르지, 청크 안에 뭐가 섞였는지 다시
-        # 안 들여다봄). 그래서 References 안팎을 넘나드는 지점은 max_chars와 무관하게
-        # 무조건 flush해 경계를 강제한다.
+        # current_is_ref는 라벨(current_headers)을 다시 훑어 재판정하지 않는다(07-28,
+        # 리뷰 지적) — current_headers에는 라벨(표시용, 가장 깊은 헤더 하나)만 쌓이므로
+        # 그걸로 다시 판정하면 위 pieces 생성 단계에서 고친 것과 같은 문제(하위섹션
+        # 라벨이 References로 안 읽히는 경우)가 여기서 되풀이된다. 대신 각 조각에서
+        # 이미 올바르게 계산해둔 piece_is_ref를 OR로 누적한다(아래 current_is_ref 갱신부).
+        #
+        # is_references는 청크 단위로 매겨지는데, 병합이 References 여부를 신경 안 쓰고
+        # 진행되면 References 조각 하나가 옆의 진짜 본문(예: Conclusion 끝부분)과 같은
+        # 청크로 묶여버려 그 청크 전체가 is_references=True로 잘못 태깅된다 — 그러면
+        # 추출 LLM 입력에서 진짜 본문까지 통째로 걸러지는 사고가 난다(호출부는
+        # is_references만 보고 거르지, 청크 안에 뭐가 섞였는지 다시 안 들여다봄). 그래서
+        # References 안팎을 넘나드는 지점은 max_chars와 무관하게 무조건 flush해 경계를
+        # 강제한다.
         crosses_reference_boundary = bool(current_headers) and piece_is_ref != current_is_ref
 
         # 지금까지 모아둔 게 있는데 이 조각까지 더하면 넘치거나, References 경계를
@@ -229,6 +254,7 @@ def split_into_sections(
             # 태깅된 청크 안에 본문 조각이 다시 섞여 들어가 이 fix의 의미가 없어진다.
             tail = flushed_text[-overlap_chars:] if (overlap_chars and not crosses_reference_boundary) else ""
             current_texts, current_headers, current_len = [], [], 0
+            current_is_ref = False
             if tail:
                 overlap_text = f"(...이전 내용에서 이어짐) {tail}"
                 current_texts.append(overlap_text)
@@ -239,6 +265,7 @@ def split_into_sections(
         # 직전과 같으면 다시 안 넣는다(리스트가 "A","A","A",...로 도배되는 걸 방지)
         if not current_headers or current_headers[-1] != header_label:
             current_headers.append(header_label)
+        current_is_ref = current_is_ref or piece_is_ref
         current_len += piece_len
 
     if current_texts:
@@ -246,7 +273,7 @@ def split_into_sections(
             "index": len(merged),
             "headers": current_headers,
             "text": "\n\n".join(current_texts),
-            "is_references": any(_is_references_header(h) for h in current_headers),
+            "is_references": current_is_ref,
         })
 
     return merged
@@ -284,7 +311,10 @@ def split_for_embedding(
     for doc in docs:
         header_values = list(doc.metadata.values())
         header_label = header_values[-1] if header_values else ""
-        is_ref = _is_references_header(header_label)
+        # is_references는 라벨(가장 깊은 헤더 하나)이 아니라 header_values 전체를 본다 —
+        # split_into_sections()와 같은 이유(모듈 docstring "References 판정은 라벨이
+        # 아니라 헤더 계층 전체를 본다" 참고).
+        is_ref = any(_is_references_header(v) for v in header_values)
 
         for text in fine_splitter.split_text(doc.page_content):
             pieces.append({
@@ -301,7 +331,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("사용법: uv run paper/paper_sections.py <.parsed.md 경로> [max_chars] [overlap_chars]")
+        print("사용법: uv run paper/paper_chunking.py <.parsed.md 경로> [max_chars] [overlap_chars]")
         sys.exit(1)
 
     max_chars = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
