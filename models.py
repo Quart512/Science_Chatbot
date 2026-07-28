@@ -36,6 +36,64 @@ model_map = {
     ),
     }
 
+# =========================================================
+# 모델별 컨텍스트 예산 (문자 수 기준) — 논문 분석기(②a)가 LLM을 호출하기 "전에"
+# 입력 길이를 미리 체크할 때 쓴다. 토큰이 아니라 문자 수인 이유: 이 프로젝트의
+# 다른 길이 기준(ingest.py 청크 500자, paper_sections.py의 max_chars)도 전부
+# 문자 수 기준이라 통일 — 프로바이더별 토크나이저까지 정확히 계산할 만큼의
+# 정밀도가 필요한 지점이 아니라, 안전 마진을 넉넉히 둔 대략치로 충분하다.
+#
+# gemini-2.5-flash/claude-haiku는 실질 컨텍스트가 커서(각각 100만/20만 토큰급)
+# 논문 한 편 분량으로는 거의 걸리지 않는다 — 그래서 넉넉하게 잡아둠.
+# Qwen-tuned(로컬 llama-server)가 실제로 걸릴 수 있는 쪽이다 — llama-server
+# 기동 커맨드에 --ctx-size를 명시하지 않아 기본값(4096 토큰)을 그대로 쓰고
+# 있고, 한국어는 토큰당 문자 수가 더 적게 들어가는 경향이 있어 보수적으로
+# 잡았다. **아직 실측하지 않은 대략치 — 실제로 예산 초과가 관찰되면 여기
+# 숫자를 조정한다** (모델 정책의 단일 지점을 유지하기 위해 이 dict 하나만
+# 고치면 되도록).
+CONTEXT_BUDGET_CHARS: dict[str, int] = {
+    "gemini": 800_000,
+    "claude": 150_000,
+    "Qwen-tuned": 6_000,
+}
+
+
+class ContextBudgetExceeded(Exception):
+    """모델별 컨텍스트 예산을 넘었을 때 발생시키는 예외.
+
+    invoke_with_fallback()의 except 목록(ResourceExhausted 등)에는 없다 —
+    일부러 그렇게 뒀다. 저 목록에 넣으면 "컨텍스트가 너무 길어서 실패"한 걸
+    "이 모델이 고장났다"로 오인해 다음 모델로 fallback해버리는데, 다음 모델도
+    똑같이 길이 때문에 실패할 뿐이라 문제가 해결되지 않는다(models.py를
+    "model_map+fallback 정책의 단일 지점"으로 유지한다는 원칙과도 별개 —
+    여긴 fallback이 아니라 애초에 부르지 않는 게 맞는 상황이다).
+    이 함수는 실제 모델 API를 호출하기 "전에" 체크하므로, 이 예외가 나면
+    비용은 0이다.
+    """
+
+    def __init__(self, model: str, text_len: int, budget: int):
+        self.model = model
+        self.text_len = text_len
+        self.budget = budget
+        super().__init__(
+            f"'{model}' 컨텍스트 예산({budget:,}자) 초과 — 입력 길이 {text_len:,}자. "
+            "분할(map-reduce)은 아직 미구현 — 조용히 자르지 않고 정직하게 실패."
+        )
+
+
+def check_context_budget(model: str, text: str) -> None:
+    """model로 text를 보내기 전에 길이가 예산 안에 드는지 확인한다.
+
+    예산을 넘으면 ContextBudgetExceeded를 raise — 호출한 쪽(논문 분석기 등)이
+    이걸 잡아서 "논문이 길어 요약 불가(분할 미구현)" 같은 정직한 실패 메시지를
+    사용자에게 전달하는 데 쓴다. CONTEXT_BUDGET_CHARS에 없는 model 이름이면
+    예산 자체가 없는 것으로 보고 통과시킨다.
+    """
+    budget = CONTEXT_BUDGET_CHARS.get(model)
+    if budget is not None and len(text) > budget:
+        raise ContextBudgetExceeded(model, len(text), budget)
+
+
 # 에러나면 서브 모델로
 # 지정된 모델을 우선 호출하고, ResourceExhausted(rate limit) 발생 시
 # 다른 모델로 자동 전환해서 재시도
