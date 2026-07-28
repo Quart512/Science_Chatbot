@@ -163,11 +163,12 @@ Science_Chatbot/
 ├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
 ├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 요약기·arxiv 검색 tool이 공유)
-├── pdf_parse.py          # PDF 파싱 어댑터 (PyMuPDF/pymupdf4llm 격리, AGPL 고지)
-├── paper_sections.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
-├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
-├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
-├── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
+├── paper/                # 논문 파이프라인(파싱→분할→식별→추출→저장, 07-28 디렉토리로 묶음)
+│   ├── pdf_parse.py          # PDF 파싱 어댑터 (PyMuPDF/pymupdf4llm 격리, AGPL 고지)
+│   ├── paper_sections.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
+│   ├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
+│   ├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
+│   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── main.py               # FastAPI: POST /query
@@ -201,7 +202,7 @@ uv run fastapi dev main.py
 uv run graph.py
 
 # (선택) 논문 한 편 등록 + 요약 생성 — 라이브러리 UI 전, 수동 등록 경로
-uv run paper_ingest.py <PDF 경로> [arxiv_id]
+uv run -m paper.paper_ingest <PDF 경로> [arxiv_id]
 
 # (선택) 자체 파인튜닝 모델 서빙 — model: "Qwen-tuned" 사용 시 필요
 llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080

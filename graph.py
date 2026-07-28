@@ -13,7 +13,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AI
 from models import invoke_with_fallback
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
-import paper_ingest
+from paper import paper_ingest
 
 # =========================================================
 # Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력 (서브그래프)

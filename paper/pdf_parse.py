@@ -74,7 +74,7 @@ if __name__ == "__main__":
     # from pathlib import Path  # 아래 .parsed.md 저장(주석 처리됨)에서만 쓰던 import
 
     if len(sys.argv) < 2:
-        print("사용법: uv run pdf_parse.py <PDF 경로>")
+        print("사용법: uv run paper/pdf_parse.py <PDF 경로>")
         sys.exit(1)
 
     result = parse_pdf(sys.argv[1])

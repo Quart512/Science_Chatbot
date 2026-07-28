@@ -59,6 +59,12 @@
 # import되는 순간 BAAI/bge-m3 임베딩 모델(~2GB)이 로딩되기 때문, conftest.py의 설명과 동일한
 # 이유). 테스트는 이 자리에 가짜 vectorstore(인메모리 dict 흉내)를 주입하고, parse_pdf/
 # invoke_with_fallback은 monkeypatch로 갈아끼워 실제 PDF·임베딩·LLM 호출 없이 순수 로직만 검증한다.
+#
+# 패키지 구조 (07-28): 이 5개 파일(pdf_parse/paper_sections/paper_id/paper_extraction/
+# paper_ingest)은 paper/ 패키지로 묶여 있다 — 전부 "논문 하나를 파싱→분할→식별→추출→
+# 저장"하는 한 파이프라인의 단계들이라 경계가 뚜렷하다. retrieval.py(feynman QA와 papers_
+# vectorstore를 둘 다 담당하는 공용 인프라)와 arxiv_api.py(tool.py의 일반 검색 tool도 쓰는
+# 범용 외부 API 어댑터)는 이 파이프라인 전용이 아니라서 루트에 그대로 남겨뒀다.
 # =========================================================
 
 import threading
@@ -66,10 +72,10 @@ import threading
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from models import check_context_budget, invoke_with_fallback
-from paper_extraction import PaperExtraction
-from paper_id import normalize_paper_id
-from paper_sections import split_for_embedding
-from pdf_parse import parse_pdf
+from paper.paper_extraction import PaperExtraction
+from paper.paper_id import normalize_paper_id
+from paper.paper_sections import split_for_embedding
+from paper.pdf_parse import parse_pdf
 
 FORMULA_DISCLAIMER = "(주의: 수식·이미지는 파싱 과정에서 신뢰할 수 없어 이 요약에 반영하지 않았습니다.)"
 
@@ -342,11 +348,11 @@ if __name__ == "__main__":
     # 수동 스모크 테스트용 — pytest는 vectorstore/parse_pdf를 전부 가짜로 갈아끼운
     # 순수 로직 검증이라, 진짜 PyMuPDF+Chroma+LLM이 실제로 맞물려 도는지는 이 경로로
     # 직접 한 번 확인해야 한다(지금 이 세션에서 실행 환경이 막혀 있어 내가 직접 못 돌려봄).
-    # 사용법: uv run paper_ingest.py <PDF 경로> [arxiv_id]
+    # 사용법: uv run -m paper.paper_ingest <PDF 경로> [arxiv_id]
     import sys
 
     if len(sys.argv) < 2:
-        print("사용법: uv run paper_ingest.py <PDF 경로> [arxiv_id]")
+        print("사용법: uv run -m paper.paper_ingest <PDF 경로> [arxiv_id]")
         sys.exit(1)
 
     pdf_path = sys.argv[1]

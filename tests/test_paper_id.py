@@ -5,7 +5,7 @@ normalize_paper_id — paper_id.py의 순수 함수. LLM·네트워크·VDB 없�
 """
 import pytest
 
-from paper_id import normalize_paper_id
+from paper.paper_id import normalize_paper_id
 
 
 def test_priority_order_doi_over_arxiv_over_hash():

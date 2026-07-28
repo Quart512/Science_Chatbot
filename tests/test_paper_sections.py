@@ -6,7 +6,7 @@ split_into_sections — paper_sections.py의 순수 함수. LLM·PDF 파싱 없�
 단위로 바꾼 이유는 paper_sections.py 모듈 docstring 참고), 줄마저 너무 큰
 극단적 경우의 최종 처리.
 """
-from paper_sections import _is_references_header, split_for_embedding, split_into_sections
+from paper.paper_sections import _is_references_header, split_for_embedding, split_into_sections
 
 SAMPLE_MD = """# Title
 

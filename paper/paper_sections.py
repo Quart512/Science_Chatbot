@@ -301,7 +301,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("사용법: uv run paper_sections.py <.parsed.md 경로> [max_chars] [overlap_chars]")
+        print("사용법: uv run paper/paper_sections.py <.parsed.md 경로> [max_chars] [overlap_chars]")
         sys.exit(1)
 
     max_chars = int(sys.argv[2]) if len(sys.argv) > 2 else 4000

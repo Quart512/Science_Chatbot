@@ -5,11 +5,11 @@ retrieve() — graph.py의 검색 노드. feynman(물리 강의록) 컬렉션과
 테스트. conftest.py가 안내하는 대로 graph.vectorstore/graph.papers_vectorstore를
 monkeypatch로 갈아끼운다 — 진짜 Chroma·임베딩 모델은 전혀 안 건드림.
 """
-import paper_ingest
 import pytest
 from langchain_core.documents import Document
 
 from graph import retrieve
+from paper import paper_ingest
 
 
 class _FakeRetriever:

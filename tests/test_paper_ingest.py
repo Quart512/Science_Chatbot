@@ -7,9 +7,9 @@ monkeypatch로 갈아끼우고, vectorstore는 이 파일의 FakeVectorstore(인
 """
 import pytest
 
-import paper_ingest
 from models import ContextBudgetExceeded
-from paper_extraction import PaperExtraction
+from paper import paper_ingest
+from paper.paper_extraction import PaperExtraction
 
 
 class FakeVectorstore:
