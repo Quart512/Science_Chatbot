@@ -11,7 +11,7 @@
 | **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
 | **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다 |
-| **To Do List** (Obsidian 칸반) | 실행 단위 할 일 | 상시 — RoadMap과 짝으로 동기화 |
+| **To Do List** (Obsidian 칸반) | 실행 순서만 (한 줄 요약 — **세부 내용의 정본은 RoadMap**) | 상시 — RoadMap과 짝으로 동기화 |
 | **docs/README_08~12.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
 > 평소엔 **RoadMap ↔ To Do List**만 동기화하면 된다. 완료한 기능이 현황을 바꾸는 순간(예: 프론트엔드 추가 → 실행법 변경)에만 README/DEPLOY도 함께 손본다.
@@ -223,7 +223,7 @@ uv run pytest
 - `route_by_fix` — 순수 라우팅 함수 (State만 보고 다음 노드 결정)
 - `invoke_with_fallback` — `model_map`을 통째로 모킹해서, 진짜 API 호출 없이 fallback·서킷 브레이커 로직만 검증
 - `paper_id.normalize_paper_id` — DOI > arXiv > 파일 해시 우선순위, 재등록 멱등성
-- `paper_chunking.split_into_sections`/`split_for_embedding` — 헤더 분할·병합, References 태깅
+- `paper_chunking.split_into_chunks`/`split_for_embedding` — 헤더 분할·병합, References 태깅
 - `paper_ingest.register_paper`/`get_paper_summary` — 가짜 vectorstore·가짜 LLM 응답을 주입해 등록·lazy 요약·캐시 로직만 검증
 - `graph.retrieve` — feynman·papers 두 컬렉션 검색 결과 병합 (가짜 vectorstore 주입)
 

@@ -42,5 +42,12 @@ Thumbs.db
 *.log
 
 # Claude Code
+# .claude/는 로컬 설정(권한·MCP 등)이라 제외. CLAUDE.md는 협업 규약·설계 원칙이 담긴
+# 문서라 오히려 커밋해야 한다 — 새 세션·다른 사람이 같은 규칙으로 일하게 하는 게 목적.
 .claude/
-CLAUDE.md
+
+# 논문 원문·파싱 산출물 (저작권 + 용량 — 테스트용 논문은 로컬에만 둔다)
+# pdf_parse.py의 디버깅용 .parsed.md 덤프도 같이 제외.
+# 저장소에 꼭 넣어야 할 PDF가 생기면 `git add -f <파일>`로 개별 추가.
+*.pdf
+*.parsed.md

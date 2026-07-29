@@ -58,16 +58,16 @@
 #     넘어간다 — 완전히 망가지진 않지만 아직 검증은 안 됨
 #   - 줄 하나가 그 자체로 max_chars를 넘는 경우(3단계, 문장 분할) — 위 참고
 #
-# split_for_embedding (07-28, paper_ingest.py 파이프라인 작업 중 추가): split_into_sections와
+# split_for_embedding (07-28, paper_ingest.py 파이프라인 작업 중 추가): split_into_chunks와
 # 목적이 다른 별도 함수다 — 헷갈리지 말 것.
-#   - split_into_sections: 구조화 추출(paper_extraction.py) LLM 호출 입력용. max_chars가
+#   - split_into_chunks: 구조화 추출(paper_extraction.py) LLM 호출 입력용. max_chars가
 #     모델 컨텍스트 예산에 맞춰 크고(수천~수만자), 헤더를 넘나들며 병합한다.
 #   - split_for_embedding: 임베딩·검색(fulltext_chunk)용. RoadMap "전문 처리" 설계 노트대로
 #     ingest.py와 같은 결(500자/오버랩 50, RecursiveCharacterTextSplitter)로 잘게 쪼갠다 —
 #     검색은 정밀도가 목적이라 섹션 경계에 맞춰 크게 자를 이유가 없다. 대신 각 조각이
 #     어느 헤더 아래에 있었는지(header)와 References 여부(is_references)는 그대로 물려받는다.
 #   헤더 하나의 본문 안에서만 잘게 쪼개므로(헤더를 넘나드는 병합 없음) 조각 하나에는
-#   header가 항상 하나(또는 없음)다 — split_into_sections의 headers(list)와 달리 여기선
+#   header가 항상 하나(또는 없음)다 — split_into_chunks의 headers(list)와 달리 여기선
 #   header(단수, str)로 이름 붙인 이유.
 #
 # References 청크 표시(07-28): 청크에 "is_references" 플래그를 붙인다 — 헤더가
@@ -94,7 +94,7 @@
 # 뚝 끊긴 경계"가 아니라 "성격이 다른 섹션의 경계"라 이어붙일 이유가 없다.
 #
 # 파일명(07-28): paper_sections.py에서 paper_chunking.py로 변경 — 이 파일의 산출물은
-# 결국 둘 다 "청크"(index/text/is_references를 갖는 dict)이고, split_into_sections()의
+# 결국 둘 다 "청크"(index/text/is_references를 갖는 dict)이고, split_into_chunks()의
 # "섹션"은 그 청크를 만드는 1단계 방법(헤더 기준 분할)일 뿐이라 파일 전체를 대표하는
 # 이름으로는 "청킹"이 더 맞는다고 판단.
 #
@@ -157,7 +157,7 @@ def _split_oversized_section(text: str, max_chars: int) -> list[str]:
     return lines if lines else [text]
 
 
-def split_into_sections(
+def split_into_chunks(
     markdown: str, max_chars: int = 4000, overlap_chars: int = 300
 ) -> list[dict]:
     """마크다운을 max_chars를 넘지 않는 청크들로 나눈다 (헤더 분할+병합 →
@@ -265,7 +265,7 @@ def split_into_sections(
         # 직전과 같으면 다시 안 넣는다(리스트가 "A","A","A",...로 도배되는 걸 방지)
         if not current_headers or current_headers[-1] != header_label:
             current_headers.append(header_label)
-        current_is_ref = current_is_ref or piece_is_ref
+        current_is_ref = current_is_ref or piece_is_ref # 둘 중 하나라도 T면 T
         current_len += piece_len
 
     if current_texts:
@@ -282,7 +282,7 @@ def split_into_sections(
 def split_for_embedding(
     markdown: str, chunk_size: int = 500, chunk_overlap: int = 50
 ) -> list[dict]:
-    """임베딩·검색(fulltext_chunk)용 청킹 — split_into_sections()과는 목적이 다르다
+    """임베딩·검색(fulltext_chunk)용 청킹 — split_into_chunks()과는 목적이 다르다
     (모듈 docstring "split_for_embedding" 항목 참고). ingest.py와 같은 결로 헤더 섹션
     안에서 다시 잘게(chunk_size/chunk_overlap) 쪼갠다 — 섹션 경계에 청크 크기를
     맞추지 않고, 대신 각 조각에 헤더 라벨과 References 여부만 메타데이터로 물려준다.
@@ -312,7 +312,7 @@ def split_for_embedding(
         header_values = list(doc.metadata.values())
         header_label = header_values[-1] if header_values else ""
         # is_references는 라벨(가장 깊은 헤더 하나)이 아니라 header_values 전체를 본다 —
-        # split_into_sections()와 같은 이유(모듈 docstring "References 판정은 라벨이
+        # split_into_chunks()와 같은 이유(모듈 docstring "References 판정은 라벨이
         # 아니라 헤더 계층 전체를 본다" 참고).
         is_ref = any(_is_references_header(v) for v in header_values)
 
@@ -337,7 +337,7 @@ if __name__ == "__main__":
     max_chars = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
     overlap_chars = int(sys.argv[3]) if len(sys.argv) > 3 else 300
     text = open(sys.argv[1], encoding="utf-8").read()
-    chunks = split_into_sections(text, max_chars=max_chars, overlap_chars=overlap_chars)
+    chunks = split_into_chunks(text, max_chars=max_chars, overlap_chars=overlap_chars)
 
     print(f"청크 수: {len(chunks)} (max_chars={max_chars}, overlap_chars={overlap_chars})")
     for c in chunks:

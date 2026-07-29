@@ -154,7 +154,7 @@ def register_paper(
     vectorstore=None,
 ) -> dict:
     """PDF를 파싱해 임베딩용 청크(doc_type=fulltext_chunk)로 등록한다. 요약은 만들지
-    않는다(lazy — get_paper_summary()가 필요할 때 따로 생성).
+    않는다(lazy — get_paper_summary()가 필요할 때 따로 생성). - 토큰 아끼면서도 TTFT 낮추기
 
     doi/arxiv_id 중 있는 것만 넘기면 된다(paper_id.py 우선순위: DOI > arXiv > 파일 해시).
     bibliographic은 arxiv_search() 반환 dict(title/authors/year/pdf_url 등)를 그대로

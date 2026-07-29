@@ -8,6 +8,16 @@ tests/
 .pytest_cache/
 frontend/
 
+# 런타임에 바인드 마운트로 붙는 것들 — 이미지에 굽지 않는다 (docker-compose.yml 참고)
 chroma_db/
 models/
 *.gguf
+
+# 개발 도구 설정·협업 문서 — 컨테이너 안에서는 아무도 안 읽는다
+.claude/
+CLAUDE.md
+.gitignore
+
+# 논문 원문·파싱 산출물 (docs/ 밖에 생긴 경우까지 확실히 제외)
+*.pdf
+*.parsed.md
