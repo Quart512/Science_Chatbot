@@ -11,12 +11,15 @@ COPY pyproject.toml uv.lock ./
 # --no-install-project: 아직 전체 소스(pyproject.toml이 참조하는 README.md 포함)가 없어서
 #                        프로젝트 자체 설치는 생략, 의존성만 먼저 설치
 # --frozen: uv.lock에 적힌 버전을 그대로 재현. lock과 안 맞으면 재계산 없이 에러
-RUN uv sync --no-install-project --frozen
+# --no-dev: dev 그룹(pytest·matplotlib) 제외 — 컨테이너 안에서는 테스트도 다이어그램
+#           생성도 하지 않으므로 순수 낭비다(이미지 8.77GB→2.04GB 경량화의 연장선).
+#           CI는 러너에서 직접 uv sync 후 pytest를 돌리므로 테스트 게이트와는 무관.
+RUN uv sync --no-install-project --frozen --no-dev
 
 # 2단계: 이제 전체 코드 복사 — 코드만 바뀐 재빌드에서는 위 1단계 레이어가 캐시로 재사용되고
 #         여기서부터만 다시 실행됨(전체 재설치 안 함)
 COPY ./ ./
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
 

@@ -48,10 +48,14 @@ def band(x, y, w, h, fc):
                                 fc=fc, ec="none", zorder=1))
 
 
-def box(x0, x1, y0, y1, title, sub=None, ec=C_CAP_EDGE, fc="white", ts=10, ss=7.5):
+def box(x0, x1, y0, y1, title, sub=None, ec=C_CAP_EDGE, fc="white", ts=10, ss=7.5,
+        done=False):
+    # done=True면 테두리를 굵게 — "이미 구현된 것"과 "계획"을 한눈에 구분하기 위한 표시.
+    # 색을 따로 쓰지 않는 이유: 층(표면/능력/데이터)을 이미 색으로 구분하고 있어서
+    # 색을 하나 더 얹으면 두 축이 섞여 읽기 어려워진다.
     ax.add_patch(FancyBboxPatch((x0, y0), x1 - x0, y1 - y0,
                                 boxstyle="round,pad=0.25,rounding_size=0.8",
-                                fc=fc, ec=ec, lw=1.6, zorder=3))
+                                fc=fc, ec=ec, lw=3.0 if done else 1.6, zorder=3))
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     if sub:
         ax.text(cx, cy + 1.5, title, ha="center", va="center", fontsize=ts,
@@ -70,8 +74,10 @@ def arrow(p0, p1, color="#44506B", lw=1.8, rad=0.0, ls="solid"):
 
 
 # ── 제목
-ax.text(80, 105.3, "Science Chatbot — 목표 아키텍처 (표면 / 능력 / 데이터 3층)",
+ax.text(80, 105.8, "Science Chatbot — 목표 아키텍처 (표면 / 능력 / 데이터 3층)",
         ha="center", va="center", fontsize=15, fontproperties=F_BOLD, color=C_TEXT)
+ax.text(80, 102.2, "굵은 테두리 = 구현 완료 · 얇은 테두리 = 계획",
+        ha="center", va="center", fontsize=8.5, fontproperties=F_REG, color=C_SUB)
 
 # ── 밴드
 band(6, 84, 148, 19, C_SURF_BAND)
@@ -85,13 +91,13 @@ ax.text(9, 20.8, "데이터 서비스 — CRUD·검색 (저장에 LLM 불필요,
         fontsize=10, fontproperties=F_BOLD, color=C_DATA_EDGE)
 
 # ── 표면 (y 86–96)
-box(10, 36, 86, 96, "메인 챗 ④", "상시 대화형 · 얇은 라우터", ec=C_SURF_EDGE)
+box(10, 36, 86, 96, "메인 챗 ④", "상시 대화형 · 얇은 라우터", ec=C_SURF_EDGE, done=True)
 box(40, 78, 86, 96, "연구 워크플로우 ⑥→⑦", "단계형 · HITL · 장시간", ec=C_SURF_EDGE)
 box(82, 116, 86, 96, "라이브러리", "관심사·논문·도구·노트 관리", ec=C_SURF_EDGE)
 box(120, 150, 86, 96, "피드", "hype 뉴스 · 관심사 키워드 강조", ec=C_SURF_EDGE)
 
 # ── 능력 Row A — 워크플로우 체인 + QA (y 58–69)
-box(10, 30, 58, 69, "물리 QA", "Self-RAG · 현 그래프")
+box(10, 30, 58, 69, "물리 QA", "Self-RAG · 현 그래프", done=True)
 box(50, 66, 58, 69, "가설 수립", "문헌 기반")
 box(70, 86, 58, 69, "실험 설계", "Plan-and-Execute")
 box(90, 106, 58, 69, "실험 운영", "점검·추적·분석")
@@ -99,10 +105,10 @@ box(110, 126, 58, 69, "논문 작성", "Evaluator-Optimizer")
 
 # ── 능력 Row B — 논문 3분할 + 공용 (y 40–51)
 box(10, 28, 40, 51, "논문 요약기 ②a", "보유 전문 · lazy·캐시",
-    ec=C_HUB_EDGE, fc=C_HUB, ts=9.5, ss=7)
+    ec=C_HUB_EDGE, fc=C_HUB, ts=9.5, ss=7, done=True)
 box(31, 49, 40, 51, "논문 스크리닝 ②b", "abstract+지표 · 전문 X",
     ec=C_HUB_EDGE, fc=C_HUB, ts=9.5, ss=7)
-box(52, 68, 40, 51, "논문 검색", "어댑터 · arxiv→API", ts=9.5, ss=7)
+box(52, 68, 40, 51, "논문 검색", "arxiv 어댑터 완료", ts=9.5, ss=7, done=True)
 box(71, 87, 40, 51, "참고문헌 추천기", "문맥 기반 온디맨드", ts=9.5, ss=7)
 box(90, 106, 40, 51, "문서 작성기 ①⑤", "대화→템플릿 · 공용", ts=9.5, ss=7)
 box(109, 125, 40, 51, "추천 검색 ③", "관심사 트리거", ts=9.5, ss=7)
@@ -110,8 +116,8 @@ box(128, 141, 40, 51, "피드 수집", "cron · 태깅", ts=9.5, ss=7)
 box(144, 154, 40, 51, "번역", "후처리", ts=9, ss=7)
 
 # ── 데이터 (y 7–17)
-box(10, 26, 7, 17, "코퍼스", "파인만 강의록", ec=C_DATA_EDGE, ts=9.5, ss=7)
-box(28, 46, 7, 17, "논문 VDB ②", "전문 청크 + 요약", ec=C_DATA_EDGE, ts=9.5, ss=7)
+box(10, 26, 7, 17, "코퍼스", "파인만 강의록", ec=C_DATA_EDGE, ts=9.5, ss=7, done=True)
+box(28, 46, 7, 17, "논문 VDB ②", "전문 청크 + 요약", ec=C_DATA_EDGE, ts=9.5, ss=7, done=True)
 box(48, 66, 7, 17, "논문 카탈로그", "DOI · 상태 · 지표", ec=C_DATA_EDGE, ts=9.5, ss=7)
 box(68, 84, 7, 17, "관심사 저장소 ①", "VDB 컬렉션", ec=C_DATA_EDGE, ts=9.5, ss=7)
 box(86, 102, 7, 17, "실험도구 DB ⑤", "구조화 레코드", ec=C_DATA_EDGE, ts=9.5, ss=7)
