@@ -226,7 +226,8 @@ def register_paper(
 def _fetch_fulltext_chunks(vectorstore, paper_id: str) -> list[dict]:
     """등록된 fulltext_chunk를 index 순서로 모아 반환한다. is_references인 조각은
     여기서 걸러낸다(저장은 돼 있지만 추출 LLM 입력에서는 제외 — 모듈 docstring 참고)."""
-    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]})
+    #$and = : 이후의 모든 조건 만족시
+    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]}) 
     items = [
         {"text": doc, "index": meta.get("index", 0), "is_references": meta.get("is_references", False)}
         for doc, meta in zip(result["documents"], result["metadatas"])
