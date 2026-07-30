@@ -85,17 +85,10 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
     return results
 
 
-def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
-    """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
-
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
-    """
-    params = {
-        "search_query": f"all:{query}",
-        "start": 0,
-        "max_results": max_results,
-    }
-
+def _query_atom(params: dict, _retries: int = 1) -> str:
+    """arxiv API에 실제 요청을 보내고(스로틀·429/503 재시도 포함) 원문 Atom XML을
+    반환한다. arxiv_search()(키워드 검색, search_query)와 fetch_by_id()(정확한 id 조회,
+    id_list)가 파라미터만 다르고 요청·재시도 로직은 완전히 같아서 공용으로 뺐다(07-29)."""
     for attempt in range(_retries + 1):
         _throttle()
         try:
@@ -115,7 +108,35 @@ def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[di
         resp.raise_for_status()
         break
 
-    return _parse_atom_response(resp.text)
+    return resp.text
+
+
+def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
+    """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
+
+    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
+    """
+    params = {
+        "search_query": f"all:{query}",
+        "start": 0,
+        "max_results": max_results,
+    }
+    return _parse_atom_response(_query_atom(params, _retries))
+
+
+def fetch_by_id(arxiv_id: str, _retries: int = 1) -> dict | None:
+    """arxiv id로 정확히 그 논문 하나를 조회한다(검색이 아니라 조회 — id_list 파라미터).
+
+    arxiv_search()는 키워드 검색이라 제목 등으로 찾으면 다른 논문이 걸릴 위험이 있는데,
+    이미 정확한 arxiv_id를 알고 있을 때는 이렇게 조회하는 게 맞다(paper_ingest.py의
+    register_paper()가 등록 시 bibliographic을 자동으로 채울 때 씀, 07-29).
+
+    반환 키는 arxiv_search()와 동일: title, authors, year, arxiv_id, abstract, pdf_url.
+    존재하지 않는 id(오타 등)면 None.
+    """
+    params = {"id_list": arxiv_id, "start": 0, "max_results": 1}
+    results = _parse_atom_response(_query_atom(params, _retries))
+    return results[0] if results else None
 
 
 if __name__ == "__main__":

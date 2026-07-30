@@ -3,7 +3,8 @@
 # (실제 API 호출은 rate limit이 있어 CI/로컬 양쪽에서 부적절 — conftest.py의 무거운 로딩 차단과
 #  같은 이유로, 이 테스트도 "외부 의존성 없이 1~2초 안에 끝나야 한다"는 톨게이트 원칙을 따름)
 
-from arxiv_api import _parse_atom_response
+import arxiv_api
+from arxiv_api import _parse_atom_response, fetch_by_id
 
 SAMPLE_ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -50,3 +51,34 @@ def test_abstract_whitespace_normalized():
 
 def test_empty_feed_returns_empty_list():
     assert _parse_atom_response(EMPTY_ATOM_XML) == []
+
+
+# --- fetch_by_id() (07-29, register_paper() 자동 서지정보 조회용) -----------
+# _query_atom()(실제 네트워크 호출)을 monkeypatch로 갈아끼워 파싱·분기 로직만 검증.
+
+
+def test_fetch_by_id_returns_single_dict(monkeypatch):
+    monkeypatch.setattr(arxiv_api, "_query_atom", lambda params, _retries=1: SAMPLE_ATOM_XML)
+    result = fetch_by_id("2301.00001")
+    assert result["title"] == "Quantum Entanglement in Many-Body Systems: A Review"
+
+
+def test_fetch_by_id_returns_none_when_not_found(monkeypatch):
+    monkeypatch.setattr(arxiv_api, "_query_atom", lambda params, _retries=1: EMPTY_ATOM_XML)
+    assert fetch_by_id("no-such-id") is None
+
+
+def test_fetch_by_id_queries_by_id_list_not_keyword_search(monkeypatch):
+    # 키워드 검색(search_query)이면 제목이 비슷한 다른 논문이 걸릴 위험이 있다 — 이미 아는
+    # arxiv_id를 정확히 조회하는 id_list를 써야 한다(arxiv_api.py 모듈 docstring 참고).
+    captured = {}
+
+    def _fake_query(params, _retries=1):
+        captured.update(params)
+        return SAMPLE_ATOM_XML
+
+    monkeypatch.setattr(arxiv_api, "_query_atom", _fake_query)
+    fetch_by_id("2301.00001")
+
+    assert captured["id_list"] == "2301.00001"
+    assert "search_query" not in captured

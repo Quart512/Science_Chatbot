@@ -6,7 +6,13 @@ split_into_chunks — paper_chunking.py의 순수 함수. LLM·PDF 파싱 없이
 단위로 바꾼 이유는 paper_chunking.py 모듈 docstring 참고), 줄마저 너무 큰
 극단적 경우의 최종 처리.
 """
-from paper.paper_chunking import _is_references_header, split_for_embedding, split_into_chunks
+from paper.paper_chunking import (
+    _is_abstract_header,
+    _is_references_header,
+    extract_abstract,
+    split_for_embedding,
+    split_into_chunks,
+)
 
 SAMPLE_MD = """# Title
 
@@ -98,15 +104,21 @@ def test_line_itself_too_big_is_returned_as_is():
 
 
 def test_is_references_header_matches_common_variants():
-    # 영문(References/Bibliography/Works Cited) + 마크다운 볼드("**REFERENCES**",
-    # 실제 PDF 출력에서 관찰됨) + 한국어(참고문헌, 띄어쓰기 변형) 전부 잡아야 한다
+    # 영문(References/Bibliography/Works Cited, 붙여쓴 WorksCited 포함) + 마크다운
+    # 볼드("**REFERENCES**", 실제 PDF 출력에서 관찰됨) + 한국어(참고문헌/인용문헌/
+    # 참고자료, 07-29 추가 — 띄어쓰기 여부 둘 다) 전부 잡아야 한다
     assert _is_references_header("REFERENCES")
     assert _is_references_header("References")
     assert _is_references_header("**REFERENCES**")
     assert _is_references_header("Bibliography")
     assert _is_references_header("Works Cited")
+    assert _is_references_header("WorksCited")
     assert _is_references_header("참고문헌")
     assert _is_references_header("참고 문헌")
+    assert _is_references_header("인용문헌")
+    assert _is_references_header("인용 문헌")
+    assert _is_references_header("참고자료")
+    assert _is_references_header("참고 자료")
 
 
 def test_is_references_header_rejects_non_references():
@@ -116,6 +128,39 @@ def test_is_references_header_rejects_non_references():
     assert not _is_references_header("I. 서론")
     assert not _is_references_header("A. First Section")
     assert not _is_references_header("See references section")
+    assert not _is_references_header("참고문헌을 인용한 연구는")
+
+
+# --- Abstract 헤더 판별 + 추출 (07-29, 6-3 후속 "abstract 확보") ---------
+
+
+def test_is_abstract_header_matches_common_variants():
+    assert _is_abstract_header("Abstract")
+    assert _is_abstract_header("ABSTRACT")
+    assert _is_abstract_header("**Abstract**")
+    assert _is_abstract_header("초록")
+
+
+def test_is_abstract_header_rejects_non_abstract():
+    assert not _is_abstract_header("Introduction")
+    # "초록" 뒤에 다른 글자가 바로 이어지면(예: "초록색") 별개 단어이므로 오탐하면 안 됨
+    assert not _is_abstract_header("초록색 물질")
+
+
+def test_extract_abstract_joins_pieces_in_index_order():
+    # 헤더가 Abstract인 조각이 여러 개(500자 단위로 쪼개져) 있으면 index 순으로
+    # 이어붙여야 한다 — 입력 순서가 뒤섞여 있어도 index 기준으로 정렬해야 함
+    pieces = [
+        {"index": 2, "text": "이어짐", "header": "Abstract"},
+        {"index": 0, "text": "초록 시작", "header": "Abstract"},
+        {"index": 1, "text": "본론", "header": "Introduction"},
+    ]
+    assert extract_abstract(pieces) == "초록 시작\n\n이어짐"
+
+
+def test_extract_abstract_returns_none_when_no_abstract_header():
+    pieces = [{"index": 0, "text": "x", "header": "Introduction"}]
+    assert extract_abstract(pieces) is None
 
 
 # --- split_into_chunks()의 is_references 필드 --------------------------

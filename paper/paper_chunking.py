@@ -122,12 +122,15 @@ HEADERS_TO_SPLIT_ON = [
 ]
 
 # References 헤더 판별 — 영문 논문(References/Bibliography/Works Cited)과
-# 한국어 논문(참고문헌) 둘 다 커버. 대소문자 무시, 단어 중간이 아니라 헤더
-# 텍스트 자체가 이 단어들로 시작/구성되는지만 본다(예: "References [1-34]" 같은
-# 변형도 잡되, 본문 중 우연히 "참고문헌을 인용한 연구는..."처럼 문장 속에
-# 섞인 경우까지 오탐하지 않도록 — 어차피 헤더 라벨에만 적용하므로 위험 낮음).
+# 한국어 논문(참고문헌/인용문헌/참고자료, 07-29 추가) 둘 다 커버. 대소문자 무시, 단어
+# 중간이 아니라 헤더 텍스트 자체가 이 단어들로 시작/구성되는지만 본다(예:
+# "References [1-34]" 같은 변형도 잡되, 본문 중 우연히 "참고문헌을 인용한 연구는..."
+# 처럼 문장 속에 섞인 경우까지 오탐하지 않도록 — 어차피 헤더 라벨에만 적용하므로
+# 위험 낮음). 모든 다어절 항목에 \s*를 써서 붙여쓰기/띄어쓰기 둘 다 잡는다(07-29,
+# "works cited"도 원래 \s+라 "workscited"는 안 잡혔음 — 일관되게 \s*로 통일).
 _REFERENCES_HEADER_RE = re.compile(
-    r"^(references?|bibliography|works\s+cited|참고\s*문헌)\b", re.IGNORECASE
+    r"^(references?|bibliography|works\s*cited|참고\s*문헌|인용\s*문헌|참고\s*자료)\b",
+    re.IGNORECASE,
 )
 
 
@@ -136,6 +139,18 @@ def _is_references_header(header_label: str) -> bool:
     # 앞뒤 '*'와 공백을 벗겨내고 판별한다.
     cleaned = header_label.strip().strip("*").strip()
     return bool(_REFERENCES_HEADER_RE.match(cleaned))
+
+
+# Abstract 헤더 판별 (07-29, 6-3 후속 "abstract 확보") — References와 같은 이유로
+# 별도 함수: paper_ingest.py의 register_paper()가 PDF에서 abstract를 뽑을 대체 출처로
+# 쓴다(1순위는 arxiv_search()가 주는 abstract, 이건 그게 없을 때만 쓰는 2순위). 한국어
+# 논문 대응으로 "초록"도 잡는다(References 쪽 한국어 변형과 같은 이유).
+_ABSTRACT_HEADER_RE = re.compile(r"^(abstract|초록)\b", re.IGNORECASE)
+
+
+def _is_abstract_header(header_label: str) -> bool:
+    cleaned = header_label.strip().strip("*").strip()
+    return bool(_ABSTRACT_HEADER_RE.match(cleaned))
 
 
 def _split_oversized_section(text: str, max_chars: int) -> list[str]:
@@ -325,6 +340,28 @@ def split_for_embedding(
             })
 
     return pieces
+
+
+def extract_abstract(pieces: list[dict]) -> str | None:
+    """split_for_embedding()이 만든 조각들 중 헤더가 Abstract인 것만 index 순으로
+    이어붙여 반환한다(07-29, 6-3 후속 "abstract 확보") — paper_ingest.py의
+    register_paper()가 arxiv 서지정보에 abstract가 없을 때 대체 출처로 쓴다.
+
+    조각은 500자/오버랩 50 단위라 이어붙이면 경계의 중복 텍스트가 그대로 섞이는
+    근사 재구성이다(get_paper_summary()가 fulltext_chunk를 모아 전문을 재구성할 때와
+    같은 트레이드오프, 위 split_for_embedding 문서 "주의" 참고) — abstract 길이(보통
+    한두 조각)에서는 무시할 수준이라 그대로 둔다.
+
+    헤더가 Abstract인 조각이 하나도 없으면(헤더 인식 실패·PDF 형식 문제 등) None —
+    호출하는 쪽이 "PDF에서도 못 찾음"으로 처리해 그다음 우선순위(없음)로 넘어간다.
+    """
+    abstract_pieces = sorted(
+        (p for p in pieces if _is_abstract_header(p["header"])),
+        key=lambda p: p["index"],
+    )
+    if not abstract_pieces:
+        return None
+    return "\n\n".join(p["text"] for p in abstract_pieces)
 
 
 if __name__ == "__main__":

@@ -127,6 +127,56 @@ def _cap_docs_per_paper(scored_sorted: list, k: int, max_per_paper: int = MAX_CH
     return docs
 
 
+# doc_type -> 사용자에게 보여줄 한글 라벨 (07-29, 답변 근거 표시 작업)
+DOC_TYPE_LABELS = {"fulltext_chunk": "전문 발췌", "summary": "요약", "abstract": "초록"}
+
+
+def describe_context_sources(context: list[Document]) -> str:
+    """이번 턴 context에 담긴 문서들의 출처를 사람이 읽을 수 있게 정리한다(07-29,
+    답변 근거 표시 작업) — 메타데이터를 그대로 읽어 정리할 뿐 LLM 판단이 아니다
+    (RoadMap "결정론적으로 계산 가능한 값은 LLM 스키마에 넣지 않는다" 원칙과 같은 이유로
+    verified/final_answer_structure에 필드로 넣지 않고 이 순수 함수로 뺐다).
+
+    "실제로 답변이 근거로 삼았는지"가 아니라 "이번 턴에 참고할 수 있었는지"를 보여준다 —
+    generate()의 시스템 프롬프트가 "문서가 틀렸거나 무관하면 무시해라"를 허용하므로
+    전자는 LLM 판단(비결정론적)이 필요해 이 함수의 책임 밖이다. 논문 관련 정보를
+    "판정"이 아니라 "추출"만 하는 ②a·②b의 원칙과 같은 결.
+
+    논문은 paper_id로 묶어 doc_type이 여러 개 섞여 있으면(같은 논문의 전문 청크와
+    요약이 같이 검색되는 경우가 흔함) 괄호 안에 나열한다. title 메타데이터가 없으면
+    (bibliographic 없이 등록된 논문 — 해시 기반 paper_id라 애초에 title 자체가 없음,
+    paper_ingest.py의 _fetch_bib_meta 참고) paper_id를 그대로 표시한다.
+    """
+    has_feynman = False
+    tool_sources: set[str] = set()
+    papers: dict[str, dict] = {}  # paper_id -> {"title": str|None, "doc_types": set[str]}
+
+    for doc in context:
+        meta = doc.metadata
+        paper_id = meta.get("paper_id")
+        if paper_id:
+            entry = papers.setdefault(paper_id, {"title": None, "doc_types": set()})
+            if meta.get("title"):
+                entry["title"] = meta["title"]
+            entry["doc_types"].add(meta.get("doc_type", "?"))
+        elif meta.get("source") == "feynman":
+            has_feynman = True
+        elif meta.get("source") in tool_map:
+            tool_sources.add(meta["source"])
+
+    lines = []
+    if has_feynman:
+        lines.append("- 파인만 강의록")
+    for paper_id, info in papers.items():
+        label = info["title"] or paper_id
+        kinds = ", ".join(DOC_TYPE_LABELS.get(t, t) for t in sorted(info["doc_types"]))
+        lines.append(f"- 논문 《{label}》 ({kinds})")
+    for src in sorted(tool_sources):
+        lines.append(f"- 웹검색({src})")
+
+    return "\n".join(lines)
+
+
 # needs_more_context가 True면(verify 단계에서 컨텍스트 부족 판단) top_k를 늘려 재검색
 def retrieve(state: State) -> dict:
     if state.try_count==0:
@@ -443,6 +493,13 @@ def final_answer(state: State) ->dict:
                 final_text, comment_text = answer.final_answer, answer.comment
         except RuntimeError:
             final_text, comment_text = state.answer, state.comment
+
+    # 답변 근거 표시(07-29) — try_count==1/재시도 두 경로 모두 여기서 한 번만 붙인다.
+    # LLM 호출이 아니라 state.context 메타데이터를 그대로 정리하는 것뿐이라(위
+    # describe_context_sources 참고) 이 분기와 무관하게 추가 비용 0.
+    source_note = describe_context_sources(state.context)
+    if source_note:
+        comment_text = f"{comment_text}\n\n참고한 자료:\n{source_note}" if comment_text else f"참고한 자료:\n{source_note}"
 
     print("최종답변: " + final_text)
 

@@ -66,6 +66,18 @@ def _reset_in_flight():
     paper_ingest._PERMANENTLY_FAILED.clear()
 
 
+@pytest.fixture(autouse=True)
+def _stub_arxiv_fetch(monkeypatch):
+    # register_paper()는 arxiv_id가 있고 bibliographic에 abstract가 없으면 자동으로
+    # arxiv API(fetch_by_id)를 호출한다(07-29) — 이 파일 대부분의 테스트는 그 자동 조회
+    # 로직 자체를 보는 게 아니므로 기본은 "못 찾음"(None)으로 스텁해 실제 네트워크 호출을
+    # 막는다(톨게이트 테스트는 네트워크 없이 1~2초에 끝나야 한다는 원칙, 처음엔 이 스텁 없이
+    # 커밋했다가 기존 테스트들이 진짜 네트워크를 타는 걸로 뒤늦게 발견함). 자동 조회 자체를
+    # 검증하는 테스트들(아래 "arxiv API 자동 서지정보 조회" 섹션)은 각자 이 스텁을 자기
+    # 목적에 맞는 가짜로 다시 덮어쓴다.
+    monkeypatch.setattr(paper_ingest, "fetch_by_id", lambda arxiv_id: None)
+
+
 # --- register_paper() ----------------------------------------------------
 
 
@@ -182,7 +194,8 @@ def test_register_paper_flattens_bibliographic_list_fields(monkeypatch, tmp_path
 
 def test_register_paper_drops_non_whitelisted_bibliographic_fields(monkeypatch, tmp_path):
     # abstract처럼 화이트리스트에 없는 긴 필드를 그대로 받으면 청크 수만큼 그대로
-    # 복제돼 VDB에 쌓인다(07-28 리뷰에서 발견된 버그) — 화이트리스트가 이걸 막는지 확인.
+    # 복제돼 VDB에 쌓인다(07-28 리뷰에서 발견된 버그) — 화이트리스트가 청크 메타데이터
+    # 복제는 막는지 확인한다(abstract 자체의 별도 저장은 아래 abstract 테스트들 참고).
     pdf_path = tmp_path / "paper.pdf"
     pdf_path.write_bytes(b"dummy")
     md = "# T\n\n## A\n\n" + "본문 내용입니다. " * 100  # 청크가 여러 개 나오도록 충분히 길게
@@ -197,10 +210,198 @@ def test_register_paper_drops_non_whitelisted_bibliographic_fields(monkeypatch, 
         vectorstore=vs,
     )
 
+    chunk_metas = [m for m in vs.metadatas if m["doc_type"] == "fulltext_chunk"]
     assert result["chunk_count"] > 1  # 청크가 여러 개 나와야 "복제되면 몇 부씩 쌓이는지"가 의미 있음
-    assert all("abstract" not in m for m in vs.metadatas)
-    assert all("unknown_field" not in m for m in vs.metadatas)
-    assert all(m["title"] == "테스트 논문" for m in vs.metadatas)  # 화이트리스트에 있는 건 그대로 유지
+    assert all("abstract" not in m for m in chunk_metas)
+    assert all("unknown_field" not in m for m in chunk_metas)
+    assert all(m["title"] == "테스트 논문" for m in chunk_metas)  # 화이트리스트에 있는 건 그대로 유지
+
+
+# --- arxiv API 자동 서지정보 조회 (07-29) ----------------------------------
+# fetch_by_id()(arxiv_api.py, 네트워크 호출)를 monkeypatch로 갈아끼워 register_paper()의
+# 분기(언제 부르고 언제 건너뛰는지, 실패 시 등록을 막지 않는지)만 검증한다.
+
+
+def test_register_paper_auto_fetches_bibliographic_when_missing(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(
+        paper_ingest, "fetch_by_id",
+        lambda arxiv_id: {"title": "arxiv에서 가져온 제목", "abstract": "arxiv에서 가져온 초록"},
+    )
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.66666", vectorstore=vs)
+
+    chunk_metas = [m for m in vs.metadatas if m["doc_type"] == "fulltext_chunk"]
+    assert all(m["title"] == "arxiv에서 가져온 제목" for m in chunk_metas)
+    abstract_docs = [t for t, m in zip(vs.texts, vs.metadatas) if m["doc_type"] == "abstract"]
+    assert abstract_docs == ["arxiv에서 가져온 초록"]
+
+
+def test_register_paper_skips_auto_fetch_when_abstract_already_given(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    def _boom(arxiv_id):
+        raise AssertionError("bibliographic에 abstract가 이미 있으면 자동 조회를 하면 안 됨")
+    monkeypatch.setattr(paper_ingest, "fetch_by_id", _boom)
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.66667",
+        bibliographic={"abstract": "이미 있는 초록"}, vectorstore=vs,
+    )  # _boom이 호출되면 AssertionError로 여기서 실패
+
+
+def test_register_paper_skips_auto_fetch_without_arxiv_id(monkeypatch, tmp_path):
+    # DOI만 있거나 아무 식별자도 없으면(해시 기반 paper_id) 조회할 arxiv_id 자체가 없다
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    def _boom(arxiv_id):
+        raise AssertionError("arxiv_id가 없으면 자동 조회를 하면 안 됨")
+    monkeypatch.setattr(paper_ingest, "fetch_by_id", _boom)
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(str(pdf_path), doi="10.1234/xyz", vectorstore=vs)
+
+
+def test_register_paper_explicit_bibliographic_overrides_fetched(monkeypatch, tmp_path):
+    # 호출자가 명시적으로 넘긴 값이 자동 조회 결과보다 우선해야 한다 — 조회는 빈 자리만 채움
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(
+        paper_ingest, "fetch_by_id",
+        lambda arxiv_id: {"title": "arxiv 제목", "abstract": "arxiv 초록"},
+    )
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.66668",
+        bibliographic={"title": "사용자가 지정한 제목"}, vectorstore=vs,
+    )
+
+    chunk_metas = [m for m in vs.metadatas if m["doc_type"] == "fulltext_chunk"]
+    assert all(m["title"] == "사용자가 지정한 제목" for m in chunk_metas)  # 명시값 유지
+    abstract_docs = [t for t, m in zip(vs.texts, vs.metadatas) if m["doc_type"] == "abstract"]
+    assert abstract_docs == ["arxiv 초록"]  # 없던 자리는 조회 결과로 채워짐
+
+
+def test_register_paper_continues_when_arxiv_fetch_fails(monkeypatch, tmp_path):
+    # 네트워크 오류 등으로 조회가 실패해도 등록 자체는 막으면 안 된다 — 서지정보 없이 진행
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    def _fail(arxiv_id):
+        raise ConnectionError("네트워크 실패 흉내")
+    monkeypatch.setattr(paper_ingest, "fetch_by_id", _fail)
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.66669", vectorstore=vs)
+
+    assert result["text_extractable"] is True
+    assert result["chunk_count"] > 0
+    assert not any(m["doc_type"] == "abstract" for m in vs.metadatas)  # 서지정보 없음 → abstract도 없음
+
+
+# --- abstract 확보 (07-29, 6-3 후속) --------------------------------------
+
+
+def test_register_paper_stores_arxiv_abstract_once(monkeypatch, tmp_path):
+    # 위 test_register_paper_drops_non_whitelisted_bibliographic_fields가 "청크에
+    # 복제되지 않는다"를 확인했다면, 이 테스트는 그 abstract가 아예 버려지는 게 아니라
+    # doc_type="abstract" 문서 하나로(딱 한 번) 저장되는지 확인한다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    vs = FakeVectorstore()
+    abstract_text = "이 논문의 초록입니다."
+    paper_ingest.register_paper(
+        str(pdf_path),
+        arxiv_id="2401.44444",
+        bibliographic={"abstract": abstract_text},
+        vectorstore=vs,
+    )
+
+    abstract_docs = [t for t, m in zip(vs.texts, vs.metadatas) if m["doc_type"] == "abstract"]
+    assert abstract_docs == [abstract_text]
+
+
+def test_register_paper_abstract_doc_carries_title(monkeypatch, tmp_path):
+    # abstract 문서도 bib_meta(title 등)를 같이 받아야 한다(07-29, 답변 근거 표시 작업 중
+    # 발견) — 안 그러면 fulltext_chunk 없이 abstract만 검색됐을 때 어느 논문인지
+    # paper_id로만 표시된다. register_paper()가 이미 들고 있는 bib_meta를 재사용하는
+    # 것뿐이라 청크마다 복제되는 문제(_BIBLIOGRAPHIC_WHITELIST)와는 무관 — 문서 1개.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(
+        str(pdf_path),
+        arxiv_id="2401.44445",
+        bibliographic={"title": "테스트 논문", "abstract": "초록 내용"},
+        vectorstore=vs,
+    )
+
+    abstract_meta = next(m for m in vs.metadatas if m["doc_type"] == "abstract")
+    assert abstract_meta["title"] == "테스트 논문"
+
+
+def test_register_paper_falls_back_to_pdf_abstract_section(monkeypatch, tmp_path):
+    # arxiv 서지정보에 abstract가 없으면(예: 업로드 PDF만 있고 arxiv_id가 없는 경우)
+    # PDF 자체의 Abstract 섹션에서 뽑아야 한다 — extract_abstract()(paper_chunking.py)가
+    # 이미 계산해둔 pieces에서 골라내므로 재파싱은 필요 없다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    md = "# T\n\n## Abstract\n\n논문 초록 본문입니다.\n\n## Introduction\n\n" + "본문. " * 30
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(markdown=md))
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.55556", vectorstore=vs)
+
+    abstract_docs = [t for t, m in zip(vs.texts, vs.metadatas) if m["doc_type"] == "abstract"]
+    assert len(abstract_docs) == 1
+    assert "논문 초록 본문입니다." in abstract_docs[0]
+
+
+def test_register_paper_prioritizes_arxiv_abstract_over_pdf_section(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    md = "# T\n\n## Abstract\n\nPDF에서 뽑힌 초록.\n\n## Introduction\n\n" + "본문. " * 30
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(markdown=md))
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(
+        str(pdf_path),
+        arxiv_id="2401.55557",
+        bibliographic={"abstract": "arxiv가 준 초록."},
+        vectorstore=vs,
+    )
+
+    abstract_docs = [t for t, m in zip(vs.texts, vs.metadatas) if m["doc_type"] == "abstract"]
+    assert abstract_docs == ["arxiv가 준 초록."]
+
+
+def test_register_paper_skips_abstract_doc_when_none_found(monkeypatch, tmp_path):
+    # arxiv abstract도 없고 PDF에 Abstract 헤더도 없으면(헤더 인식 실패 등) abstract
+    # 문서를 아예 안 만들어야 한다 — 없는 것을 빈 문자열로라도 저장하면 "값이 없음"과
+    # "빈 문자열이 실제 값"을 구분 못 하게 된다(_flatten_bibliographic과 같은 원칙).
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())  # 헤더: Body
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.55558", vectorstore=vs)
+
+    assert not any(m["doc_type"] == "abstract" for m in vs.metadatas)
 
 
 # --- get_paper_summary() --------------------------------------------------
@@ -259,6 +460,33 @@ def test_get_paper_summary_excludes_references_chunks_from_llm_input(monkeypatch
     assert result["from_cache"] is False
     assert result["extraction"].core_claims == ["추출됨"]
     assert any(m["doc_type"] == "summary" for m in vs.metadatas)  # 결과가 캐시로 저장됨
+
+
+def test_get_paper_summary_carries_title_from_chunks_into_summary_doc(monkeypatch):
+    # summary 문서엔 title이 없어서 답변 근거 표시에서 paper_id로만 보이던 문제(07-29,
+    # graph.describe_context_sources 작업 중 발견) — register_paper()가 이미 청크에
+    # 복제해둔 title을 _fetch_bib_meta()로 가져와 summary 문서에도 넣어야 한다.
+    vs = FakeVectorstore()
+    vs.add_texts(
+        texts=["본문 청크"],
+        metadatas=[{
+            "paper_id": "arxiv:1", "doc_type": "fulltext_chunk", "index": 0,
+            "is_references": False, "header": "Intro", "title": "테스트 논문",
+        }],
+        ids=["arxiv:1-0"],
+    )
+    monkeypatch.setattr(
+        paper_ingest, "invoke_with_fallback",
+        lambda model, messages, structured=None: (
+            PaperExtraction(core_claims=["추출됨"]), "gemini", [],
+            {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        ),
+    )
+
+    paper_ingest.get_paper_summary("arxiv:1", vectorstore=vs)
+
+    summary_meta = next(m for m in vs.metadatas if m["doc_type"] == "summary")
+    assert summary_meta["title"] == "테스트 논문"
 
 
 def test_get_paper_summary_propagates_context_budget_exceeded(monkeypatch):

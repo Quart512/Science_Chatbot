@@ -7,7 +7,9 @@
 #
 #   register_paper() — 등록 시점. PDF를 파싱해 임베딩용으로 잘게 쪼갠 뒤(fulltext_chunk)
 #     그대로 VDB에 저장한다. 요약은 여기서 만들지 않는다("등록 시 인코딩과 요약 생성 분리",
-#     RoadMap "논문 처리 3분할"). 비용이 드는 LLM 호출이 전혀 없다 — PDF 파싱과 로컬 임베딩만.
+#     RoadMap "논문 처리 3분할"). LLM 호출은 없다 — PDF 파싱과 로컬 임베딩만. 다만 arxiv_id는
+#     있는데 서지정보(abstract)가 없으면 arxiv API로 자동 조회한다(07-29, 네트워크 호출
+#     1회 — LLM은 아니지만 예전엔 "외부 호출 전혀 없음"이었던 것과 달라진 지점).
 #
 #   get_paper_summary() — 조회 시점(lazy). 라이브러리에서 요약을 요청했거나, QA·⑦이 요약을
 #     찾는데 없을 때만 호출된다. 이미 만든 적 있으면(doc_type=summary로 캐시돼 있으면) 그걸
@@ -82,10 +84,11 @@ import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from arxiv_api import fetch_by_id
 from models import ContextBudgetExceeded, check_context_budget, invoke_with_fallback
 from paper.paper_extraction import PaperExtraction
 from paper.paper_id import normalize_paper_id
-from paper.paper_chunking import split_for_embedding  # 구 paper_sections.py
+from paper.paper_chunking import extract_abstract, split_for_embedding  # 구 paper_sections.py
 from paper.pdf_parse import parse_pdf
 
 FORMULA_DISCLAIMER = "(주의: 수식·이미지는 파싱 과정에서 신뢰할 수 없어 이 요약에 반영하지 않았습니다.)"
@@ -114,12 +117,10 @@ def _get_papers_vectorstore():
 # register_paper()가 청크마다(!) 메타데이터로 복제해도 되는 서지 필드 화이트리스트
 # (07-28, 리뷰 지적): arxiv_search()가 주는 abstract는 1~2천자짜리 긴 텍스트라, 화이트
 # 리스트 없이 bibliographic dict를 통째로 받으면 논문 한 편이 N개 청크로 쪼개질 때 그
-# abstract가 N번 그대로 Chroma에 들어간다(60청크 논문이면 abstract 60부). 지금은
-# abstract를 아예 받지 않는다 — 소비하는 곳이 없어서(PaperExtraction 스키마에도 abstract
-# 필드가 없다) 미리 어딘가에 심어봤자 검증할 방법이 없다(품질 평가를 소비처 생길 때까지
-# 미룬 것과 같은 논리, paper_chunking.py 모듈 docstring 참고). 나중에 필요해지면 청크마다
-# 복제하지 말고 summary 문서(_store_summary가 만드는 doc_type="summary" 문서) 메타데이터에
-# 한 번만 넣는 방식으로 추가할 것.
+# abstract가 N번 그대로 Chroma에 들어간다(60청크 논문이면 abstract 60부). abstract는
+# 그래서 지금도 이 화이트리스트엔 없다 — 다만 아예 안 받는 게 아니라, register_paper()가
+# 별도로 doc_type="abstract" 문서 하나로(summary와 같은 패턴) 한 번만 저장한다(07-29,
+# 6-3 후속 "abstract 확보" — 아래 register_paper() 참고).
 _BIBLIOGRAPHIC_WHITELIST = ("title", "authors", "year", "arxiv_id", "pdf_url")
 
 
@@ -159,6 +160,10 @@ def register_paper(
     doi/arxiv_id 중 있는 것만 넘기면 된다(paper_id.py 우선순위: DOI > arXiv > 파일 해시).
     bibliographic은 arxiv_search() 반환 dict(title/authors/year/pdf_url 등)를 그대로
     넘기면 되고, 없어도 동작한다(해시 기반 paper_id로 등록만 되고 서지정보는 비어 있음).
+    arxiv_id는 있는데 bibliographic에 abstract가 없으면(예: bibliographic 자체를 안
+    넘긴 경우) fetch_by_id()로 arxiv API에서 자동으로 채운다(07-29) — abstract뿐 아니라
+    title 등도 같이 채워짐. bibliographic에 이미 값이 있으면 그게 우선(자동 조회로
+    덮어쓰지 않음), 조회 실패(네트워크 오류 등)는 등록을 막지 않고 서지정보 없이 진행.
 
     반환: {"paper_id": str, "text_extractable": bool, "chunk_count": int, "page_count": int}
     스캔본(text_extractable=False)이면 chunk_count=0으로 정직하게 보고하고 아무것도 저장하지
@@ -184,6 +189,23 @@ def register_paper(
             "page_count": parsed["page_count"],
         }
 
+    # arxiv_id는 있는데 서지정보(특히 abstract)가 없으면 arxiv API로 자동 조회한다
+    # (07-29, 답변 근거 표시 작업 중 논의) — arxiv_search()는 키워드 검색이라 제목 등으로
+    # 찾으면 다른 논문이 걸릴 위험이 있는데, 여기선 이미 정확한 arxiv_id를 알고 있으니
+    # fetch_by_id()(id_list 조회, arxiv_api.py)로 그 논문 자체를 정확히 가져온다. abstract만
+    # 채우는 게 아니라 title/authors/year/pdf_url까지 한 번에 채운다 — arxiv_search()가
+    # 애초에 이 전부를 한 dict로 주기 때문에 abstract만 골라 쓰는 게 오히려 부자연스럽다.
+    # 호출자가 이미 bibliographic을 넘겼다면(abstract 포함) 그 값이 최선이라 조회를
+    # 건너뛴다 — 조회 실패(네트워크 오류·잘못된 id 등)는 등록을 막을 이유가 없으므로
+    # 콘솔에 로그만 남기고 서지정보 없이 계속 진행한다(abstract 미확보와 같은 "없음" 취급).
+    if arxiv_id and not (bibliographic or {}).get("abstract"):
+        try:
+            fetched = fetch_by_id(arxiv_id)
+            if fetched:
+                bibliographic = {**fetched, **(bibliographic or {})}  # 호출자가 명시한 값이 우선
+        except Exception as e:
+            print(f"arxiv 서지정보 자동 조회 실패(등록은 계속 진행, arxiv_id={arxiv_id}): {type(e).__name__}: {e}")
+
     vectorstore = vectorstore or _get_papers_vectorstore()
     pieces = split_for_embedding(parsed["markdown"])
     bib_meta = _flatten_bibliographic(bibliographic)
@@ -202,12 +224,32 @@ def register_paper(
         for p in pieces
     ]
 
-    # 재등록 처리 — 삽입 전에 같은 paper_id의 기존 문서를 전부 삭제(fulltext_chunk+summary
-    # 둘 다, 위 모듈 docstring "재등록 처리" 참고). 청크가 하나도 없던 첫 등록이면 삭제할
-    # 게 없으므로 no-op.
+    # 재등록 처리 — 삽입 전에 같은 paper_id의 기존 문서를 전부 삭제(fulltext_chunk+summary+
+    # abstract 전부, 위 모듈 docstring "재등록 처리" 참고). 청크가 하나도 없던 첫 등록이면
+    # 삭제할 게 없으므로 no-op.
     vectorstore.delete(where={"paper_id": paper_id})
     if texts:
         vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+
+    # abstract 확보 (07-29, 6-3 후속) — 우선순위: arxiv_search()가 준 abstract > PDF에서
+    # 뽑은 Abstract 섹션(위에서 이미 계산한 pieces 재사용, 새로 파싱하지 않음) > 없음.
+    # summary와 달리 여기서 바로 저장한다 — summary는 lazy라 등록 직후엔 없는데, abstract는
+    # 그 공백(등록 직후~요약 생성 전)을 메우는 게 목적이라 등록 시점에 있어야 의미가 있다
+    # (RoadMap "abstract와 ②a의 관계" 설계 노트 참고). 청크마다 복제하지 않고 summary와
+    # 같은 패턴으로 doc_type="abstract" 문서 하나만 저장. bib_meta(title 등)를 같이 넣는
+    # 이유(07-29, QA 답변 근거 표시 작업 중 발견): register_paper()에는 bib_meta가 이미
+    # 있으니 여기 넣는 건 공짜지만, 안 넣으면 abstract만 검색되고 fulltext_chunk가 context에
+    # 안 낀 경우 어느 논문인지 paper_id(예: arxiv:2401.12345)로만 표시된다 — summary 문서도
+    # 같은 문제가 있었는데, get_paper_summary()는 bibliographic을 안 받는 별도 호출이라
+    # _fetch_bib_meta()로 이미 저장된 청크에서 역으로 가져오는 방식으로 따로 해결했다
+    # (아래 _store_summary 호출부 참고).
+    abstract_text = (bibliographic or {}).get("abstract") or extract_abstract(pieces)
+    if abstract_text:
+        vectorstore.add_texts(
+            texts=[abstract_text],
+            metadatas=[{"paper_id": paper_id, "doc_type": "abstract", **bib_meta}],
+            ids=[f"{paper_id}-abstract"],
+        )
 
     # 재등록 = 요약 캐시 무효화와 같은 논리로, "영구 실패" 기록도 같이 지운다 — 전문
     # 내용이 바뀌었으면(예: 불필요한 섹션 제거, 더 짧은 판본으로 교체) 전에는 예산을
@@ -234,6 +276,21 @@ def _fetch_fulltext_chunks(vectorstore, paper_id: str) -> list[dict]:
     ]
     items.sort(key=lambda c: c["index"])
     return [c for c in items if not c["is_references"]]
+
+
+def _fetch_bib_meta(vectorstore, paper_id: str) -> dict:
+    """등록 시 fulltext_chunk 메타데이터에 복제해둔 서지 필드(_BIBLIOGRAPHIC_WHITELIST)를
+    아무 청크에서나 하나 가져와 반환한다(07-29, 답변 근거 표시 작업 중 발견 — summary
+    문서엔 title이 없어서 답변 근거에 논문 제목 대신 paper_id만 표시되던 문제).
+    register_paper()가 모든 청크에 같은 값을 복제해뒀으므로 어느 청크를 봐도 동일하다 —
+    첫 번째 결과로 충분. bibliographic 없이 등록된 논문(해시 기반 paper_id)은 청크에도
+    이 필드들이 없으므로 빈 dict를 돌려준다(abstract와 동일하게 그 경우는 paper_id
+    폴백을 그대로 받아들인다 — 애초에 데이터가 없는 것까지 만들어낼 수는 없음)."""
+    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]})
+    metadatas = result.get("metadatas", [])
+    if not metadatas:
+        return {}
+    return {k: metadatas[0][k] for k in _BIBLIOGRAPHIC_WHITELIST if k in metadatas[0]}
 
 
 def _fetch_summary(vectorstore, paper_id: str) -> PaperExtraction | None:
@@ -277,7 +334,7 @@ def _render_summary_text(extraction: PaperExtraction) -> str:
     return "\n".join(lines)
 
 
-def _store_summary(vectorstore, paper_id: str, extraction: PaperExtraction) -> None:
+def _store_summary(vectorstore, paper_id: str, extraction: PaperExtraction, bib_meta: dict | None = None) -> None:
     # cache-miss로 여기까지 왔다는 건 보통 기존 summary 문서가 없다는 뜻이지만, 혹시 남아있는
     # 경우(예: 동시 호출 등)를 대비한 안전망으로 삽입 전에 한 번 더 지운다 — 주 무효화 경로는
     # register_paper()의 재등록 삭제다.
@@ -288,6 +345,7 @@ def _store_summary(vectorstore, paper_id: str, extraction: PaperExtraction) -> N
             "paper_id": paper_id,
             "doc_type": "summary",
             "extraction_json": extraction.model_dump_json(),
+            **(bib_meta or {}),  # title 등(07-29) — _fetch_bib_meta() 참고
         }],
         ids=[f"{paper_id}-summary"],
     )
@@ -339,7 +397,7 @@ def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, v
         model, messages, structured=PaperExtraction
     )
 
-    _store_summary(vectorstore, paper_id, extraction)
+    _store_summary(vectorstore, paper_id, extraction, _fetch_bib_meta(vectorstore, paper_id))
 
     return {
         "paper_id": paper_id,
