@@ -148,19 +148,38 @@ def test_is_abstract_header_rejects_non_abstract():
 
 
 def test_extract_abstract_joins_pieces_in_index_order():
-    # 헤더가 Abstract인 조각이 여러 개(500자 단위로 쪼개져) 있으면 index 순으로
+    # Abstract 소속 조각이 여러 개(500자 단위로 쪼개져) 있으면 index 순으로
     # 이어붙여야 한다 — 입력 순서가 뒤섞여 있어도 index 기준으로 정렬해야 함
     pieces = [
-        {"index": 2, "text": "이어짐", "header": "Abstract"},
-        {"index": 0, "text": "초록 시작", "header": "Abstract"},
-        {"index": 1, "text": "본론", "header": "Introduction"},
+        {"index": 2, "text": "이어짐", "header": "Abstract", "is_abstract": True},
+        {"index": 0, "text": "초록 시작", "header": "Abstract", "is_abstract": True},
+        {"index": 1, "text": "본론", "header": "Introduction", "is_abstract": False},
     ]
     assert extract_abstract(pieces) == "초록 시작\n\n이어짐"
 
 
-def test_extract_abstract_returns_none_when_no_abstract_header():
-    pieces = [{"index": 0, "text": "x", "header": "Introduction"}]
+def test_extract_abstract_returns_none_when_no_abstract_piece():
+    pieces = [{"index": 0, "text": "x", "header": "Introduction", "is_abstract": False}]
     assert extract_abstract(pieces) is None
+
+
+def test_extract_abstract_includes_subsection_under_abstract_header():
+    # 07-31 수정 회귀 방지 — 07-28에 References에서 고친 것과 정확히 같은 버그였다:
+    # "# Abstract" 아래 "## Overview" 같은 하위 절이 있으면 그 조각의 대표 라벨(header)은
+    # "Overview"라, 라벨로 판정하던 옛 코드는 초록의 뒷부분을 통째로 놓쳤다. 소속 판정은
+    # 헤더 계층 전체(split_for_embedding 안)에서 하므로 이제 빠짐없이 잡혀야 한다.
+    md = (
+        "# Abstract\n\n초록 앞부분입니다.\n\n"
+        "## Overview\n\n초록에 딸린 하위 절입니다.\n\n"
+        "# Introduction\n\n본문은 초록이 아닙니다.\n"
+    )
+    pieces = split_for_embedding(md)
+    result = extract_abstract(pieces)
+
+    assert result is not None
+    assert "초록 앞부분입니다." in result
+    assert "초록에 딸린 하위 절입니다." in result  # 라벨이 "Overview"인 조각 — 옛 코드는 여기서 누락
+    assert "본문은 초록이 아닙니다." not in result  # Abstract 밖은 섞이면 안 됨
 
 
 # --- split_into_chunks()의 is_references 필드 --------------------------

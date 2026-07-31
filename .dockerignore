@@ -10,6 +10,7 @@ frontend/
 
 # 런타임에 바인드 마운트로 붙는 것들 — 이미지에 굽지 않는다 (docker-compose.yml 참고)
 chroma_db/
+data/
 models/
 *.gguf
 

@@ -549,7 +549,7 @@ def test_get_paper_summary_excludes_references_chunks_from_llm_input(monkeypatch
 def test_get_paper_summary_carries_title_from_chunks_into_summary_doc(monkeypatch):
     # summary 문서엔 title이 없어서 답변 근거 표시에서 paper_id로만 보이던 문제(07-29,
     # graph.describe_context_sources 작업 중 발견) — register_paper()가 이미 청크에
-    # 복제해둔 title을 _fetch_bib_meta()로 가져와 summary 문서에도 넣어야 한다.
+    # 복제해둔 title을 _fetch_fulltext()가 청크와 함께 가져와 summary 문서에도 넣어야 한다.
     vs = FakeVectorstore()
     vs.add_texts(
         texts=["본문 청크"],

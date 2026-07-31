@@ -106,7 +106,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 
 ### 특징
 
-- **단기기억 (멀티턴 대화)**: `MemorySaver` checkpointer + `thread_id` — **이제 `orchestrator.py`가 소유**(물리 QA 능력 자체는 checkpointer 없이 fresh invoke). 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. (MemorySaver는 프로세스 메모리라 서버 재시작 시 소멸 — 영속화는 SqliteSaver로 예정)
+- **단기기억 (멀티턴 대화, 디스크 영속화)**: `AsyncSqliteSaver` checkpointer + `thread_id` — **`orchestrator.py`가 그래프 구조와 DB 경로(`CHECKPOINT_DB_PATH`)를, `main.py`의 FastAPI `lifespan`이 실제 컴파일(체크포인터 연결)을 소유**(물리 QA 능력 자체는 checkpointer 없이 fresh invoke). 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. `data/checkpoints.sqlite`에 저장돼 **서버 재시작에도 대화가 살아남는다**(6-4, 07-31 — 이전엔 `MemorySaver`로 프로세스 메모리에만 있어 재시작 시 소멸했음). 동기 `SqliteSaver`가 아니라 비동기 버전을 쓰는 이유: `/query`가 `astream()`을 쓰는데 동기 버전은 이 경로에서 지원되지 않음(실제 라이브러리 소스로 확인)
 - **모델 선택 + fallback 체인**: `model_map`(gemini-2.5-flash / claude-haiku / **Qwen-tuned**)에서 요청별 선택, rate limit·접속 오류 시 남은 모델로 자동 전환. 실패한 모델은 `disabled_models`로 State에 기록되어 같은 요청 안에서는 재시도하지 않음 (노드를 넘나드는 모델 서킷 브레이커). 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음.
 
 2개 모델이 동시에 장애여도 3번째로 정상 응답 — 상세 로그: [docs/README_09.md](docs/README_09.md#장애-복원력-테스트)

@@ -145,7 +145,7 @@ def describe_context_sources(context: list[Document]) -> str:
     논문은 paper_id로 묶어 doc_type이 여러 개 섞여 있으면(같은 논문의 전문 청크와
     요약이 같이 검색되는 경우가 흔함) 괄호 안에 나열한다. title 메타데이터가 없으면
     (bibliographic 없이 등록된 논문 — 해시 기반 paper_id라 애초에 title 자체가 없음,
-    paper_ingest.py의 _fetch_bib_meta 참고) paper_id를 그대로 표시한다.
+    paper_ingest.py의 _pick_bib_meta 참고) paper_id를 그대로 표시한다.
     """
     has_feynman = False
     tool_sources: set[str] = set()
@@ -218,9 +218,27 @@ def retrieve(state: State) -> dict:
     # 사용자·모든 턴이 공유하는 캐시 산출물이라 그 턴에 우연히 고른 state.model(예: 예산이
     # 작은 Qwen-tuned)을 따라가면 안 된다. paper_ingest.py의 기본값(BACKGROUND_SUMMARY_MODEL,
     # 예산이 가장 넉넉한 모델로 고정)을 그대로 쓴다.
+    #
+    # 후보 조건은 "paper_id가 있는 모든 문서"다(07-31 수정) — 예전엔 doc_type이
+    # fulltext_chunk인 것만 봤는데, abstract 문서가 생기면서(6-3b①) 구멍이 났다: 한 논문이
+    # 차지할 수 있는 자리는 MAX_CHUNKS_PER_PAPER=2뿐이라, 그 논문 몫이 abstract 문서 하나만
+    # 남는 경우(effort="low"면 top_k=2라 현실적) 논문이 분명히 context에 들어왔는데도 요약
+    # 생성이 시작되지 않았다. abstract 도입 전에는 "논문 등장 = fulltext_chunk 등장"이라
+    # 없던 구멍 — doc_type이 늘어날 때 그걸 걸러야 할 곳 하나가 빠지는 이 저장소의 반복
+    # 패턴이다(07-28 retrieve() 2k 버그와 같은 모양).
+    #
+    # 단, 이번 검색에 summary 문서가 나온 논문은 제외한다 — 그 논문 요약이 이미 있다는
+    # 확실한 증거라 ensure_summary_in_background()를 부를 필요조차 없다(그 함수도 결국
+    # False를 돌려주지만, 그 판정을 위해 _fetch_summary()가 DB를 한 번 조회한다). 공짜로
+    # 아는 건 공짜로 거른다 — _PERMANENTLY_FAILED 검사를 DB 조회보다 앞에 둔 07-28 수정과
+    # 같은 논리.
+    papers_with_summary = {
+        d.metadata["paper_id"] for d in docs
+        if d.metadata.get("doc_type") == "summary" and "paper_id" in d.metadata
+    }
     candidate_paper_ids = {
         d.metadata["paper_id"] for d in docs
-        if d.metadata.get("doc_type") == "fulltext_chunk" and "paper_id" in d.metadata
+        if "paper_id" in d.metadata and d.metadata["paper_id"] not in papers_with_summary
     }
     started = [
         pid for pid in candidate_paper_ids
