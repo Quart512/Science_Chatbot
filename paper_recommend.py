@@ -10,8 +10,12 @@ import paper_screening
 import paper_search
 
 
-def recommend_for_interest(interest_id: int, *, max_results: int = 5, conn=None) -> list[dict]:
+def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int = 0, conn=None) -> list[dict]:
     """관심사 하나를 기준으로 논문을 검색·스크리닝한다.
+
+    start(08-11①, "추가 검색"): paper_search.search_papers()의 페이지네이션 오프셋을
+    그대로 통과시킨다 — "지금 검색"을 반복 클릭해도 매번 같은 상위 결과가 나오는 대신,
+    이미 받은 개수를 start로 넘기면 다음 순위 후보를 이어서 스크리닝할 수 있다.
 
     검색 쿼리는 관심사의 looking_for를 쓴다(비어 있으면 title로 폴백) — "찾는 것"이
     title보다 실제 검색 의도를 더 구체적으로 담고 있다.
@@ -43,7 +47,7 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, conn=None)
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
 
     query = interest["looking_for"] or interest["title"]
-    candidates = paper_search.search_papers(query, max_results=max_results)
+    candidates = paper_search.search_papers(query, max_results=max_results, start=start)
 
     results = []
     for candidate in candidates:

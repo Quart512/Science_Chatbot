@@ -65,6 +65,8 @@ except requests.RequestException as e:
     st.error(f"카탈로그 조회 실패: {e}")
 else:
     if papers:
-        st.dataframe(papers, width="stretch")
+        # 고정 높이 — 안 주면 논문이 많아질수록 페이지가 계속 늘어난다(interests.py의
+        # RESULTS_TABLE_HEIGHT와 같은 이유).
+        st.dataframe(papers, width="stretch", height=300)
     else:
         st.caption("등록된 논문이 없습니다.")

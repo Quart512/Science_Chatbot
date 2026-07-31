@@ -19,13 +19,16 @@ from arxiv_api import arxiv_search
 from paper.paper_id import normalize_paper_id
 
 
-def search_papers(query: str, max_results: int = 5) -> list[dict]:
+def search_papers(query: str, max_results: int = 5, start: int = 0) -> list[dict]:
     """쿼리로 논문 후보를 검색해 paper_id·지표 자리까지 채운 통일된 형태로 반환한다.
 
     반환 키: paper_id, doi, arxiv_id, title, authors(list[str]), year, abstract,
     pdf_url, journal_ref, citation_count(항상 None).
+
+    start: arxiv_search()의 페이지네이션 오프셋을 그대로 통과시킨다 — "추가 검색"이
+    이미 본 결과 다음부터 이어받을 수 있게(arxiv_api.py의 arxiv_search 참고).
     """
-    results = arxiv_search(query, max_results=max_results)
+    results = arxiv_search(query, max_results=max_results, start=start)
     candidates = []
     for r in results:
         doi = r.get("doi") or None

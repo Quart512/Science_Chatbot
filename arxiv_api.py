@@ -124,15 +124,20 @@ def _query_atom(params: dict, _retries: int = 1) -> str:
     return resp.text
 
 
-def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
+def arxiv_search(query: str, max_results: int = 5, start: int = 0, _retries: int = 1) -> list[dict]:
     """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
 
     각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
     journal_ref, doi (journal_ref/doi는 대부분 preprint 단계라 빈 문자열인 경우가 흔함)
+
+    start(08-11①, 라이브러리 UI "추가 검색"): arXiv API 자체의 페이지네이션 오프셋을
+    그대로 노출한다 — 관심사 카드에서 "지금 검색"을 다시 누르면 매번 같은 상위 결과가
+    반복되는데, start를 이전까지 받은 개수만큼 올려 호출하면 다음 순위 후보를 이어서
+    받을 수 있다(같은 쿼리는 정렬이 안정적이라는 arXiv API 전제).
     """
     params = {
         "search_query": f"all:{query}",
-        "start": 0,
+        "start": start,
         "max_results": max_results,
     }
     return _parse_atom_response(_query_atom(params, _retries))

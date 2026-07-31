@@ -107,6 +107,21 @@ def test_trigger_recommend_search_returns_results(monkeypatch):
     assert resp.json() == {"recommended": fake_results}
 
 
+def test_trigger_recommend_search_forwards_start_query_param(monkeypatch):
+    # 08-11①, "추가 검색" — 프론트가 넘긴 start를 recommend_for_interest()에 그대로 전달
+    captured = {}
+    def _fake_recommend(interest_id, **kw):
+        captured.update(kw)
+        return []
+    monkeypatch.setattr(paper_recommend, "recommend_for_interest", _fake_recommend)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/1/search", params={"start": 5})
+
+    assert resp.status_code == 200
+    assert captured["start"] == 5
+
+
 def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
     def _boom(interest_id, **kw):
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")

@@ -138,10 +138,13 @@ def delete_interest(interest_id: int):
 # 있는데, 지금은 결과를 한 번에 돌려주는 단순한 형태로 시작한다(단순 경로부터) — 진행
 # 상황을 스트리밍하고 싶어지면 그때 /query처럼 SSE로 바꾼다. /interests와 같은 이유로
 # 평범한 def(스레드풀 실행, 이벤트 루프 안 막음).
+#
+# start(08-11①, "추가 검색") — 쿼리 파라미터로 페이지네이션 오프셋을 받는다. 프론트가
+# 지금까지 받은 후보 수를 그대로 넘기면 다음 순위부터 이어서 검색·스크리닝한다.
 @app.post("/interests/{interest_id}/search")
-def trigger_recommend_search(interest_id: int):
+def trigger_recommend_search(interest_id: int, start: int = 0):
     try:
-        results = paper_recommend.recommend_for_interest(interest_id)
+        results = paper_recommend.recommend_for_interest(interest_id, start=start)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"recommended": results}

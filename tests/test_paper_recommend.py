@@ -42,7 +42,7 @@ def test_raises_when_interest_not_found(monkeypatch):
 def test_uses_looking_for_as_search_query(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     captured = {}
-    def _fake_search(query, max_results=5):
+    def _fake_search(query, max_results=5, start=0):
         captured["query"] = query
         return []
     monkeypatch.setattr(paper_search, "search_papers", _fake_search)
@@ -56,7 +56,7 @@ def test_falls_back_to_title_when_looking_for_empty(monkeypatch):
     interest = {**INTEREST, "looking_for": ""}
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: interest)
     captured = {}
-    monkeypatch.setattr(paper_search, "search_papers", lambda query, max_results=5: (captured.setdefault("query", query), [])[1])
+    monkeypatch.setattr(paper_search, "search_papers", lambda query, max_results=5, start=0: (captured.setdefault("query", query), [])[1])
 
     paper_recommend.recommend_for_interest(1)
 
@@ -68,7 +68,7 @@ def test_only_relevant_candidates_are_recorded_to_catalog(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     monkeypatch.setattr(
         paper_search, "search_papers",
-        lambda query, max_results=5: [_candidate("arxiv:1", "관련됨"), _candidate("arxiv:2", "무관함")],
+        lambda query, max_results=5, start=0: [_candidate("arxiv:1", "관련됨"), _candidate("arxiv:2", "무관함")],
     )
 
     def _fake_screen(candidate, interest, **kw):
@@ -89,7 +89,7 @@ def test_irrelevant_candidates_are_still_returned_not_hidden(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     monkeypatch.setattr(
         paper_search, "search_papers",
-        lambda query, max_results=5: [_candidate("arxiv:1", "관련됨"), _candidate("arxiv:2", "무관함")],
+        lambda query, max_results=5, start=0: [_candidate("arxiv:1", "관련됨"), _candidate("arxiv:2", "무관함")],
     )
     monkeypatch.setattr(
         paper_screening, "screen_candidate",
@@ -108,7 +108,7 @@ def test_results_sorted_by_relevance_only_preserving_original_order_within_group
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     monkeypatch.setattr(
         paper_search, "search_papers",
-        lambda query, max_results=5: [
+        lambda query, max_results=5, start=0: [
             _candidate("arxiv:1", "무관1"), _candidate("arxiv:2", "관련1"),
             _candidate("arxiv:3", "무관2"), _candidate("arxiv:4", "관련2"),
         ],
@@ -129,7 +129,7 @@ def test_screening_failure_skips_candidate_but_continues(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     monkeypatch.setattr(
         paper_search, "search_papers",
-        lambda query, max_results=5: [_candidate("arxiv:fail"), _candidate("arxiv:ok")],
+        lambda query, max_results=5, start=0: [_candidate("arxiv:fail"), _candidate("arxiv:ok")],
     )
 
     def _fake_screen(candidate, interest, **kw):
@@ -148,7 +148,7 @@ def test_passes_candidate_metadata_to_catalog(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
     monkeypatch.setattr(
         paper_search, "search_papers",
-        lambda query, max_results=5: [_candidate("arxiv:1", "논문 제목", authors=["김", "이"], year="2020", doi="10.1/x")],
+        lambda query, max_results=5, start=0: [_candidate("arxiv:1", "논문 제목", authors=["김", "이"], year="2020", doi="10.1/x")],
     )
     monkeypatch.setattr(paper_screening, "screen_candidate", lambda candidate, interest, **kw: _screened("arxiv:1", True))
 
@@ -170,6 +170,20 @@ def test_passes_candidate_metadata_to_catalog(monkeypatch):
 
 def test_no_candidates_returns_empty_list(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
-    monkeypatch.setattr(paper_search, "search_papers", lambda query, max_results=5: [])
+    monkeypatch.setattr(paper_search, "search_papers", lambda query, max_results=5, start=0: [])
 
     assert paper_recommend.recommend_for_interest(1) == []
+
+
+def test_forwards_start_offset_to_search(monkeypatch):
+    # 08-11①, "추가 검색" — 이미 본 결과 다음부터 이어서 검색하기 위한 페이지네이션 오프셋
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    captured = {}
+    def _fake_search(query, max_results=5, start=0):
+        captured["start"] = start
+        return []
+    monkeypatch.setattr(paper_search, "search_papers", _fake_search)
+
+    paper_recommend.recommend_for_interest(1, start=5)
+
+    assert captured["start"] == 5
