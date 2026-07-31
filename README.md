@@ -155,6 +155,7 @@ Science_Chatbot/
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
 │   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 │   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
+│   ├── test_paper_catalog.py        # 논문 카탈로그 RDB CRUD (상태 전이: recommended/owned/dismissed)
 │   ├── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
 │   └── test_main.py                 # POST /interests (TestClient, interests.py CRUD 몽키패치)
 ├── evaluation/
@@ -182,6 +183,7 @@ Science_Chatbot/
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
+├── paper_catalog.py      # 논문 카탈로그 RDB(SQLite) — data/app.db(interests.py와 같은 파일, 다른 테이블), status: recommended/owned/dismissed
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```
