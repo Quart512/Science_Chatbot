@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app, _add_tokens
@@ -18,6 +17,13 @@ from graph import app as physics_qa_app, _add_tokens
 #     부모가 알 필요도, State 스키마를 공유할 이유도 없음
 #   - messages(add_messages reducer)를 공유하면 능력 내부의 재시도 초안·tool 메시지가
 #     그대로 부모 이력에 섞여버림 — 래퍼가 "이번에 새로 추가된 깨끗한 메시지만" 골라 반환
+#
+# [SqliteSaver 영속화, 6-4·07-31] 이 파일은 이제 컴파일된 app이 아니라 컴파일 "전" graph
+# 빌더만 export한다 — 체크포인터 연결(컴파일)은 main.py의 FastAPI lifespan에서 한다.
+# 이유: AsyncSqliteSaver는 비동기 컨텍스트 매니저로 열어야 하는데(아래 CHECKPOINT_DB_PATH
+# 참고), 그 컨텍스트가 살아있는 동안(서버 생명주기)만 유효하다 — 이 모듈을 임포트하는
+# 시점(동기)엔 그 컨텍스트를 열 수 없다. 그래서 "무엇으로 컴파일할지"는 main.py가 결정하고,
+# 이 파일은 "무엇을 컴파일할지"(그래프 구조)만 책임진다.
 # =========================================================
 
 
@@ -83,13 +89,31 @@ graph.add_node("physics_qa", physics_qa_node)
 graph.add_edge(START, "physics_qa")
 graph.add_edge("physics_qa", END)
 
-# 단기기억(멀티턴)·체크포인터는 여기(부모)가 소유 — 개별 능력은 더 이상 자기 checkpointer를 갖지 않는다
-memory = MemorySaver()
-app = graph.compile(checkpointer=memory)
+# 단기기억(멀티턴)의 저장소 경로 — 이 파일이 소유(위 모듈 docstring 참고). data/ 디렉터리는
+# chroma_db/와 같은 성격(바인드 마운트로 컨테이너 재시작에도 살아남아야 하는 영속 데이터)이고,
+# 나중에 관심사·실험도구 RDB(앱 데이터, RoadMap "VDB vs RDB" 참고)가 같은 디렉터리에 추가될
+# 예정이라 파일은 분리하되(체크포인트는 LangGraph가 스키마를 관리, 앱 데이터는 우리 것)
+# 디렉터리는 공유한다 — docker-compose.yml/.gitignore/.dockerignore를 디렉터리 단위로
+# 한 번만 설정해두면 나중에 앱 DB 파일이 추가돼도 그 설정들을 다시 안 고쳐도 된다.
+CHECKPOINT_DB_PATH = "data/checkpoints.sqlite"
 
 if __name__ == "__main__":
-    result = app.invoke(
-        {"question": "파인만이 설명한 강력이 뭐야?"},
-        config={"configurable": {"thread_id": "test"}},
-    )
-    print(result["answer"])
+    # 터미널 스모크 테스트 — main.py의 FastAPI lifespan과 정확히 같은 방식(AsyncSqliteSaver)으로
+    # 컴파일해서, 이 파일만 실행해도 실제 영속화 경로를 검증할 수 있게 한다. 같은 thread_id로
+    # 두 번 실행해보면 재시작 후에도 대화가 이어지는지(디스크 파일에 남아있는지) 확인 가능.
+    import asyncio
+    import os
+
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    async def _smoke_test():
+        os.makedirs(os.path.dirname(CHECKPOINT_DB_PATH), exist_ok=True)
+        async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
+            app = graph.compile(checkpointer=checkpointer)
+            result = await app.ainvoke(
+                {"question": "파인만이 설명한 강력이 뭐야?"},
+                config={"configurable": {"thread_id": "test"}},
+            )
+            print(result["answer"])
+
+    asyncio.run(_smoke_test())

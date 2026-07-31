@@ -21,6 +21,11 @@ env/
 # chroma_db/
 chroma_db/
 
+# SQLite 데이터 디렉터리(6-4, 07-31) — 체크포인트 DB(orchestrator.py의 CHECKPOINT_DB_PATH)
+# + 나중에 추가될 앱 데이터 RDB(관심사·실험도구, RoadMap "VDB vs RDB" 참고). 디렉터리
+# 단위로 제외해두면 앱 DB 파일이 생겨도 이 파일을 다시 안 고쳐도 됨.
+data/
+
 # pytest
 .pytest_cache/
 
