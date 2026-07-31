@@ -53,7 +53,7 @@ Claude Code는 이 파일을 자동으로 읽는다. 채팅 협업으로 쓸 때
 
 물리 연구 어시스턴트. **표면(UI) / 능력(호출당하는 그래프·함수) / 데이터 서비스** 3층 구조다. 상시 챗봇은 메인 챗 하나뿐이고, 나머지 기능은 챗봇이 아니라 능력이나 배치 파이프라인으로 존재한다. 전체 그림은 `README.md`의 "목표 아키텍처"를 볼 것.
 
-**구현된 것**: 물리 QA 능력(Self-RAG 그래프, `graph.py`) · 오케스트레이터 래퍼(`orchestrator.py`) · 스트리밍 API(`main.py`, SSE) · arXiv 어댑터(`arxiv_api.py`) · 논문 요약기 ②a(`paper/` 패키지: 등록 시 전문 인코딩 + lazy 요약 생성·캐시)
+**구현된 것**: 물리 QA 능력(Self-RAG 그래프, `graph.py`) · 오케스트레이터(`orchestrator.py`, `AsyncSqliteSaver`로 대화 영속화 — 6-4) · 스트리밍 API(`main.py`, SSE) · arXiv 어댑터(`arxiv_api.py`, journal_ref/doi 포함) · 논문 요약기 ②a(`paper/` 패키지: 등록 시 전문 인코딩 + lazy 요약 생성·캐시 + abstract 확보·제목 검증) · 관심사 서비스 ①(`interests.py` RDB + `orchestrator.py`의 제안·초안·중복검사 훅 + `POST /interests`) · 추천 검색 파이프라인 ③+스크리닝②b(`paper_catalog.py`/`paper_search.py`/`paper_screening.py`/`paper_recommend.py` + `POST /interests/{id}/search`)
 
 **다음 순서**: `docs/RoadMap.md`의 "📅 예정"과 Obsidian To Do List가 정본이다. 작업을 시작하기 전에 항상 확인한다.
 
@@ -72,6 +72,7 @@ Claude Code는 이 파일을 자동으로 읽는다. 채팅 협업으로 쓸 때
 - **세부 내용의 정본은 `docs/RoadMap.md`다.** To Do List는 저장소 밖(Obsidian)에 있어 Claude가 읽지 못하고, 순서만 짧게 적는 칸반이다 — 항목 내용이 궁금하면 RoadMap의 같은 이름 행을 본다.
 - 평소엔 **RoadMap ↔ To Do List만** 동기화한다. README/DEPLOY는 현황이 실제로 바뀔 때만 건드린다.
 - **설계 결정을 내렸으면 코드보다 먼저 RoadMap 설계 노트에 근거를 남긴다.** 이 프로젝트에서 가장 값어치 있는 산출물이 그 기록이다.
+- **RoadMap/README는 매 단계·매 명령마다 갱신하지 않는다** (07-31 피드백 — 세션 하나에서 작은 단계마다 계속 갱신했더니 과했음). 여러 단계를 묶어 **하나의 의미 있는 변경점**이 됐을 때(기능 하나 완성, 설계 결정 하나 확정, 로드맵 항목 하나 종료)만 정리해서 한 번에 반영한다. 세션 중간중간 "이것도 적을까요"로 매번 안 물어봐도 됨 — 단위 작업이 끝나고 다음 화제로 넘어가기 전에 알아서 정리한다.
 
 ---
 

@@ -68,6 +68,16 @@ def _reset_in_flight():
 
 
 @pytest.fixture(autouse=True)
+def _stub_paper_catalog(monkeypatch):
+    # register_paper()는 08-09 마무리로 정상 등록 시 paper_catalog.mark_owned()를 부른다.
+    # 기본값은 실제 data/app.db(interests.APP_DB_PATH)를 여는 함수라, 여기서 기본으로
+    # no-op 스텁해두지 않으면 이 파일의 모든 테스트가 진짜 sqlite 파일을 건드리게 된다
+    # (위 _stub_arxiv_fetch와 같은 이유). 카탈로그 연동 자체를 검증하는 테스트는 이
+    # 스텁을 자기 목적에 맞는 기록용 가짜로 다시 덮어쓴다.
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _stub_arxiv_fetch(monkeypatch):
     # register_paper()는 arxiv_id가 있고 bibliographic에 abstract가 없으면 자동으로
     # arxiv API(fetch_by_id)를 호출한다(07-29) — 이 파일 대부분의 테스트는 그 자동 조회
@@ -107,6 +117,56 @@ def test_register_paper_scanned_pdf_skips_chunking(monkeypatch, tmp_path):
     assert result["text_extractable"] is False
     assert result["chunk_count"] == 0
     assert vs.ids == []  # 스캔본은 OCR도, 저장도 안 한다(pdf_parse.py 원칙 그대로 물려받음)
+
+
+def test_register_paper_marks_catalog_owned(monkeypatch, tmp_path):
+    # 08-09 마무리 — 정상 등록되면 paper_catalog.mark_owned()가 paper_id·doi·arxiv_id·
+    # bib_meta(title/authors/year)를 그대로 넘겨받는지 확인. bib_meta의 authors는
+    # _flatten_bibliographic()이 list를 콤마로 합친 문자열이어야 한다(기존 "리스트
+    # 필드를 평탄화" 테스트와 같은 형태를 mark_owned 호출 인자에서도 재확인).
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog,
+        "mark_owned",
+        lambda paper_id, **kwargs: calls.append((paper_id, kwargs)),
+    )
+
+    vs = FakeVectorstore()
+    bibliographic = {"title": "테스트 논문", "authors": ["김철수", "이영희"], "year": 2024}
+    result = paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.12345", bibliographic=bibliographic, vectorstore=vs
+    )
+
+    assert len(calls) == 1
+    paper_id, kwargs = calls[0]
+    assert paper_id == result["paper_id"]
+    assert kwargs["doi"] is None
+    assert kwargs["arxiv_id"] == "2401.12345"
+    assert kwargs["title"] == "테스트 논문"
+    assert kwargs["authors"] == "김철수, 이영희"
+    assert kwargs["year"] == 2024
+
+
+def test_register_paper_scanned_pdf_skips_catalog(monkeypatch, tmp_path):
+    # 스캔본은 VDB에 아무것도 저장하지 않는 것과 대칭으로 카탈로그도 안 건드린다 —
+    # "파싱해서 실제로 확보된 논문"만 owned로 표시한다는 설계 그대로.
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(scanned=True))
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda *a, **k: calls.append((a, k))
+    )
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.99999", vectorstore=vs)
+
+    assert calls == []
 
 
 def test_register_paper_prioritizes_doi_over_arxiv(monkeypatch, tmp_path):

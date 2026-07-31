@@ -145,7 +145,7 @@ Science_Chatbot/
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
 │   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
-│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 + fetch_by_id (네트워크 없이)
+│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱(journal_ref/doi 포함) + fetch_by_id (네트워크 없이)
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
 │   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
 │   ├── test_paper_chunking.py       # 헤더 분할·References/Abstract 태깅·임베딩용 청킹
@@ -155,8 +155,12 @@ Science_Chatbot/
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
 │   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 │   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
+│   ├── test_paper_catalog.py        # 논문 카탈로그 RDB CRUD (상태 전이: recommended/owned/dismissed)
+│   ├── test_paper_search.py         # 논문 검색 어댑터 (arxiv_search 몽키패치, paper_id 조립)
+│   ├── test_paper_screening.py      # 논문 스크리닝(②b) — 관련도만 LLM 몽키패치, peer_reviewed/인용수/연도는 계산 검증
+│   ├── test_paper_recommend.py      # 추천 검색(③) 오케스트레이션 — 검색→스크리닝→카탈로그 기록 조립 로직
 │   ├── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
-│   └── test_main.py                 # POST /interests (TestClient, interests.py CRUD 몽키패치)
+│   └── test_main.py                 # POST /interests, /interests/{id}/search (TestClient, 몽키패치)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -182,6 +186,10 @@ Science_Chatbot/
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
+├── paper_catalog.py      # 논문 카탈로그 RDB(SQLite) — data/app.db(interests.py와 같은 파일, 다른 테이블), status: recommended/owned/dismissed
+├── paper_search.py       # 논문 검색 어댑터 — arxiv_search()를 감싸 paper_id·지표 자리까지 채운 후보 목록 반환(나중에 Crossref/OpenAlex로 교체 대비)
+├── paper_screening.py    # 논문 스크리닝(②b) — 관련도만 LLM 판단, peer-review/인용수/연도는 계산·전달(한 점수로 안 합침)
+├── paper_recommend.py    # 추천 검색(③) — 검색→스크리닝→카탈로그 recommended 기록 오케스트레이션
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```
@@ -278,6 +286,15 @@ POST /interests
 ```
 
 - 관심사 저장소(`interests.py`, `data/app.db`)에 저장. 화면에 보이는 템플릿 값을 그대로 보내는 평범한 단발 요청 — 중복 검사는 `/query`의 `suggestion` 단계에서 이미 끝났으므로 여기선 다시 하지 않음
+
+```
+POST /interests/{interest_id}/search
+
+→ {"recommended": [{"paper_id", "is_relevant", "reasoning", "peer_reviewed",
+                     "citation_count", "year", "title", "abstract"}, ...]}
+```
+
+- 그 관심사 기준으로 논문을 검색(arxiv)·스크리닝(②b)한다. **관심사에서 사용자가 트리거할 때만 실행**(cron 배치 아님). 논문 카탈로그(`paper_catalog.py`)에 `status: recommended`로는 관련 있다고 판정된 것만 기록되지만, **반환되는 목록엔 관련 없다고 판정된 것도 포함**된다(스크리닝 LLM이 틀릴 수 있으므로 사용자가 직접 보고 판단할 여지를 남김 — "추천에서 끝나고 결정은 사람이"). 목록은 관련도(`is_relevant`)만을 기준으로 정렬(관련 있음이 앞) — `peer_reviewed`/`citation_count`/`year`는 서로 안 섞고 정렬 기준으로도 안 씀, 그 축으로 다시 정렬하고 싶으면 프론트가 하면 됨. 관심사 id가 없으면 404
 
 ## 평가
 

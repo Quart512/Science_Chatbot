@@ -13,6 +13,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import interests
 import orchestrator
+import paper_recommend
 
 # SqliteSaver 영속화(6-4, 07-31) — MemorySaver는 프로세스 메모리라 재시작 시 대화가 통째로
 # 사라졌는데, 이제 디스크 파일(orchestrator.CHECKPOINT_DB_PATH)에 저장해 재시작에도 살아남는다.
@@ -102,3 +103,19 @@ def register_interest(body: InterestRegistration):
 
     new_id = interests.create_interest(body.title, body.looking_for, body.already_known, body.excluded_topics)
     return {"interest_id": new_id, "action": "created"}
+
+
+# 추천 검색 트리거(08-09③ 호출 경로, 07-31) — "관심사에서 트리거할 때만" 실행한다는
+# 로드맵 원칙 그대로: cron 배치가 아니라 사용자가 라이브러리 관심사 카드에서 "지금 검색"을
+# 누를 때만 이 엔드포인트가 불린다. paper_recommend.recommend_for_interest()가 검색(2~3초
+# 내외 네트워크 호출)과 후보마다 LLM 스크리닝을 순차로 도는 동안 요청이 몇 초 걸릴 수
+# 있는데, 지금은 결과를 한 번에 돌려주는 단순한 형태로 시작한다(단순 경로부터) — 진행
+# 상황을 스트리밍하고 싶어지면 그때 /query처럼 SSE로 바꾼다. /interests와 같은 이유로
+# 평범한 def(스레드풀 실행, 이벤트 루프 안 막음).
+@app.post("/interests/{interest_id}/search")
+def trigger_recommend_search(interest_id: int):
+    try:
+        results = paper_recommend.recommend_for_interest(interest_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"recommended": results}
