@@ -3,10 +3,12 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app, _add_tokens
+from models import invoke_with_fallback
 
 # =========================================================
 # 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다.
@@ -84,10 +86,82 @@ def physics_qa_node(state: ParentState) -> dict:
     }
 
 
+# 관심사 등록 제안 훅(08-07 턴 종료 후 훅, 07-31) — "물리 QA는 제안만, 실제 작성·확인은
+# 관심사 서비스(interest_writer.py)"로 정리된 설계(설계 논의 참고)의 물리 QA 쪽 절반이다.
+# physics_qa_node 안이 아니라 별도 노드로 둔 이유: 물리 QA 능력이 "관심사 서비스"라는
+# 다른 능력의 존재를 알 필요가 없어야 한다(캡슐화) — 능력 간 제안·연결은 여러 능력을
+# 다 아는 부모(오케스트레이터)의 책임이다.
+#
+# 대화 내용을 관심사 서비스로 그대로 복사해 넘기지 않는다 — thread_id만 안내하면
+# interest_writer.py의 draft()가 그 thread_id로 checkpoints.sqlite를 다시 읽어 초안을
+# 만든다(대화가 이미 영속화돼 있다는 6-4의 이점을 그대로 활용).
+#
+# 매 턴 다시 판정하고 반복 제안을 억제하는 로직은 없다(단순 경로부터, 설계 논의에서
+# 의도적으로 미룸) — 같은 주제로 대화가 길어지면 매 턴 제안이 반복될 수 있는데, 실사용에서
+# 거슬리면 그때 억제 로직을 추가한다. 판정 자체가 실패해도(모델 전부 소진 등) 원래 답변
+# 흐름은 막지 않는다 — register_paper()의 arxiv 자동 조회 실패 처리와 같은 패턴.
+#
+# SSE로는 별도 청크로 흘려보낸다(07-31, 실사용 테스트로 발견한 문제의 수정) — 처음엔
+# comment에 이어붙이기만 했는데, physics_qa_node가 이미 writer({"final": True, ...})로
+# 답변을 다 흘려보낸 "뒤"에 이 노드가 도니까 comment에 이어붙인 내용이 스트림엔 전혀
+# 안 실리고 체크포인트에만 남았다(실제 TestClient로 재현 확인). "final"의 의미를
+# "이게 진짜 답변 본문"으로만 쓰고 "스트림이 끝났다"로는 안 쓰기로 하면, 그 뒤에 이
+# 노드가 {"suggestion": ...} 청크를 하나 더 흘려보내도 문제없다 — 프론트는 답변을 먼저
+# 렌더링하고, 뒤이어 도착하는 suggestion 청크를 후속 말풍선처럼 보여주면 된다(스트림을
+# 늦추지 않으면서도 실제로 전달됨).
+INTEREST_SUGGESTION_MODEL = "gemini"
+
+INTEREST_SUGGESTION_PROMPT = """대화 이력을 보고 사용자가 관심사로 등록할 만한 주제를 반복해서
+다루고 있는지 판정해라. 한 번의 가벼운 질문에는 제안하지 마라 — 여러 번 같은 주제를 묻거나
+사용자가 스스로 "관심 있다"·"더 알아보고 싶다"는 뜻을 밝혔을 때만 제안해라."""
+
+
+class InterestSuggestion(BaseModel):
+    should_suggest: bool = Field(
+        description="최근 대화를 보고 사용자가 반복적으로 관심 두는 주제가 있어 "
+        "관심사로 등록해볼 만하면 True, 아니면 False"
+    )
+
+
+def suggest_interest_node(state: ParentState, config: RunnableConfig) -> dict:
+    if not state.messages:
+        return {}
+
+    try:
+        messages = [SystemMessage(content=INTEREST_SUGGESTION_PROMPT)] + state.messages
+        result, _, _, tokens_used = invoke_with_fallback(
+            INTEREST_SUGGESTION_MODEL, messages, structured=InterestSuggestion
+        )
+    except RuntimeError as e:
+        # 판정 자체가 실패해도 이번 턴의 실제 답변은 이미 physics_qa_node가 만들어둔 상태 —
+        # 제안 기능 하나 때문에 턴 전체를 실패시키지 않는다.
+        print(f"관심사 제안 판정 실패(턴은 정상 진행): {type(e).__name__}: {e}")
+        return {}
+
+    update = {"tokens_used": _add_tokens(state.tokens_used, tokens_used)}
+    if not result.should_suggest:
+        return update
+
+    thread_id = config["configurable"].get("thread_id", "")
+    note = f"이 대화 내용을 관심사로 등록해볼까요? (thread_id: {thread_id})"
+    update["comment"] = f"{state.comment}\n\n{note}" if state.comment else note
+
+    # comment에도 남기지만(체크포인트·비-스트리밍 호출용), 실시간 스트림에는 physics_qa_node의
+    # "final" 답변 청크가 이미 지나간 뒤라 별도 청크로 흘려보내야 프론트에 실제로 도착한다
+    # (위 모듈 주석 "SSE로는 별도 청크로" 참고). get_stream_writer()는 stream_mode="custom"이
+    # 아닌 일반 호출(테스트 등)에서는 no-op이라 안전.
+    writer = get_stream_writer()
+    writer({"suggestion": note})
+
+    return update
+
+
 graph = StateGraph(ParentState)
 graph.add_node("physics_qa", physics_qa_node)
+graph.add_node("suggest_interest", suggest_interest_node)
 graph.add_edge(START, "physics_qa")
-graph.add_edge("physics_qa", END)
+graph.add_edge("physics_qa", "suggest_interest")
+graph.add_edge("suggest_interest", END)
 
 # 단기기억(멀티턴)의 저장소 경로 — 이 파일이 소유(위 모듈 docstring 참고). data/ 디렉터리는
 # chroma_db/와 같은 성격(바인드 마운트로 컨테이너 재시작에도 살아남아야 하는 영속 데이터)이고,
