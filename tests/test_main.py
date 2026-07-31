@@ -69,6 +69,30 @@ def test_register_interest_404_when_update_id_not_found(monkeypatch):
     assert resp.status_code == 404
 
 
+def test_delete_interest_returns_deleted_action(monkeypatch):
+    captured = {}
+    def _fake_delete(interest_id, **kw):
+        captured["id"] = interest_id
+        return True
+    monkeypatch.setattr(interests, "delete_interest", _fake_delete)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/interests/7")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"interest_id": 7, "action": "deleted"}
+    assert captured["id"] == 7
+
+
+def test_delete_interest_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(interests, "delete_interest", lambda interest_id, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/interests/999")
+
+    assert resp.status_code == 404
+
+
 # --- POST /interests/{id}/search (08-09③ 호출 경로) -------------------------
 
 

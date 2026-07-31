@@ -118,6 +118,19 @@ def register_interest(body: InterestRegistration):
     return {"interest_id": new_id, "action": "created"}
 
 
+# 관심사 삭제(08-11③ 후속, 라이브러리 표면 "관심사 탭"의 카드별 삭제 버튼) — 지금까지
+# 생성·수정·조회만 있고 삭제가 없었다. interest_paper 조인 테이블이 아직 없어(RoadMap
+# "관심사↔논문이 다대다다" 열린 질문) 이 관심사가 추천한 카탈로그 행을 같이 지우거나
+# 남기는 정책은 그 테이블이 생길 때 다시 정한다 — 지금은 interests 테이블 행 하나만
+# 지운다. /interests와 같은 이유로 평범한 def.
+@app.delete("/interests/{interest_id}")
+def delete_interest(interest_id: int):
+    deleted = interests.delete_interest(interest_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"관심사 id={interest_id}를 찾을 수 없습니다")
+    return {"interest_id": interest_id, "action": "deleted"}
+
+
 # 추천 검색 트리거(08-09③ 호출 경로, 07-31) — "관심사에서 트리거할 때만" 실행한다는
 # 로드맵 원칙 그대로: cron 배치가 아니라 사용자가 라이브러리 관심사 카드에서 "지금 검색"을
 # 누를 때만 이 엔드포인트가 불린다. paper_recommend.recommend_for_interest()가 검색(2~3초

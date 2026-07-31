@@ -137,6 +137,25 @@ def update_interest(interest_id: int, *, conn: sqlite3.Connection | None = None,
             conn.close()
 
 
+def delete_interest(interest_id: int, *, conn: sqlite3.Connection | None = None) -> bool:
+    """관심사를 삭제한다. 반환값은 실제로 지워진 행이 있었는지(존재하지 않는 id를
+    조용히 무시하지 않고 호출자가 알 수 있게 한다 — update_interest()와 같은 계약).
+
+    관심사↔논문 조인(interest_paper)이 아직 없어(RoadMap "관심사↔논문이 다대다다"
+    열린 질문) 지금은 이 테이블 행 하나만 지우면 된다 — 조인 테이블이 생기면 그때
+    같이 지울지(CASCADE) 남길지(추천 이력은 살리고 관심사만 지우는 경우)를 다시 정해야 한다.
+    """
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        cur = conn.execute("DELETE FROM interests WHERE id = ?", (interest_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        if owns_conn:
+            conn.close()
+
+
 if __name__ == "__main__":
     # 수동 스모크 테스트 — 실제 data/app.db에 씀
     new_id = create_interest(

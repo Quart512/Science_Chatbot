@@ -98,3 +98,21 @@ def test_update_interest_rejects_unknown_field(conn):
 def test_update_interest_with_no_fields_returns_false(conn):
     interest_id = interests.create_interest("제목", conn=conn)
     assert interests.update_interest(interest_id, conn=conn) is False
+
+
+def test_delete_interest_removes_row(conn):
+    interest_id = interests.create_interest("제목", conn=conn)
+    assert interests.delete_interest(interest_id, conn=conn) is True
+    assert interests.get_interest(interest_id, conn=conn) is None
+
+
+def test_delete_interest_returns_false_when_id_not_found(conn):
+    assert interests.delete_interest(999, conn=conn) is False
+
+
+def test_delete_interest_does_not_touch_other_rows(conn):
+    keep_id = interests.create_interest("남길 것", conn=conn)
+    delete_id = interests.create_interest("지울 것", conn=conn)
+    interests.delete_interest(delete_id, conn=conn)
+    assert interests.get_interest(keep_id, conn=conn) is not None
+    assert [r["id"] for r in interests.list_interests(conn=conn)] == [keep_id]
