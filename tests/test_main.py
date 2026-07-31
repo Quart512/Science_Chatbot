@@ -4,11 +4,25 @@ interests.py의 CRUD를 몽키패치해 라우팅·분기 로직만 검증 — �
 TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query와 무관한 엔드포인트
 테스트라도 앱을 띄우는 이상 거쳐가는 경로이므로 그대로 둔다(가볍고 실제 파일 I/O만 발생).
 """
+import fitz
 from fastapi.testclient import TestClient
 
 import interests
 import main
+import paper.paper_ingest as paper_ingest
+import paper_catalog
 import paper_recommend
+
+
+def test_list_interests_returns_all(monkeypatch):
+    fake_rows = [{"id": 1, "title": "양자정보"}, {"id": 2, "title": "응집물질"}]
+    monkeypatch.setattr(interests, "list_interests", lambda **kw: fake_rows)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/interests")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"interests": fake_rows}
 
 
 def test_register_interest_creates_new_when_no_update_id(monkeypatch):
@@ -78,3 +92,88 @@ def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
         resp = client.post("/interests/999/search")
 
     assert resp.status_code == 404
+
+
+# --- POST /papers (08-11① 호출 경로) -----------------------------------------
+
+
+def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
+    # register_paper() 자체(파싱·임베딩)는 몽키패치로 갈아끼운다 — 여기서 보는 건
+    # 엔드포인트가 업로드 바이트를 임시 파일 경로로 바꿔 doi/arxiv_id와 함께 그대로
+    # 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
+    captured = {}
+
+    def _fake_register(pdf_path, *, doi=None, arxiv_id=None, **kw):
+        captured["pdf_path"] = pdf_path
+        captured["doi"] = doi
+        captured["arxiv_id"] = arxiv_id
+        return {"paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1}
+
+    monkeypatch.setattr(paper_ingest, "register_paper", _fake_register)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/papers",
+            files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")},
+            data={"arxiv_id": "2401.12345"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1
+    }
+    assert captured["arxiv_id"] == "2401.12345"
+    assert captured["doi"] is None
+    assert captured["pdf_path"]  # 임시 파일 경로(내용은 register_paper()가 몽키패치돼 안 쓰임)
+
+
+def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
+    def _boom(pdf_path, **kw):
+        raise fitz.FileDataError("cannot open broken document")
+
+    monkeypatch.setattr(paper_ingest, "register_paper", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/papers", files={"file": ("bad.pdf", b"not a pdf at all", "application/pdf")}
+        )
+
+    assert resp.status_code == 400
+
+
+# --- GET /papers (08-11③ 호출 경로) -------------------------------------------
+
+
+def test_list_papers_forwards_status_filter(monkeypatch):
+    captured = {}
+    fake_rows = [{"paper_id": "arxiv:1", "status": "recommended"}]
+
+    def _fake_list(*, status=None, **kw):
+        captured["status"] = status
+        return fake_rows
+
+    monkeypatch.setattr(paper_catalog, "list_papers", _fake_list)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/papers", params={"status": "recommended"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"papers": fake_rows}
+    assert captured["status"] == "recommended"
+
+
+def test_list_papers_no_filter_returns_all(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "list_papers", lambda *, status=None, **kw: [])
+
+    with TestClient(main.app) as client:
+        resp = client.get("/papers")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"papers": []}
+
+
+def test_list_papers_rejects_invalid_status():
+    with TestClient(main.app) as client:
+        resp = client.get("/papers", params={"status": "bogus"})
+
+    assert resp.status_code == 422

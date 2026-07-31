@@ -1,8 +1,10 @@
 import json
 import os
+import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+import fitz
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Literal
@@ -13,6 +15,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import interests
 import orchestrator
+import paper.paper_ingest as paper_ingest
+import paper_catalog
 import paper_recommend
 
 # SqliteSaver 영속화(6-4, 07-31) — MemorySaver는 프로세스 메모리라 재시작 시 대화가 통째로
@@ -87,6 +91,15 @@ class InterestRegistration(BaseModel):
     update_existing_id: int | None = None
 
 
+
+# 관심사 목록 조회(08-11②, 라이브러리 표면 "관심사 탭"의 카드 목록) — 지금까지 관심사
+# 생성(POST)만 API로 열려있고 조회는 없었다. interests.list_interests()를 그대로
+# relay — 판정도 가공도 없는 단순 조회라 /interests 생성 핸들러와 같은 이유로 평범한 def.
+@app.get("/interests")
+def list_interests():
+    return {"interests": interests.list_interests()}
+
+
 @app.post("/interests")
 def register_interest(body: InterestRegistration):
     if body.update_existing_id is not None:
@@ -119,3 +132,44 @@ def trigger_recommend_search(interest_id: int):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"recommended": results}
+
+
+# 논문 등록(08-11①, 라이브러리 표면 "논문 탭"의 등록 주 경로) — register_paper()가
+# 지금까지 paper/paper_ingest.py의 __main__ 스모크 테스트로만 호출되던 걸 여기서 처음
+# API로 노출한다.
+#
+# multipart/form-data로 파일을 받는다 — register_paper()가 pdf_path(디스크 경로)를 받는
+# 시그니처라 업로드 바이트를 임시 파일에 한 번 써서 그 경로를 넘긴다(register_paper()
+# 자체를 bytes 인자로 바꾸는 건 이 엔드포인트 하나만을 위한 리팩터링이라 범위 밖).
+#
+# fitz.FileDataError(PyMuPDF가 유효한 PDF가 아니라고 판단할 때)는 사용자 입력 검증
+# 경계에서 나는 에러라 500이 아니라 400으로 변환한다 — 지금까지 register_paper()의
+# 유일한 호출자(CLI 스모크 테스트)는 항상 진짜 PDF를 줬으니 이 실패 모드를 신경 쓸
+# 필요가 없었지만, API로 노출되는 순간 신뢰 못 할 입력이 된다.
+#
+# /interests와 같은 이유로 평범한 def — register_paper()는 PDF 파싱(CPU)+임베딩(로컬
+# 모델 추론)까지 동기로 도는 무거운 호출이라 이벤트 루프에서 직접 돌리면 안 된다.
+@app.post("/papers")
+def register_paper_endpoint(
+    file: UploadFile = File(...),
+    doi: str | None = Form(None),
+    arxiv_id: str | None = Form(None),
+):
+    file_bytes = file.file.read()
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        tmp.write(file_bytes)
+        tmp.flush()
+        try:
+            return paper_ingest.register_paper(tmp.name, doi=doi, arxiv_id=arxiv_id)
+        except fitz.FileDataError:
+            raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+
+
+# 논문 카탈로그 조회(08-11③, 라이브러리 표면 "관심사 탭"의 보유/추천 목록) — status로
+# 필터링하되(recommended/owned/dismissed), 관심사별 필터는 아직 없다: paper_catalog에
+# interest_id 연결이 없어(RoadMap "관심사↔논문이 다대다다" 열린 질문 — interest_paper
+# 조인 테이블 미구현) 지금은 전역 목록만 가능하다. paper_catalog.list_papers()를 그대로
+# relay — 판정 없는 단순 조회라 /interests 조회와 같은 이유로 평범한 def.
+@app.get("/papers")
+def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = None):
+    return {"papers": paper_catalog.list_papers(status=status)}
