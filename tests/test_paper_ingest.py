@@ -46,11 +46,12 @@ class FakeVectorstore:
         self.metadatas += list(metadatas)
 
 
-def _fake_parse_pdf(scanned=False, markdown="# Title\n\n## Body\n\n" + "내용입니다. " * 50):
+def _fake_parse_pdf(scanned=False, markdown="# Title\n\n## Body\n\n" + "내용입니다. " * 50, pdf_title=None):
     return {
         "text_extractable": not scanned,
         "markdown": markdown,
         "page_count": 3,
+        "pdf_title": pdf_title,
     }
 
 
@@ -402,6 +403,89 @@ def test_register_paper_skips_abstract_doc_when_none_found(monkeypatch, tmp_path
     paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.55558", vectorstore=vs)
 
     assert not any(m["doc_type"] == "abstract" for m in vs.metadatas)
+
+
+# --- title_check (07-29, 6-3b③) --------------------------------------------
+
+
+def test_register_paper_reports_match_when_titles_agree(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(
+        paper_ingest, "parse_pdf",
+        lambda file_bytes: _fake_parse_pdf(pdf_title="Quantum Entanglement Review"),
+    )
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.77771",
+        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
+    )
+
+    assert result["title_check"]["status"] == "match"
+    assert result["title_check"]["given_title"] == "Quantum Entanglement Review"
+    assert result["title_check"]["pdf_title"] == "Quantum Entanglement Review"
+
+
+def test_register_paper_reports_different_paper_when_titles_disagree(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(
+        paper_ingest, "parse_pdf",
+        lambda file_bytes: _fake_parse_pdf(pdf_title="A Survey of Kubernetes Deployment Strategies"),
+    )
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.77772",
+        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
+    )
+
+    # 딴 논문일 가능성이 있다는 판정만 반환할 뿐, 등록 자체는 그대로 진행된다(막지 않음)
+    assert result["title_check"]["status"] == "different_paper"
+    assert result["text_extractable"] is True
+    assert result["chunk_count"] > 0
+
+
+def test_register_paper_reports_no_comparison_when_pdf_title_missing(monkeypatch, tmp_path):
+    # PDF 제목 추출 실패는 불일치가 아니다(title_check.py 모듈 docstring 참고) — 조용히 건너뜀
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(pdf_title=None))
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.77773",
+        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
+    )
+
+    assert result["title_check"]["status"] == "no_comparison"
+
+
+def test_register_paper_reports_no_comparison_when_no_given_title(monkeypatch, tmp_path):
+    # bibliographic 자체가 없는 경우(해시 기반 paper_id) — 대조할 기준이 없음
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(
+        paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(pdf_title="Some PDF Title")
+    )
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(str(pdf_path), vectorstore=vs)
+
+    assert result["title_check"]["status"] == "no_comparison"
+
+
+def test_register_paper_scanned_pdf_has_no_title_check(monkeypatch, tmp_path):
+    # 스캔본은 저장할 게 없으니 검증도 의미가 없다(모듈 docstring 참고) — title_check 자체가 반환값에 없음
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(scanned=True))
+
+    vs = FakeVectorstore()
+    result = paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.77774", vectorstore=vs)
+
+    assert "title_check" not in result
 
 
 # --- get_paper_summary() --------------------------------------------------

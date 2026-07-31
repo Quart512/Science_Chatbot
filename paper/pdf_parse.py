@@ -41,6 +41,27 @@ def _looks_scanned(doc: fitz.Document) -> bool:
     return avg_chars_per_page < SCANNED_CHAR_THRESHOLD_PER_PAGE
 
 
+def _extract_pdf_title(doc: fitz.Document, markdown: str) -> str | None:
+    """제목 후보를 뽑는다(07-29, 6-3b③ 제목 검증용) — PDF 내장 메타데이터
+    (`doc.metadata["title"]`)를 우선 쓴다. arxiv가 생성한 PDF는 대개 여기에 제목이
+    박혀 있어, `paper_chunking.py`에 이미 기록된 헤더 오탐지(저자명이 헤더로 잡히는
+    사례)보다 안정적이다. 메타데이터가 비어 있으면 마크다운 첫 줄로 폴백(완벽하지
+    않음 — 그래서 title_check.py가 "추출 실패"를 불일치와 다르게 취급한다).
+
+    문서 메타데이터는 텍스트 레이어와 무관하게 항상 읽을 수 있으므로 스캔본에도
+    시도할 가치가 있다 — 그래서 이 함수는 scanned 여부를 모르는 채로 호출돼도 된다
+    (마크다운이 빈 문자열이면 그냥 첫 줄 폴백만 안 됨).
+    """
+    meta_title = (doc.metadata.get("title") or "").strip()
+    if meta_title:
+        return meta_title
+    for line in markdown.splitlines():
+        line = line.strip().lstrip("#").strip("* ").strip()
+        if line:
+            return line
+    return None
+
+
 def parse_pdf(file_bytes: bytes) -> dict:
     """PDF 파일을 파싱해 마크다운 텍스트(헤딩 보존 시도)와 메타데이터를 반환한다.
 
@@ -56,6 +77,7 @@ def parse_pdf(file_bytes: bytes) -> dict:
             휴리스틱으로 잡히므로 논문마다 인식률이 다를 수 있다 — 헤더 분할 단계의
             폴백(정규식 → 문단 분할)은 이 함수가 아니라 호출하는 쪽(섹션 분할 단계)의 몫.
         page_count: int
+        pdf_title: str | None — 제목 후보(07-29, _extract_pdf_title 참고). 못 찾으면 None.
 
     그림 캡션은 pymupdf4llm이 기본으로 텍스트에 포함시켜 살아남고, 이미지 픽셀 자체나
     수식(폰트 인코딩에 따라 깨진 유니코드로 나올 수 있음)은 애초에 신뢰하지 않는다 —
@@ -72,6 +94,7 @@ def parse_pdf(file_bytes: bytes) -> dict:
                 "text_extractable": False,
                 "markdown": "",
                 "page_count": page_count,
+                "pdf_title": _extract_pdf_title(doc, ""),  # 메타데이터만 시도(마크다운 없음)
             }
 
         # doc(이미 열린 fitz.Document)을 그대로 넘겨 파일을 두 번 열지 않는다.
@@ -81,6 +104,7 @@ def parse_pdf(file_bytes: bytes) -> dict:
             "text_extractable": True,
             "markdown": markdown,
             "page_count": page_count,
+            "pdf_title": _extract_pdf_title(doc, markdown),
         }
 
 

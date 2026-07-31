@@ -56,16 +56,17 @@
 
 | 저장소 | 내용 | 형태 |
 |---|---|---|
-| 관심사 저장소 (①) | 사용자 관심사 문서 (템플릿 기반) | VDB 컬렉션 — 유사도 검색으로 중복 검사 |
+| 관심사 저장소 (①) | 사용자 관심사 문서 (템플릿 기반) | **RDB(SQLite)** — 필드 단위 수정이 잦고(문서 작성기의 "기존 편집 제안"), 논문 카탈로그와 **다대다 조인**이 필요하다(관심사 카드별 보유·추천·권위 논문 목록). 중복 검사는 임베딩이 아니라 전체 목록을 프롬프트에 넣는 LLM 판정 — 수십 개 규모라 가능하고 코사인 유사도보다 정확하다 |
 | 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** ← **현재 구현**(`retrieval.py`의 `papers_vectorstore`) | VDB 컬렉션(`feynman`과 별도) — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
 | 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite). 기본 키는 **정규화된 `paper_id`**(`doi:...` → `arxiv:...` → 내용 해시 순), DOI는 별도 nullable·unique 컬럼 — arXiv preprint는 DOI가 없고 업로드 PDF는 둘 다 없을 수 있으며, 나중에 게재돼 DOI가 생겨도 `paper_id`는 불변. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
 | 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | VDB 컬렉션 — `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분** (RAG 검색은 되지만 사실 근거로는 논문·코퍼스 우선) |
-| 실험도구 DB (⑤) | 장비 spec 문서 | 구조화 레코드(정확 조회 필요) + 선택적 임베딩 |
+| 실험도구 DB (⑤) | 장비 spec | **RDB(SQLite)** — 임베딩하지 않는다. 실험 설계가 던질 질문이 "측정 범위가 X 이상인 장비 있나?" 같은 **범위 조건 조회**라 VDB가 원리적으로 못 하는 일이다. 자연어로 장비를 찾고 싶으면 목록이 짧으니 프롬프트에 넣으면 된다 |
 | 코퍼스 | 파인만 강의록 | ChromaDB (현재 구현) |
 | 안전 규칙 | 실험 안전 가드레일 | 규칙 기반 — 설계·운영 양 단계 공통 조회 |
 
 ### 설계 포인트
 
+- **VDB냐 RDB냐의 갈림선은 "RAG 검색 대상인가"**: 논문(전문·요약)과 지식 노트는 QA가 의미 검색으로 찾아내야 하므로 VDB. 관심사·실험도구·논문 카탈로그는 사람이 관리하고 시스템은 id나 조건으로 조회하므로 RDB(SQLite). 관계(관심사↔논문)가 있거나 범위 조건 조회가 필요하면 그 자체로 RDB 근거다. 규모도 판단에 들어간다 — 수십 개짜리 목록은 임베딩 인덱스보다 프롬프트에 통째로 넣는 편이 단순하고 정확하다.
 - **논문 처리를 요약(②a) / 스크리닝(②b) / 검색으로 3분할**: "abstract 트리아지 → 통과하면 전문 요약"이라는 단일 파이프라인은 성립하지 않는다 — 유료 저널은 트리아지를 통과해도 전문을 읽을 수 없고, 반대로 라이브러리 보유 논문은 이미 선별이 끝나 트리아지가 불필요하다. 입력(전문 vs abstract+지표)·비용(비싸고 드묾 vs 싸고 대량)·호출자가 전부 다르므로 별개 능력으로 나눈다.
 - **등록 시 인코딩, 요약은 lazy**: 논문 등록 시점에는 전문 청킹·임베딩만 해서 검색 가능하게 만들고(인코딩 ≠ 요약), 요약은 라이브러리에서 요청받거나 QA·논문 작성이 필요로 할 때 생성 후 캐시. **QA 중 요약이 없으면 전문 청크로 답하고 요약 생성은 백그라운드로** — 인라인 생성은 응답을 수십 초 늘린다(스트리밍 도입으로 생기는 진행상황 채널에 얹는다).
 - **권위 판단은 LLM이 아니라 지표로**: 스크리닝에서 LLM은 "관심사와 관련 있나"(abstract 기반)만 담당하고, 신뢰도·권위는 저널·인용수 계산으로 낸다 — LLM에게 권위를 물으면 환각한다. 지표는 API 어댑터가 붙기 전엔 비어 있으므로 관련도만으로 랭킹하고, 필드는 미리 준비해둔다. 저자 h-index 같은 명성 지표는 쓰지 않는다(논문을 사람으로 판단하는 편향).
@@ -144,11 +145,14 @@ Science_Chatbot/
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
 │   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
-│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 (네트워크 없이)
+│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 + fetch_by_id (네트워크 없이)
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
 │   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
-│   ├── test_paper_chunking.py       # 헤더 분할·References 태깅·임베딩용 청킹
+│   ├── test_paper_chunking.py       # 헤더 분할·References/Abstract 태깅·임베딩용 청킹
+│   ├── test_pdf_parse.py            # PDF 제목 후보 추출(_extract_pdf_title, 가짜 문서 객체)
+│   ├── test_title_check.py          # 제목 정규화·유사도 등급 분류 (difflib, 결정론적)
 │   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
+│   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
 │   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
@@ -169,6 +173,7 @@ Science_Chatbot/
 │   ├── paper_chunking.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
 │   ├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
 │   ├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
+│   ├── title_check.py        # 제목 검증 (arxiv 제목 vs PDF 추출 제목, 결정론적 비교 — 등록을 막지 않음)
 │   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB

@@ -89,6 +89,7 @@ from models import ContextBudgetExceeded, check_context_budget, invoke_with_fall
 from paper.paper_extraction import PaperExtraction
 from paper.paper_id import normalize_paper_id
 from paper.paper_chunking import extract_abstract, split_for_embedding  # 구 paper_sections.py
+from paper.title_check import classify_title_match
 from paper.pdf_parse import parse_pdf
 
 FORMULA_DISCLAIMER = "(주의: 수식·이미지는 파싱 과정에서 신뢰할 수 없어 이 요약에 반영하지 않았습니다.)"
@@ -177,9 +178,17 @@ def register_paper(
     title 등도 같이 채워짐. bibliographic에 이미 값이 있으면 그게 우선(자동 조회로
     덮어쓰지 않음), 조회 실패(네트워크 오류 등)는 등록을 막지 않고 서지정보 없이 진행.
 
-    반환: {"paper_id": str, "text_extractable": bool, "chunk_count": int, "page_count": int}
+    반환: {"paper_id": str, "text_extractable": bool, "chunk_count": int, "page_count": int,
+           "title_check": {"status", "given_title", "pdf_title"}}
     스캔본(text_extractable=False)이면 chunk_count=0으로 정직하게 보고하고 아무것도 저장하지
-    않는다 — OCR을 붙이지 않는다는 pdf_parse.py의 원칙을 그대로 물려받는다.
+    않는다 — OCR을 붙이지 않는다는 pdf_parse.py의 원칙을 그대로 물려받는다(이 경우
+    title_check는 반환값에 없음 — 저장할 게 없으니 검증도 의미가 없다).
+
+    title_check(07-29, 6-3b③): bibliographic의 title과 PDF 자체에서 뽑은 제목
+    (pdf_parse.py의 pdf_title)을 대조한 결과 — title_check.classify_title_match() 참고.
+    등록 자체를 막지 않는다 — status가 "different_paper"(딴 논문 의심)여도 그대로
+    저장하고 판정만 반환값에 실어 보낸다. 실제로 경고를 보여줄지는 호출하는 쪽(라이브러리
+    UI, 6-8) 몫.
     """
     # 파일을 한 번만 읽는다(07-28, 리뷰 지적) — 이 file_bytes를 paper_id 계산(해시)과
     # parse_pdf() 양쪽에 그대로 재사용한다. 예전엔 여기서 읽은 뒤 parse_pdf(pdf_path)가
@@ -269,11 +278,19 @@ def register_paper(
     # 영원히 재시도가 안 된다(아래 ensure_summary_in_background 모듈 docstring 참고).
     _PERMANENTLY_FAILED.discard(paper_id)
 
+    # 제목 검증(07-29, 6-3b③) — 등록을 막지 않는다(title_check.py 모듈 docstring 참고).
+    # 여기서는 판정만 내려 반환값에 실어 보낼 뿐이고, 그 판정으로 뭘 할지(경고 표시 등)는
+    # 라이브러리 UI(6-8)가 소비할 때 결정한다 — register_paper()는 여전히 "파싱→저장"
+    # 한 번에 처리하는 구조 그대로이고 2단계 분리(파싱·검증 → 확인 → 저장)는 그때 한다.
+    given_title = (bibliographic or {}).get("title")
+    title_check = classify_title_match(given_title, parsed.get("pdf_title"))
+
     return {
         "paper_id": paper_id,
         "text_extractable": True,
         "chunk_count": len(pieces),
         "page_count": parsed["page_count"],
+        "title_check": {"status": title_check, "given_title": given_title, "pdf_title": parsed.get("pdf_title")},
     }
 
 
