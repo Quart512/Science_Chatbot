@@ -155,7 +155,7 @@ Science_Chatbot/
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
 │   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 │   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
-│   └── test_interest_writer.py      # 문서 작성기 그래프 — InMemorySaver로 실제 interrupt/resume 검증
+│   └── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -181,7 +181,6 @@ Science_Chatbot/
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
-├── interest_writer.py    # 문서 작성기(관심사) — 독립 그래프, orchestrator와 체크포인터 파일 공유(thread_id로 구분), draft→dup_check→confirm(interrupt)→save
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```
