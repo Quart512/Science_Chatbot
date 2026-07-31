@@ -153,7 +153,10 @@ Science_Chatbot/
 │   ├── test_title_check.py          # 제목 정규화·유사도 등급 분류 (difflib, 결정론적)
 │   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
-│   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
+│   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
+│   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
+│   ├── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
+│   └── test_main.py                 # POST /interests (TestClient, interests.py CRUD 몽키패치)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -163,6 +166,7 @@ Science_Chatbot/
 │   └── results/               # evaluate.py 실행 결과 (모델별 JSON)
 ├── models/               # GGUF 모델 가중치 (git 제외)
 ├── chroma_db/            # ChromaDB 영구 저장소
+├── data/                 # SQLite 파일들 (git 제외) — checkpoints.sqlite(대화 이력) + app.db(관심사 등 앱 데이터), 파일은 분리하되 디렉터리는 공유
 ├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
 ├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
@@ -177,6 +181,7 @@ Science_Chatbot/
 │   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
+├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```
@@ -244,16 +249,35 @@ POST /query
 {
   "prompt": "파인만이 설명한 원자가 뭐야?",
   "model": "gemini",
+  "effort": "medium",
   "thread_id": "user-123"
 }
 
-→ {"answer": "...", "comment": "..."}
+→ text/event-stream (SSE) — 진행 중엔 {"trace": "...", "final": false},
+  답변 도착 시 {"trace": "...", "answer": "...", "comment": "...", "final": true},
+  이어서(관심사로 등록해볼 만하면) {"suggestion": {"note": "...", "draft": {...}, "duplicate": null|{"id","title"}}}
 ```
 
 - `model`: `"gemini"` (기본값) / `"claude"` / `"Qwen-tuned"` (로컬 llama-server 필요)
-- `thread_id`: 대화 세션 식별자 — 같은 값으로 요청하면 이전 대화 맥락이 이어짐(단기기억). 생략 시 uuid 자동 발급(맥락 없는 단발 요청)
-- `top_k`/`limit`(검색 문서 수·verify 재시도 한도)은 물리 QA 능력 내부 다이얼이라 API에서 빠짐 — 지금은 `orchestrator.py`가 기본값(top_k=3, limit=4)으로 호출. 능력이 여러 개로 늘어나면(6-7 라우터) 능력별 파라미터 노출 방식을 다시 설계할 예정
-- 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지 등. 정상 처리 시 comment는 비어 있을 수 있음
+- `effort`: `"low"`/`"medium"`(기본값)/`"high"` — top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에서 빠지고 이 프로필 이름만 노출(실제 숫자 매핑은 `graph.py`의 `EFFORT_PROFILES`)
+- `thread_id`: 대화 세션 식별자 — 같은 값으로 요청하면 이전 대화 맥락이 이어짐(단기기억, `data/checkpoints.sqlite`에 영속화 — 6-4). 생략 시 uuid 자동 발급(맥락 없는 단발 요청)
+- 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지, 관심사 등록 제안 등. 정상 처리 시 comment는 비어 있을 수 있음
+- `suggestion`(있을 때만): 대화 내용이 관심사로 등록해볼 만하면 물리 QA가 채워서 보내는 초안 — `draft`(title/looking_for/already_known/excluded_topics)를 그대로(또는 사용자가 고친 값으로) `POST /interests`에 넘기면 등록됨. `duplicate`가 있으면 비슷한 기존 관심사가 있다는 뜻 — 그 `id`를 `update_existing_id`로 넘기면 새로 만드는 대신 그걸 수정
+
+```
+POST /interests
+{
+  "title": "위상 물질",
+  "looking_for": "기초 개념",
+  "already_known": "",
+  "excluded_topics": "",
+  "update_existing_id": null
+}
+
+→ {"interest_id": 1, "action": "created"}   (update_existing_id 지정 시 "updated", 없는 id면 404)
+```
+
+- 관심사 저장소(`interests.py`, `data/app.db`)에 저장. 화면에 보이는 템플릿 값을 그대로 보내는 평범한 단발 요청 — 중복 검사는 `/query`의 `suggestion` 단계에서 이미 끝났으므로 여기선 다시 하지 않음
 
 ## 평가
 

@@ -2,7 +2,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Literal
@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+import interests
 import orchestrator
 
 # SqliteSaver 영속화(6-4, 07-31) — MemorySaver는 프로세스 메모리라 재시작 시 대화가 통째로
@@ -62,3 +63,42 @@ async def query(request: Request, body: Query):
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# 관심사 등록(08-07 호출 경로, 07-31) — "관심사 등록" 버튼이 부르는 평범한 엔드포인트.
+# orchestrator.suggest_interest_node가 채팅 답변에 실어 보낸 초안(draft) 필드를 프론트가
+# 그대로(또는 사용자가 고친 값으로) 돌려보내면 저장한다. 중복 검사는 이미 제안 시점에
+# 끝났으므로 여기서 다시 LLM을 부르지 않는다 — update_existing_id는 그때 알려준
+# duplicate.id를 프론트가 그대로 전달하면 됨(설계 논의 참고: 등록은 "그 순간 화면 값을
+# 저장하는 평범한 단발 요청"이라 interrupt/재개가 필요 없다는 결론).
+#
+# interests.py는 표준 라이브러리 sqlite3(동기)로 만들어져 있다 — 그래서 이 핸들러는
+# async def가 아니라 평범한 def다. FastAPI는 동기 경로 함수를 스레드풀에서 돌려주므로
+# (공식 권장 패턴) 짧은 sqlite3 호출이라도 메인 이벤트 루프(/query의 astream 등)를
+# 막지 않는다 — AsyncSqliteSaver를 쓴 이유(체크포인터가 이벤트 루프를 막으면 안 됨)와
+# 같은 고려사항을 여기선 "sync 함수를 async def로 감싸지 않는다"로 만족시킨다.
+class InterestRegistration(BaseModel):
+    title: str
+    looking_for: str = ""
+    already_known: str = ""
+    excluded_topics: str = ""
+    # None이면 새로 생성, 값이 있으면 그 id의 기존 관심사를 수정(제안 시 duplicate.id로 받은 값)
+    update_existing_id: int | None = None
+
+
+@app.post("/interests")
+def register_interest(body: InterestRegistration):
+    if body.update_existing_id is not None:
+        updated = interests.update_interest(
+            body.update_existing_id,
+            title=body.title,
+            looking_for=body.looking_for,
+            already_known=body.already_known,
+            excluded_topics=body.excluded_topics,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"관심사 id={body.update_existing_id}를 찾을 수 없습니다")
+        return {"interest_id": body.update_existing_id, "action": "updated"}
+
+    new_id = interests.create_interest(body.title, body.looking_for, body.already_known, body.excluded_topics)
+    return {"interest_id": new_id, "action": "created"}
