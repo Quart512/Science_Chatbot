@@ -489,6 +489,75 @@ def test_get_paper_summary_carries_title_from_chunks_into_summary_doc(monkeypatc
     assert summary_meta["title"] == "테스트 논문"
 
 
+# --- abstract를 추출 프롬프트 앵커로 제공 (07-29, 6-3b②) --------------------
+
+
+def _add_fulltext_chunk(vs, paper_id="arxiv:1", text="본문 청크"):
+    vs.add_texts(
+        texts=[text],
+        metadatas=[{"paper_id": paper_id, "doc_type": "fulltext_chunk", "index": 0, "is_references": False, "header": "Intro"}],
+        ids=[f"{paper_id}-0"],
+    )
+
+
+def _add_abstract_doc(vs, paper_id="arxiv:1", text="이 논문의 초록"):
+    vs.add_texts(texts=[text], metadatas=[{"paper_id": paper_id, "doc_type": "abstract"}], ids=[f"{paper_id}-abstract"])
+
+
+def test_get_paper_summary_anchors_abstract_when_present(monkeypatch):
+    vs = FakeVectorstore()
+    _add_fulltext_chunk(vs)
+    _add_abstract_doc(vs, text="이 논문의 초록입니다")
+
+    captured = {}
+    def _fake_invoke(model, messages, structured=None):
+        captured["system"] = messages[0].content
+        captured["human"] = messages[1].content
+        return (PaperExtraction(core_claims=["추출됨"]), "gemini", [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+    monkeypatch.setattr(paper_ingest, "invoke_with_fallback", _fake_invoke)
+
+    paper_ingest.get_paper_summary("arxiv:1", vectorstore=vs)
+
+    assert "[논문 초록]" in captured["human"]
+    assert "이 논문의 초록입니다" in captured["human"]
+    assert captured["human"].index("이 논문의 초록입니다") < captured["human"].index("본문 청크")  # 초록이 본문보다 앞
+    assert paper_ingest.ABSTRACT_ANCHOR_INSTRUCTION in captured["system"]
+
+
+def test_get_paper_summary_unchanged_when_no_abstract(monkeypatch):
+    # abstract 문서가 없으면(bibliographic·PDF Abstract 섹션 둘 다 없던 논문) 프롬프트가
+    # 전혀 안 바뀌어야 한다 — 회귀 없음 확인
+    vs = FakeVectorstore()
+    _add_fulltext_chunk(vs)
+
+    captured = {}
+    def _fake_invoke(model, messages, structured=None):
+        captured["system"] = messages[0].content
+        captured["human"] = messages[1].content
+        return (PaperExtraction(core_claims=["추출됨"]), "gemini", [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+    monkeypatch.setattr(paper_ingest, "invoke_with_fallback", _fake_invoke)
+
+    paper_ingest.get_paper_summary("arxiv:1", vectorstore=vs)
+
+    assert captured["human"] == "본문 청크"
+    assert captured["system"] == paper_ingest.EXTRACTION_SYSTEM_PROMPT
+
+
+def test_get_paper_summary_checks_budget_on_combined_text_with_abstract(monkeypatch):
+    # full_text 단독으로는 예산 안이지만 abstract를 더하면 넘는 경계 케이스 —
+    # full_text만 검사하면 여기서 안 걸리고 실제 API 호출에서야 예상 못 한 실패가 난다
+    vs = FakeVectorstore()
+    _add_fulltext_chunk(vs, text="x" * 5_950)  # Qwen-tuned 예산 6,000자 — 이 자체는 안 넘음
+    _add_abstract_doc(vs, text="y" * 200)  # 앵커 텍스트("[논문 초록]\n...\n\n[본문]\n") 포함하면 넘김
+
+    def _boom(*a, **kw):
+        raise AssertionError("예산 초과면 invoke_with_fallback을 부르면 안 됨")
+    monkeypatch.setattr(paper_ingest, "invoke_with_fallback", _boom)
+
+    with pytest.raises(ContextBudgetExceeded):
+        paper_ingest.get_paper_summary("arxiv:1", model="Qwen-tuned", vectorstore=vs)
+
+
 def test_get_paper_summary_propagates_context_budget_exceeded(monkeypatch):
     vs = FakeVectorstore()
     vs.add_texts(

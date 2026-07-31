@@ -50,6 +50,9 @@
 | 07-28 | References 판정 — 라벨과 분류 분리 | `paper_chunking.py`가 청크의 대표 헤더 라벨(표시용, 가장 깊은 헤더 하나만 기록)과 `is_references` 분류(References 섹션 소속 여부)를 같은 값에서 파생시키던 걸 분리 — "# References" 아래 "## Appendix A" 같은 하위 헤더가 있으면 대표 라벨이 "Appendix A"가 돼 정규식이 매치하지 않아 `is_references=False`로 잘못 분류되던 잠재 버그(코드 리딩 질문 중 발견) 수정. 분류는 헤더 계층 전체(`any(...)`)로 판정하고, 표시용 라벨은 기존대로 가장 깊은 헤더만 유지 — 대표성(라벨)과 소속 판정(분류)은 다른 요구라 하나의 값을 공유하면 안 됨 |
 
 | 07-28 | 아키텍처 그림 갱신 + 이미지에 dev 의존성이 새던 것 수정 | `docs/draw_architecture.py`에 논문 처리 3분할(②a 요약기/②b 스크리닝/논문 검색 어댑터)을 반영하고, 굵은 테두리로 "구현 완료"를 표시하도록 추가(색은 이미 층 구분에 쓰고 있어 선 굵기로 축을 분리). 겸사겸사 발견 — `pyproject.toml`에 "배포용은 `--no-dev`" 주석을 달아뒀는데 정작 **Dockerfile의 `uv sync` 두 곳에 `--no-dev`가 빠져 있어 pytest가(그리고 이번에 추가한 matplotlib·pillow·fonttools까지) 운영 이미지에 계속 들어가고 있었음.** 두 줄에 `--no-dev` 추가 — CI는 러너에서 직접 `uv sync`+pytest를 돌리므로 테스트 게이트는 그대로 |
+| 07-29 | 6-3b① abstract 확보 | 우선순위 `bibliographic["abstract"]`(arxiv) > PDF의 Abstract/초록 섹션(`paper_chunking.extract_abstract()` — 이미 계산된 `split_for_embedding()` 조각에서 헤더 매칭만, 재파싱·LLM 없음) > 없음. `doc_type="abstract"` 문서 1개로(청크 복제 없이) 저장 — `_store_summary()`와 같은 패턴. `_is_references_header`/`_is_abstract_header` 정규식에 한글 변형(인용문헌·참고자료·초록) 및 붙여쓰기 추가 |
+| 07-29 | 답변 근거 표시 | `graph.py`에 `describe_context_sources()` 순수 함수 신설 — `state.context` 메타데이터만으로(LLM 판단 없이) "이번 턴에 참고 가능했던 자료"를 파인만/논문(제목+전문발췌·요약·초록 구분)/웹검색(tool 이름)으로 정리해 `final_answer()`가 `comment`에 "참고한 자료:" 로 첨부. "실제로 답변이 썼는지"가 아니라 "참고 가능했는지"만 표시(전자는 LLM 판단이 필요해 결정론 원칙과 충돌) — 아래 설계 노트 참고 |
+| 07-29 | 논문 서지정보 보완 — summary title + arxiv 자동 조회 | (1) `_fetch_bib_meta()` 신설 — 이미 청크에 복제돼 있던 title 등을 꺼내 `_store_summary()`에도 넣음(summary 문서는 title이 없어 근거 표시에서 paper_id로만 보이던 문제). (2) `arxiv_api.py`에 `fetch_by_id()`(id_list 조회, 키워드 검색 아님) 신설, `register_paper()`가 arxiv_id는 있는데 bibliographic에 abstract가 없으면 자동 호출해 title·authors·year·abstract·pdf_url을 한 번에 채움(호출자 명시값 우선, 실패해도 등록은 진행) |
 
 ## 🔄 진행 중
 
@@ -61,7 +64,7 @@
 
 | 목표 시기 | 항목 | 내용 |
 |---|---|---|
-| 07-29 | 논문 abstract 확보 (6-3 후속) | 순서대로: ① **abstract 확보·단일 저장** — 출처 우선순위 `arxiv_search()`의 `abstract` > PDF의 Abstract 섹션(`paper_chunking`이 이미 헤더로 나누므로 헤더가 `^abstract`인 청크를 고르면 됨, LLM 불필요) > 없음. 청크마다 복제하지 말고 **한 번만** 저장(요약 문서 메타데이터 또는 `doc_type: "abstract"` 문서). ② **추출 프롬프트에 abstract를 앵커로 제공** — "초록에 있는 건 빼라"가 아니라(핵심 주장은 초록에 있어도 `core_claims`에 들어가야 함) "주장 식별의 기준으로 삼되 한계·미해결·공개 여부는 본문에서 찾아라". ③ **제목 일치 검증** — 아래 설계 노트 "제목 검증" 참고. 결정론적 문자열 비교(정규화 후 `difflib.SequenceMatcher`, 표준 라이브러리라 새 의존성 없음)로 등급을 나눠 **막지 않고 경고**한다. 저장 전에 돌아야 하므로 등록 흐름이 "파싱·검증 → 사용자 확인 → 저장" 2단계가 된다(현재 `register_paper()`는 한 번에 처리 — 라이브러리 UI(6-8) 때 분리) |
+| 이후 | 6-3b②③ 추출 프롬프트 앵커 + 제목 검증 | ①(abstract 확보)은 완료(07-29, 위 완료 표) — 남은 두 항목. ② **추출 프롬프트에 abstract를 앵커로 제공** — "초록에 있는 건 빼라"가 아니라(핵심 주장은 초록에 있어도 `core_claims`에 들어가야 함) "주장 식별의 기준으로 삼되 한계·미해결·공개 여부는 본문에서 찾아라". ③ **제목 일치 검증** — 아래 설계 노트 "제목 검증" 참고. 결정론적 문자열 비교(정규화 후 `difflib.SequenceMatcher`, 표준 라이브러리라 새 의존성 없음)로 등급을 나눠 **막지 않고 경고**한다. 저장 전에 돌아야 하므로 등록 흐름이 "파싱·검증 → 사용자 확인 → 저장" 2단계가 된다(현재 `register_paper()`는 한 번에 처리 — 라이브러리 UI(6-8) 때 분리) |
 | 08-05 | SqliteSaver 영속화 | MemorySaver는 재시작 시 소멸 → 디스크 영속화. **HITL보다 먼저** — interrupt로 멈춘 승인 대기 상태가 재시작에 살아남아야 함. `/query` 응답에 interrupted 상태 + resume 엔드포인트 API 설계 포함 |
 | 08-07 | 관심사 서비스 (①) | 관심사 저장소(VDB 컬렉션) + 문서 작성기 능력(대화 → 템플릿 문서, 유사도 중복 검사 → 기존 편집 제안, 등록 확인 `interrupt`) + 턴 종료 후 훅("대화 내용을 관심사로 등록할까요?" — 싼 모델 1회 판정). 작성기는 ⑤ 실험도구와 템플릿만 갈아끼워 공용. **템플릿에 "무엇을 찾고 있나 / 이미 아는 것 / 제외할 주제" 필드 필수** — ②b 관련도 판정 정확도가 여기에 달려 있다(평가 기준의 일부는 사용자가 써주는 것) |
 | 08-09 | 추천 검색 (③) + 스크리닝 (②b) + 논문 카탈로그 | ②b: **abstract만** 보고 관련도 판정(유일한 LLM 판단) + 확인 가능한 축 **병기**(단일 점수로 합치지 않음): peer-review 여부(arXiv `journal_ref`), 연간 인용수, 출판 연도 — 전문을 읽지 않는다. 기각 이력(`dismissed`)을 기준 검증용 레이블로 축적. 논문 검색 어댑터(쿼리 → abstract+서지+지표 후보 목록)도 여기서 분리. ③: **관심사에서 트리거할 때만** 실행 (cron 아님) — 검색 → ②b 스크리닝 → 랭킹 → 카탈로그에 recommended 기록. 논문 카탈로그(SQLite, DOI 기본 키, `status: recommended/owned/dismissed`) — 등록 시 DOI 매칭으로 recommended → owned 전환(추천에서 내려감). 권위 논문 목록(인용수 기반)도 관심사별 조회·캐시. **검색·평가 내부를 공용 함수로 분리**해 참고문헌 추천기와 공유(추천기는 문맥 기반 온디맨드, QA 풀 호출은 라우터 분기) |
@@ -147,6 +150,13 @@
 - **RDB(논문 카탈로그, 6-6)에도 남긴다** — 프롬프트 앵커·제목 검증·목록 표시는 여전히 `paper_id` 정확 키 조회라 카탈로그가 더 잘 맞는다(임베딩 모델 로딩 없이 바로 조회).
 - 결론: abstract는 RDB(정확 키 조회용)와 VDB(`doc_type="abstract"` 단일 문서, 의미 검색용) **둘 다에** 저장. summary도 이미 같은 이중 성격(구조화 데이터는 메타데이터로, 텍스트는 임베딩으로)이라 새로운 패턴이 아니다.
 - 남은 문제: `_fetch_summary()`의 캐시 확인은 벡터 연산이 전혀 없는 순수 메타데이터 필터(`vectorstore.get(where=...)`)인데도 Chroma 객체를 만들어야 해서 bge-m3가 로드된다(read 커맨드 실행해도 로딩바가 뜨는 이유). 이 접근 패턴만 보면 RDB가 더 잘 맞지만, 캐시 확인이 핫 패스가 아니라서 지금 당장 이걸 이유로 이중 저장(요약 완료 여부 플래그를 카탈로그에도 두기)까지 할 값어치가 있는지는 미정 — 6-6 카탈로그 스키마 설계 시 재검토.
+
+**6-3b① 실제 구현 + 답변 근거 표시 (07-29)** — 위 두 절의 결정대로 VDB 쪽(`doc_type="abstract"` 단일 문서)을 구현. RDB(카탈로그) 저장은 6-6 몫으로 아직 안 함. 구현 중 파생된 결정 세 가지:
+
+- **답변 근거는 LLM이 아니라 결정론적으로 표시한다**: `graph.py`의 `describe_context_sources()`가 `state.context`의 메타데이터(paper_id/doc_type/title, source)만 보고 파인만·논문(제목+전문발췌/요약/초록)·웹검색 목록을 만들어 `final_answer()`의 `comment`에 붙인다. `verified`나 `final_answer_structure`에 필드로 넣지 않은 이유: "결정론적으로 계산 가능한 값은 LLM 스키마에 넣지 않는다"(§3 설계 원칙)와 같은 논리 — 이미 아는 사실(어떤 문서가 context에 들어왔는지)을 LLM에 다시 판단시키면 비용과 환각 위험만 생긴다. 대신 "실제로 답변이 그 문서를 썼는지"는 일부러 안 보여준다 — `generate()`가 "문서가 무관하면 무시해라"를 허용하므로 그건 비결정론적 판단이 필요해 이 함수의 책임 밖으로 뒀다(②a·②b의 "판정 아니라 추출" 원칙과 같은 결).
+- **summary 문서도 title 등을 받는다**: `_fetch_bib_meta()`를 신설해 이미 `fulltext_chunk`에 복제돼 있던 서지 필드(`_BIBLIOGRAPHIC_WHITELIST`)를 꺼내 `_store_summary()`에 같이 넣는다 — `get_paper_summary()`가 `bibliographic`을 안 받는 별도 호출이라 처음엔 "더 큰 리팩터가 필요하다"고 잘못 판단했었는데, 실제로는 그 데이터가 이미 Chroma에 있어서(청크마다 복제돼 있음) 그냥 읽어와 재사용하는 정도로 충분했다.
+- **arxiv_id만 있고 bibliographic이 없으면 자동으로 채운다**: `arxiv_api.py`에 `fetch_by_id()`(id_list 조회)를 신설 — `arxiv_search()`(키워드 검색)로 제목 등을 다시 찾으면 다른 논문이 걸릴 위험이 있으므로, 이미 아는 `arxiv_id`는 정확히 그 id로만 조회한다. `register_paper()`가 abstract가 없을 때만 호출(호출자가 이미 서지정보를 줬으면 조회 안 함), 호출자 명시값이 항상 우선, 조회 실패는 등록을 막지 않는다. 이로써 `register_paper()`가 "LLM 호출은 없다"에서 "네트워크 호출은 있을 수 있다"로 성격이 살짝 바뀌었다(스로틀 3초 있음, `arxiv_api.py`).
+- **남은 한계**: `bibliographic` 없이(그리고 `arxiv_id`도 없이) 등록된 논문(해시 기반 `paper_id`)은 위 자동 조회 대상도 아니라서 여전히 title이 없다 — 데이터 자체가 없는 경우라 지금 범위에서 해결할 방법이 없다(근거 표시는 이 경우 `paper_id`로 폴백).
 
 **제목 검증 — 막지 말고 경고, 단 등급을 나눈다 (07-28)**:
 

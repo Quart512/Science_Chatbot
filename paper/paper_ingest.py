@@ -106,6 +106,18 @@ EXTRACTION_SYSTEM_PROMPT = """너는 논문에서 구조화된 정보를 추출�
 빈 값으로 남겨라. 수식은 PDF 파싱 과정에서 깨진 유니코드로 나올 수 있어 신뢰할 수 없다 — 수식
 자체의 정확한 형태에 근거해 판단하지 말고, 서술된 주장·설명 텍스트만 근거로 삼아라."""
 
+# abstract를 추출 프롬프트의 앵커로 제공할 때만 시스템 프롬프트에 추가하는 지침(07-29,
+# 6-3b② — RoadMap 참고). abstract가 없는 논문은 EXTRACTION_SYSTEM_PROMPT 그대로 써서
+# 회귀가 없다. "초록에 있는 건 빼라"가 아니라 그 반대라는 점이 핵심 — 초록은 저자가 가장
+# 강하게 쓴 주장이 모이는 곳이라 core_claims 식별의 기준으로 삼되, 한계·미해결·공개
+# 여부는 초록의 장르적 성격상 거의 안 나오므로(RoadMap "abstract와 ②a의 관계" 설계 노트)
+# 반드시 본문에서 찾으라고 명시한다.
+ABSTRACT_ANCHOR_INSTRUCTION = """
+사용자 메시지 맨 앞에 이 논문의 초록이 [논문 초록]으로 붙어 있다. 초록은 핵심 주장(core_claims)을
+식별하는 기준으로 삼아라 — 초록에 있는 주장이라고 core_claims에서 빼면 안 된다. 다만 저자가
+밝힌 한계(author_stated_limitations)·미해결 지점(unresolved_questions)·코드·데이터 공개
+(code_data_availability)는 초록에 보통 없으니 반드시 [본문]에서 찾아라."""
+
 
 def _get_papers_vectorstore():
     # 함수 안에서 import하는 이유는 위 모듈 docstring "테스트 방식" 참고 — 무거운 임베딩
@@ -265,6 +277,14 @@ def register_paper(
     }
 
 
+def _fetch_abstract(vectorstore, paper_id: str) -> str | None:
+    """저장된 doc_type="abstract" 문서의 텍스트를 반환한다(없으면 None) — 07-29,
+    get_paper_summary()가 추출 프롬프트의 앵커로 쓴다. _fetch_summary()와 같은 모양."""
+    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "abstract"}]})
+    documents = result.get("documents", [])
+    return documents[0] if documents else None
+
+
 def _fetch_fulltext_chunks(vectorstore, paper_id: str) -> list[dict]:
     """등록된 fulltext_chunk를 index 순서로 모아 반환한다. is_references인 조각은
     여기서 걸러낸다(저장은 돼 있지만 추출 LLM 입력에서는 제외 — 모듈 docstring 참고)."""
@@ -360,9 +380,12 @@ def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, v
 
     이미 만든 적 있으면(doc_type=summary 캐시) 그대로 반환 — 추가 LLM 호출 0. 없으면
     register_paper()가 저장해둔 fulltext_chunk를 모아(is_references 제외) 한 번에
-    구조화 추출을 시도한다. 컨텍스트 예산을 넘으면 ContextBudgetExceeded를 여기서 잡지
-    않고 그대로 전파한다 — 호출한 쪽(라이브러리 UI·QA)이 "논문이 길어 요약 생성 불가
-    (분할 미구현)"로 정직하게 고지할 것(모듈 docstring 참고).
+    구조화 추출을 시도한다. abstract가 저장돼 있으면(register_paper()의 "abstract 확보"
+    참고) 프롬프트 앵커로 같이 보낸다(07-29) — core_claims 식별 기준으로 삼되 한계·
+    미해결·공개 여부는 본문에서 찾으라고 명시(ABSTRACT_ANCHOR_INSTRUCTION). 컨텍스트
+    예산을 넘으면 ContextBudgetExceeded를 여기서 잡지 않고 그대로 전파한다 — 호출한
+    쪽(라이브러리 UI·QA)이 "논문이 길어 요약 생성 불가(분할 미구현)"로 정직하게 고지할
+    것(모듈 docstring 참고).
 
     paper_id가 아예 등록된 적 없으면(fulltext_chunk가 하나도 없으면) ValueError.
 
@@ -386,12 +409,29 @@ def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, v
         raise ValueError(f"paper_id={paper_id!r}: 등록된 전문 청크가 없음 — register_paper()를 먼저 호출해야 함")
 
     full_text = "\n\n".join(c["text"] for c in chunks)
-    # 예산 초과 시 ContextBudgetExceeded — 여기서 안 잡고 그대로 전파(모듈 docstring 참고)
-    check_context_budget(model, full_text)
+
+    # abstract를 추출 프롬프트의 앵커로 제공(07-29, 6-3b② — RoadMap 참고). 없으면(예:
+    # bibliographic·PDF Abstract 섹션 둘 다 없던 논문) human_content는 full_text 그대로라
+    # 회귀 없음. Abstract 섹션은 References가 아니라 full_text 안에도 이미 들어있으므로
+    # 이건 "누락된 정보 보충"이 아니라 의도된 강조 중복이다(_BIBLIOGRAPHIC_WHITELIST 때
+    # 겪은 "청크 수만큼 N번 복제"와는 다른 종류 — 여긴 1번 추가).
+    abstract = _fetch_abstract(vectorstore, paper_id)
+    if abstract:
+        system_prompt = EXTRACTION_SYSTEM_PROMPT + ABSTRACT_ANCHOR_INSTRUCTION
+        human_content = f"[논문 초록]\n{abstract}\n\n[본문]\n{full_text}"
+    else:
+        system_prompt = EXTRACTION_SYSTEM_PROMPT
+        human_content = full_text
+
+    # 예산 초과 시 ContextBudgetExceeded — 여기서 안 잡고 그대로 전파(모듈 docstring 참고).
+    # 실제로 LLM에 보낼 human_content(abstract 포함 여부와 무관하게 최종 텍스트) 기준으로
+    # 검사해야 한다 — full_text만 검사하면 abstract를 더해 예산을 살짝 넘긴 경계 케이스가
+    # 여기서 안 걸리고 API 호출 자체에서 예상 못 한 실패로 샌다.
+    check_context_budget(model, human_content)
 
     messages = [
-        SystemMessage(content=EXTRACTION_SYSTEM_PROMPT),
-        HumanMessage(content=full_text),
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=human_content),
     ]
     extraction, generated_by, _disabled_models, tokens_used = invoke_with_fallback(
         model, messages, structured=PaperExtraction
