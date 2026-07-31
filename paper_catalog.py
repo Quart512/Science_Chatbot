@@ -13,8 +13,11 @@
 # 그대로 두고 doi 컬럼만 채운다(RoadMap "논문 id 정규화 + 재등록 처리" 설계 노트 참고) —
 # 그래야 이 논문을 가리키는 다른 참조(VDB 청크 id 등)가 고아가 안 된다. doi/arxiv_id를
 # 별도 nullable·unique 컬럼으로 두는 이유도 같다 — 추천 시점엔 arxiv_id만 있었는데 등록
-# 시점엔 doi가 생기는 경우처럼, paper_id 하나로 못 잡는 매칭을 이 컬럼들로 보완할 수 있게
-# (실제 매칭 로직은 register_paper() 연동 단계에서 다룰 것 — 아직 미구현).
+# 시점엔 doi가 생기는 경우처럼, paper_id 하나로 못 잡는 매칭을 이 컬럼들로 보완할 수 있게.
+# register_paper() 연동(08-09 마무리)은 이 컬럼을 이용한 cross-id 매칭까지는 하지 않고
+# paper_id 그대로 일치하는 경우만 처리한다 — 라이브러리 UI(6-8)가 아직 없어 doi/arxiv_id가
+# 추천 시점과 다르게 들어오는 입력이 실제로 어떻게 생길지 모르는 채로 매칭 로직을 미리
+# 만들 근거가 없다(RoadMap "단순 경로부터" 원칙). 실제로 걸리면 그때 이 컬럼들로 보완한다.
 #
 # 지표 필드(journal_ref, citation_count)는 값을 계산하지 않고 컬럼만 미리 둔다 — arxiv만
 # 쓰는 지금은 항상 비어 있고, 나중에 OpenAlex 등 API 어댑터를 붙일 때 이 컬럼만 채우면
@@ -144,9 +147,8 @@ def mark_owned(
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """paper_id를 owned로 표시한다 — 이미 카탈로그에 있으면(추천이었든 아니든) status만
-    owned로 바꾸고, 없으면(추천된 적 없이 바로 등록된 논문) 새로 만든다. register_paper()
-    연동(추후 단계)이 등록 시점에 호출할 지점 — 아직은 이 함수만 준비해두고 실제 연동은
-    안 함."""
+    owned로 바꾸고, 없으면(추천된 적 없이 바로 등록된 논문) 새로 만든다.
+    paper/paper_ingest.py의 register_paper()가 등록 성공 시 호출한다(08-09 마무리)."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:

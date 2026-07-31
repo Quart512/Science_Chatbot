@@ -84,6 +84,7 @@ import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+import paper_catalog
 from arxiv_api import fetch_by_id
 from models import ContextBudgetExceeded, check_context_budget, invoke_with_fallback
 from paper.paper_extraction import PaperExtraction
@@ -284,6 +285,27 @@ def register_paper(
     # 한 번에 처리하는 구조 그대로이고 2단계 분리(파싱·검증 → 확인 → 저장)는 그때 한다.
     given_title = (bibliographic or {}).get("title")
     title_check = classify_title_match(given_title, parsed.get("pdf_title"))
+
+    # 카탈로그 연동(08-09 마무리) — 추천 검색(③)이 upsert_recommended()로 이미 심어둔
+    # 행이 있으면 owned로 전환하고, 없으면(추천 없이 바로 등록한 논문) 새로 owned로
+    # 만든다(paper_catalog.mark_owned() 참고). bib_meta는 위에서 이미 화이트리스트로
+    # 걸러둔 값(232행)을 그대로 재사용 — authors는 이미 콤마로 합쳐진 문자열이라
+    # mark_owned()가 기대하는 타입과 맞는다.
+    #
+    # doi/arxiv_id가 추천 시점과 다르게 들어와 paper_id가 바뀌는 경우(예: 추천 시점엔
+    # arxiv_id만 있었는데 등록 시점에 사용자가 DOI를 새로 넘긴 경우)는 여기서 매칭하지
+    # 않는다 — recommended 행을 못 찾고 새 행이 생겨 추천 이력이 끊기지만, 라이브러리
+    # UI(6-8)가 아직 없어 이런 입력이 실제로 어떻게 들어올지 모르는 채로 매칭 로직을
+    # 미리 만들 근거가 없다(paper_catalog.py 모듈 docstring도 이 매칭을 "아직 미구현"으로
+    # 남겨둠). 실제로 이 경우를 만나면 doi/arxiv_id 컬럼으로 기존 행을 찾아 옮기는 로직을 추가한다.
+    paper_catalog.mark_owned(
+        paper_id,
+        doi=doi,
+        arxiv_id=arxiv_id,
+        title=bib_meta.get("title", ""),
+        authors=bib_meta.get("authors", ""),
+        year=bib_meta.get("year", ""),
+    )
 
     return {
         "paper_id": paper_id,
