@@ -150,6 +150,26 @@ def trigger_recommend_search(interest_id: int, start: int = 0):
     return {"recommended": results}
 
 
+class RefreshRequest(BaseModel):
+    # /search가 돌려준 값을 프론트가 그대로 되돌려보내는 echo라 항목마다 엄격한
+    # 스키마를 둘 이득이 적다(사용자가 직접 입력하는 폼이 아님) — 느슨한 dict로 받는다.
+    existing_candidates: list[dict] = []
+
+
+# 관심사 수정 직후 자동 재검색(08-11②) — "관심사에서 트리거할 때만" 원칙은 그대로:
+# cron이 아니라 프론트가 수정 저장 직후 사용자 행동의 연장으로 호출한다. /search와
+# 다른 점은 처음부터 새로 찾는 게 아니라 프론트가 세션에 쌓아둔 기존 후보 목록을
+# 같이 넘겨받아 paper_recommend.refresh_for_interest()가 재스크리닝+병합까지 한다
+# (그 함수 docstring 참고).
+@app.post("/interests/{interest_id}/refresh")
+def refresh_recommend_search(interest_id: int, body: RefreshRequest):
+    try:
+        results = paper_recommend.refresh_for_interest(interest_id, body.existing_candidates)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"recommended": results}
+
+
 # 논문 등록(08-11①, 라이브러리 표면 "논문 탭"의 등록 주 경로) — register_paper()가
 # 지금까지 paper/paper_ingest.py의 __main__ 스모크 테스트로만 호출되던 걸 여기서 처음
 # API로 노출한다.

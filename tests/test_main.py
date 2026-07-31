@@ -133,6 +133,53 @@ def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
     assert resp.status_code == 404
 
 
+# --- POST /interests/{id}/refresh (08-11② 호출 경로, 관심사 수정 시 자동 재검색) ---
+
+
+def test_refresh_recommend_search_forwards_existing_candidates(monkeypatch):
+    captured = {}
+    fake_results = [{"paper_id": "arxiv:1", "is_relevant": True}]
+    def _fake_refresh(interest_id, existing_candidates, **kw):
+        captured["interest_id"] = interest_id
+        captured["existing_candidates"] = existing_candidates
+        return fake_results
+    monkeypatch.setattr(paper_recommend, "refresh_for_interest", _fake_refresh)
+
+    existing = [{"paper_id": "arxiv:old", "abstract": "초록"}]
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/1/refresh", json={"existing_candidates": existing})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recommended": fake_results}
+    assert captured["interest_id"] == 1
+    assert captured["existing_candidates"] == existing
+
+
+def test_refresh_recommend_search_defaults_to_empty_candidates(monkeypatch):
+    captured = {}
+    def _fake_refresh(interest_id, existing_candidates, **kw):
+        captured["existing_candidates"] = existing_candidates
+        return []
+    monkeypatch.setattr(paper_recommend, "refresh_for_interest", _fake_refresh)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/1/refresh", json={})
+
+    assert resp.status_code == 200
+    assert captured["existing_candidates"] == []
+
+
+def test_refresh_recommend_search_404_when_interest_not_found(monkeypatch):
+    def _boom(interest_id, existing_candidates, **kw):
+        raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
+    monkeypatch.setattr(paper_recommend, "refresh_for_interest", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/999/refresh", json={})
+
+    assert resp.status_code == 404
+
+
 # --- POST /papers (08-11① 호출 경로) -----------------------------------------
 
 

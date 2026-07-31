@@ -7,10 +7,12 @@ from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied  # PermissionDenied: 결제 계정 정지 등으로 403 뜰 때
+from google.genai.errors import APIError as GoogleGenAIAPIError  # ClientError(4xx)·ServerError(5xx, 예: 503 과부하) 공통 부모
 from anthropic import RateLimitError
+from anthropic import BadRequestError as AnthropicBadRequestError  # 크레딧 부족 등 계정 문제도 400으로 옴(08-11②, 실사용 중 발견)
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from openai import APIConnectionError  # 로컬 llama-server가 꺼져 있을 때 나는 접속 에러
-from openai import BadRequestError 
+from openai import BadRequestError
 from openai import LengthFinishReasonError
 
 import sys
@@ -143,7 +145,17 @@ def invoke_with_fallback(model,
             tokens_used = result.usage_metadata
         return response, primary_name, disabled_models, tokens_used
     except (ResourceExhausted, PermissionDenied, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError,
-            BadRequestError, LengthFinishReasonError):
+            BadRequestError, LengthFinishReasonError, GoogleGenAIAPIError, AnthropicBadRequestError):
+        # AnthropicBadRequestError(08-11②, 실사용 중 발견) — 크레딧 잔액 부족도 anthropic
+        # SDK에서 400(BadRequestError)으로 온다. openai.BadRequestError와 이름은 같지만
+        # 서로 다른 SDK의 별개 클래스라 하나를 잡는다고 다른 하나까지 잡히지 않는다 —
+        # 둘 다 명시해야 한다.
+        # GoogleGenAIAPIError(08-11②, 실사용 중 발견) — langchain_google_genai가 내부적으로
+        # google-genai SDK(google.genai.errors)로 갈아탄 뒤로, gemini 과부하(503 ServerError)가
+        # ChatGoogleGenerativeAIError로 안 감싸이고 그 SDK의 원본 예외 그대로 올라온다. 잡지
+        # 않으면 fallback을 못 타고 RuntimeError도 아니라서 호출부(screen_candidate 등)의
+        # "실패한 후보만 건너뛴다" 처리도 못 받고 그대로 500까지 샜다(실제로 겪음). ClientError/
+        # ServerError 둘 다의 공통 부모(APIError)를 잡아 4xx·5xx 전부 fallback 대상으로 포함.
         exc_type, exc_value, _ = sys.exc_info()
         error_msg = traceback.format_exception_only(exc_type, exc_value)[0].strip()
         print(error_msg)

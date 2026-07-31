@@ -96,10 +96,9 @@ for interest in interest_list:
             st.caption(f"찾는 것: {interest['looking_for']}")
 
         # 수정 폼 — POST /interests에 update_existing_id를 실어 보내면 새로 안 만들고
-        # 그 id를 갱신한다(08-07 호출 경로, 그대로 재사용). 수정되면 이전에 쌓아둔 검색
-        # 결과는 옛 기준으로 스크리닝된 것이라 더 이상 유효하지 않으므로 비운다 —
-        # 별도 재스크리닝 기능(보류)을 만드는 대신, 사용자가 검색/추가 검색을 다시
-        # 누르면 바뀐 관심사 기준으로 자연스럽게 다시 스크리닝된다.
+        # 그 id를 갱신한다(08-07 호출 경로, 그대로 재사용). 저장되면 이전에 쌓아둔
+        # 검색 결과를 버리지 않고 POST /interests/{id}/refresh로 새 기준 재스크리닝
+        # +재검색을 자동으로 한 번 돌린다(아래 저장 성공 분기 참고, 08-11②).
         with st.expander("수정"):
             with st.form(f"edit_interest_form_{interest_id}"):
                 edit_title = st.text_input("제목", value=interest["title"])
@@ -128,11 +127,29 @@ for interest in interest_list:
                     except requests.RequestException as e:
                         st.error(f"수정 실패: {e}")
                     else:
-                        st.session_state.pop(results_key, None)
-                        st.session_state.pop(offset_key, None)
+                        # 수정 직후 자동 재검색(08-11②, 사용자 지적으로 부활) — "수정이
+                        # 큰 변화가 아닐 수도 있다"는 전제로, 기존에 쌓아둔 후보를
+                        # 버리지 않고 새 기준으로 재스크리닝해 관련 있는 것만 남긴
+                        # 뒤 새 페이지 검색과 합친다(POST /interests/{id}/refresh,
+                        # paper_recommend.refresh_for_interest() 참고). 결과 없이
+                        # 수정만 한 카드는 재활용할 기존 후보가 없을 뿐 그대로 동작.
+                        with st.spinner("관심사가 바뀌어 다시 검색 중..."):
+                            try:
+                                refresh_resp = requests.post(
+                                    f"{BACKEND_URL}/interests/{interest_id}/refresh",
+                                    json={"existing_candidates": st.session_state.get(results_key, [])},
+                                    timeout=180,
+                                )
+                                refresh_resp.raise_for_status()
+                                st.session_state[results_key] = refresh_resp.json()["recommended"]
+                                st.session_state[offset_key] = SEARCH_PAGE_SIZE
+                            except requests.RequestException as e:
+                                st.error(f"재검색 실패: {e}")
+                                st.session_state.pop(results_key, None)
+                                st.session_state.pop(offset_key, None)
                         st.rerun()
 
-        col_search, col_more, col_delete = st.columns([1, 1, 1])
+        col_search, col_delete = st.columns([1, 1])
 
         if col_delete.button("삭제", key=f"delete_{interest_id}"):
             try:
@@ -145,43 +162,36 @@ for interest in interest_list:
                 st.session_state.pop(offset_key, None)
                 st.rerun()
 
-        # "지금 검색"(08-09③ 호출 경로) — 처음부터 다시(start=0), 쌓아둔 이전 결과는 버린다.
-        if col_search.button("지금 검색", key=f"search_{interest_id}"):
+        # 검색/추가 검색 통합 버튼(08-11②, 사용자 지적) — 별도 버튼 두 개가 아니라
+        # 하나의 버튼이 상태에 따라 라벨과 동작을 바꾼다: 이 카드에 쌓인 결과가 아직
+        # 없으면 "지금 검색"(start=0으로 처음 검색), 이미 있으면 "추가 검색"(start=
+        # offset부터 이어서 검색해 기존 목록에 병합) — 관련도만 기준으로 재정렬한다
+        # (peer_review/인용수/연도는 정렬에 안 씀, "스크리닝 축을 합치지 않는다" 원칙).
+        has_results = results_key in st.session_state
+        button_label = "추가 검색" if has_results else "지금 검색"
+        if col_search.button(button_label, key=f"search_{interest_id}"):
+            start = st.session_state[offset_key] if has_results else 0
             with st.spinner("검색 중... (arXiv 검색 + 관련도 스크리닝이라 시간이 걸릴 수 있습니다)"):
                 try:
                     search_resp = requests.post(
-                        f"{BACKEND_URL}/interests/{interest_id}/search", timeout=180
+                        f"{BACKEND_URL}/interests/{interest_id}/search",
+                        params={"start": start},
+                        timeout=180,
                     )
                     search_resp.raise_for_status()
-                    st.session_state[results_key] = search_resp.json()["recommended"]
-                    st.session_state[offset_key] = SEARCH_PAGE_SIZE
+                    new_results = search_resp.json()["recommended"]
                 except requests.RequestException as e:
                     st.error(f"검색 실패: {e}")
-
-        # "추가 검색"(08-11①) — 지금까지 본 것 다음 페이지(start=offset)만 새로 받아
-        # 기존 목록에 이어붙인다. 아직 한 번도 검색 안 한 카드에는 이어붙일 이전 결과가
-        # 없으므로 버튼 자체를 숨긴다.
-        if results_key in st.session_state:
-            if col_more.button("추가 검색", key=f"more_{interest_id}"):
-                with st.spinner("추가 검색 중..."):
-                    try:
-                        more_resp = requests.post(
-                            f"{BACKEND_URL}/interests/{interest_id}/search",
-                            params={"start": st.session_state[offset_key]},
-                            timeout=180,
-                        )
-                        more_resp.raise_for_status()
-                        new_results = more_resp.json()["recommended"]
-                    except requests.RequestException as e:
-                        st.error(f"추가 검색 실패: {e}")
-                    else:
+                else:
+                    if has_results:
                         combined = st.session_state[results_key] + new_results
-                        # 관련도만 기준으로 다시 정렬(안정 정렬 — 같은 관련도 안에서는
-                        # 먼저 받은 페이지 순서가 유지됨). peer_review/인용수/연도로는
-                        # 재정렬하지 않는다("스크리닝 축을 합치지 않는다" 원칙 그대로.
                         combined.sort(key=lambda r: not r["is_relevant"])
                         st.session_state[results_key] = combined
                         st.session_state[offset_key] += SEARCH_PAGE_SIZE
+                    else:
+                        st.session_state[results_key] = new_results
+                        st.session_state[offset_key] = SEARCH_PAGE_SIZE
+                    st.rerun()
 
         if results_key in st.session_state:
             results = st.session_state[results_key]

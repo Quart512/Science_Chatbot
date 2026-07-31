@@ -74,6 +74,68 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
     return results
 
 
+def refresh_for_interest(
+    interest_id: int, existing_candidates: list[dict], *, max_results: int = 5, conn=None
+) -> list[dict]:
+    """관심사가 수정된 직후(08-11②) 자동으로 한 번 호출된다 — "수정한 내용이 크지
+    않을 수도 있으니 기존에 검색했던 논문을 버리지 말고 재활용하자"는 사용자 지적을
+    반영한다.
+
+    existing_candidates: 프론트가 세션에 쌓아둔, 이전에 이 관심사로 검색해서 이미
+    screen_candidate()를 한 번 거친 후보들(recommend_for_interest()가 반환하는 것과
+    같은 형태 — paper_id/abstract/peer_reviewed/citation_count/year/title 포함).
+    이들을 **수정된 관심사 기준으로 다시 스크리닝**해서 관련 있는 것만 남긴다(관련
+    없어진 것은 버림 — "관련있다고 판단되는 건 남기자"). journal_ref 원본은 프론트에
+    안 넘어가 있으므로(peer_reviewed로만 축약됨), screen_candidate()가 기대하는 후보
+    형태로 역산해 넣는다 — peer_reviewed=True였으면 journal_ref에 아무 비어있지 않은
+    문자열이나 넣으면 bool(journal_ref)가 다시 True로 복원된다(peer_reviewed 자체는
+    관심사와 무관한 논문 고유 사실이라 재계산할 필요가 없다 — 그대로 보존하기 위한
+    역산일 뿐, 다시 판정하는 게 아니다).
+
+    동시에 recommend_for_interest()로 **새 페이지 하나(start=0)를 정상적으로 검색**
+    한다 — 카탈로그 upsert도 그 경로가 기존과 똑같이 처리한다(새로 찾은 관련 논문은
+    그대로 카탈로그에 남음). 재스크리닝으로 살아남은 기존 후보는 **카탈로그에 다시
+    upsert하지 않는다** — 프론트가 들고 있던 후보엔 doi/arxiv_id가 애초에 없어(처음
+    검색 때도 반환값엔 안 실었음) 정확한 메타데이터로 넣을 수 없고, "카탈로그에
+    남기는 것"과 "화면에 보여주는 것"을 분리한다는 이 함수의 기존 원칙과도 맞는다.
+
+    새 페이지 결과와 기존에서 살아남은 후보가 겹치면(같은 논문이 이번에도 검색됨)
+    새 쪽에서 제거해 중복 표시를 막는다 — 기존 쪽이 이미 최신 관심사 기준으로
+    재스크리닝된 값이라 그대로 유지.
+
+    반환은 recommend_for_interest()와 같은 모양으로 관련도 하나만 기준으로 재정렬
+    (기존에서 살아남은 것 + 새로 검색된 것 합쳐서).
+    """
+    interest = interests.get_interest(interest_id, conn=conn)
+    if interest is None:
+        raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
+
+    kept_old = []
+    for c in existing_candidates:
+        pseudo_candidate = {
+            "paper_id": c.get("paper_id"),
+            "abstract": c.get("abstract", ""),
+            "journal_ref": "peer-reviewed" if c.get("peer_reviewed") else "",
+            "citation_count": c.get("citation_count"),
+            "year": c.get("year"),
+        }
+        try:
+            screened = paper_screening.screen_candidate(pseudo_candidate, interest)
+        except RuntimeError as e:
+            print(f"재스크리닝 실패, 이 후보는 건너뜀(paper_id={c.get('paper_id')}): {type(e).__name__}: {e}")
+            continue
+        if screened["is_relevant"]:
+            kept_old.append({**screened, "title": c.get("title", ""), "abstract": c.get("abstract", "")})
+
+    seen_ids = {r["paper_id"] for r in kept_old}
+    fresh = recommend_for_interest(interest_id, max_results=max_results, start=0, conn=conn)
+    fresh = [r for r in fresh if r["paper_id"] not in seen_ids]
+
+    combined = kept_old + fresh
+    combined.sort(key=lambda r: not r["is_relevant"])
+    return combined
+
+
 if __name__ == "__main__":
     import sys
 
