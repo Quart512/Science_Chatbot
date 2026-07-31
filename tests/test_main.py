@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import interests
 import main
+import paper_recommend
 
 
 def test_register_interest_creates_new_when_no_update_id(monkeypatch):
@@ -50,5 +51,30 @@ def test_register_interest_404_when_update_id_not_found(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post("/interests", json={"title": "제목", "update_existing_id": 999})
+
+    assert resp.status_code == 404
+
+
+# --- POST /interests/{id}/search (08-09③ 호출 경로) -------------------------
+
+
+def test_trigger_recommend_search_returns_results(monkeypatch):
+    fake_results = [{"paper_id": "arxiv:1", "title": "논문", "is_relevant": True}]
+    monkeypatch.setattr(paper_recommend, "recommend_for_interest", lambda interest_id, **kw: fake_results)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/1/search")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recommended": fake_results}
+
+
+def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
+    def _boom(interest_id, **kw):
+        raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
+    monkeypatch.setattr(paper_recommend, "recommend_for_interest", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/interests/999/search")
 
     assert resp.status_code == 404
