@@ -65,10 +65,14 @@
 #   - split_for_embedding: 임베딩·검색(fulltext_chunk)용. RoadMap "전문 처리" 설계 노트대로
 #     ingest.py와 같은 결(500자/오버랩 50, RecursiveCharacterTextSplitter)로 잘게 쪼갠다 —
 #     검색은 정밀도가 목적이라 섹션 경계에 맞춰 크게 자를 이유가 없다. 대신 각 조각이
-#     어느 헤더 아래에 있었는지(header)와 References 여부(is_references)는 그대로 물려받는다.
+#     어느 헤더 아래에 있었는지(header)와 References/Abstract 소속 여부(is_references,
+#     is_abstract)는 그대로 물려받는다.
 #   헤더 하나의 본문 안에서만 잘게 쪼개므로(헤더를 넘나드는 병합 없음) 조각 하나에는
 #   header가 항상 하나(또는 없음)다 — split_into_chunks의 headers(list)와 달리 여기선
-#   header(단수, str)로 이름 붙인 이유.
+#   header(단수, str)로 이름 붙인 이유. 단 **소속 판정(is_references/is_abstract)은 그
+#   단수 header가 아니라 헤더 계층 전체로 한다** — 라벨과 판정을 같은 값에서 파생시키면
+#   하위 절 조각을 놓친다(07-28 References, 07-31 Abstract에서 같은 버그로 두 번 겪음,
+#   아래 "References 판정은 라벨이 아니라 헤더 계층 전체를 본다" 참고).
 #
 # References 청크 표시(07-28): 청크에 "is_references" 플래그를 붙인다 — 헤더가
 # References/Bibliography/참고문헌 계열이면 True. **버리지 않는다** — 원문은
@@ -300,9 +304,11 @@ def split_for_embedding(
     """임베딩·검색(fulltext_chunk)용 청킹 — split_into_chunks()과는 목적이 다르다
     (모듈 docstring "split_for_embedding" 항목 참고). ingest.py와 같은 결로 헤더 섹션
     안에서 다시 잘게(chunk_size/chunk_overlap) 쪼갠다 — 섹션 경계에 청크 크기를
-    맞추지 않고, 대신 각 조각에 헤더 라벨과 References 여부만 메타데이터로 물려준다.
+    맞추지 않고, 대신 각 조각에 헤더 라벨과 References/Abstract 소속 여부만 메타데이터로
+    물려준다.
 
-    반환: [{"index": int, "text": str, "header": str, "is_references": bool}, ...]
+    반환: [{"index": int, "text": str, "header": str, "is_references": bool,
+            "is_abstract": bool}, ...]
     index는 이 리스트 안에서의 순서 — register_paper()가 paper_id와 합쳐 chunk id
     (f"{paper_id}-{index}")를 만드는 데 쓴다.
 
@@ -330,6 +336,13 @@ def split_for_embedding(
         # split_into_chunks()와 같은 이유(모듈 docstring "References 판정은 라벨이
         # 아니라 헤더 계층 전체를 본다" 참고).
         is_ref = any(_is_references_header(v) for v in header_values)
+        # is_abstract도 똑같이 계층 전체로 판정한다(07-31 수정) — 처음엔 extract_abstract()가
+        # 조각의 header_label(가장 깊은 헤더 하나)만 보고 판정했는데, 그건 07-28에
+        # References에서 고친 것과 정확히 같은 버그였다: "# Abstract" 아래 "## Overview" 같은
+        # 하위 절이 있으면 그 조각의 라벨은 "Overview"라 정규식에 안 걸려 초록에서 통째로
+        # 누락됐다(재현 확인). 판정을 여기서 계층 전체로 계산해 조각에 실어 보내면
+        # extract_abstract()는 플래그만 읽으면 되고, 같은 버그가 세 번째로 재현될 여지가 없다.
+        is_abs = any(_is_abstract_header(v) for v in header_values)
 
         for text in fine_splitter.split_text(doc.page_content):
             pieces.append({
@@ -337,26 +350,32 @@ def split_for_embedding(
                 "text": text,
                 "header": header_label,
                 "is_references": is_ref,
+                "is_abstract": is_abs,
             })
 
     return pieces
 
 
 def extract_abstract(pieces: list[dict]) -> str | None:
-    """split_for_embedding()이 만든 조각들 중 헤더가 Abstract인 것만 index 순으로
+    """split_for_embedding()이 만든 조각들 중 Abstract 섹션 소속인 것만 index 순으로
     이어붙여 반환한다(07-29, 6-3 후속 "abstract 확보") — paper_ingest.py의
     register_paper()가 arxiv 서지정보에 abstract가 없을 때 대체 출처로 쓴다.
+
+    소속 판정을 여기서 하지 않고 조각의 is_abstract 플래그를 그대로 읽는 이유(07-31
+    수정): 조각에 남는 header는 표시용 대표 라벨(가장 깊은 헤더 하나)이라 계층 정보가
+    이미 사라진 뒤다 — 그걸로 판정하면 "# Abstract" 아래 하위 절 조각을 놓친다.
+    판정은 계층 전체를 볼 수 있는 split_for_embedding() 안에서 끝낸다(위 참고).
 
     조각은 500자/오버랩 50 단위라 이어붙이면 경계의 중복 텍스트가 그대로 섞이는
     근사 재구성이다(get_paper_summary()가 fulltext_chunk를 모아 전문을 재구성할 때와
     같은 트레이드오프, 위 split_for_embedding 문서 "주의" 참고) — abstract 길이(보통
     한두 조각)에서는 무시할 수준이라 그대로 둔다.
 
-    헤더가 Abstract인 조각이 하나도 없으면(헤더 인식 실패·PDF 형식 문제 등) None —
+    Abstract 소속 조각이 하나도 없으면(헤더 인식 실패·PDF 형식 문제 등) None —
     호출하는 쪽이 "PDF에서도 못 찾음"으로 처리해 그다음 우선순위(없음)로 넘어간다.
     """
     abstract_pieces = sorted(
-        (p for p in pieces if _is_abstract_header(p["header"])),
+        (p for p in pieces if p["is_abstract"]),
         key=lambda p: p["index"],
     )
     if not abstract_pieces:

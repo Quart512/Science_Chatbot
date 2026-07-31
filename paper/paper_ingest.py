@@ -262,7 +262,7 @@ def register_paper(
     # 있으니 여기 넣는 건 공짜지만, 안 넣으면 abstract만 검색되고 fulltext_chunk가 context에
     # 안 낀 경우 어느 논문인지 paper_id(예: arxiv:2401.12345)로만 표시된다 — summary 문서도
     # 같은 문제가 있었는데, get_paper_summary()는 bibliographic을 안 받는 별도 호출이라
-    # _fetch_bib_meta()로 이미 저장된 청크에서 역으로 가져오는 방식으로 따로 해결했다
+    # _fetch_fulltext()가 청크를 읽을 때 그 메타데이터에서 같이 뽑아 넘기는 방식으로 해결했다
     # (아래 _store_summary 호출부 참고).
     abstract_text = (bibliographic or {}).get("abstract") or extract_abstract(pieces)
     if abstract_text:
@@ -302,32 +302,42 @@ def _fetch_abstract(vectorstore, paper_id: str) -> str | None:
     return documents[0] if documents else None
 
 
-def _fetch_fulltext_chunks(vectorstore, paper_id: str) -> list[dict]:
-    """등록된 fulltext_chunk를 index 순서로 모아 반환한다. is_references인 조각은
-    여기서 걸러낸다(저장은 돼 있지만 추출 LLM 입력에서는 제외 — 모듈 docstring 참고)."""
+def _pick_bib_meta(metadata: dict) -> dict:
+    """청크 메타데이터 하나에서 서지 필드(_BIBLIOGRAPHIC_WHITELIST)만 골라낸다 — 순수 함수.
+
+    register_paper()가 모든 청크에 같은 서지값을 복제해두므로 어느 청크의 메타데이터를
+    넣어도 결과가 같다. bibliographic 없이 등록된 논문(해시 기반 paper_id)은 청크에도
+    이 필드들이 없어 빈 dict가 나온다 — 그 경우는 paper_id 폴백을 그대로 받아들인다
+    (애초에 데이터가 없는 것까지 만들어낼 수는 없음)."""
+    return {k: metadata[k] for k in _BIBLIOGRAPHIC_WHITELIST if k in metadata}
+
+
+def _fetch_fulltext(vectorstore, paper_id: str) -> tuple[list[dict], dict]:
+    """등록된 fulltext_chunk를 index 순서로 모으고(is_references인 조각은 제외 — 저장은
+    돼 있지만 추출 LLM 입력에서는 빼는 것, 모듈 docstring 참고), 등록 시 그 청크들에
+    복제해둔 서지 필드도 같이 돌려준다.
+
+    반환: (chunks, bib_meta) — chunks는 [{"text", "index", "is_references"}, ...]
+
+    두 산출물을 한 번의 조회로 같이 얻는 이유(07-31 리뷰 지적): 예전엔
+    _fetch_fulltext_chunks()와 _fetch_bib_meta()가 완전히 같은 where로 각각 조회해서,
+    122청크 논문이면 전체 청크 텍스트+메타데이터를 두 번 끌어왔다 — 07-28에 parse_pdf가
+    같은 파일을 두 번 읽던 걸 고친 것과 같은 결의 낭비였다. 서지 필드는 어차피 이
+    조회 결과 안에 이미 들어 있으므로 버리지 않고 같이 돌려주면 된다.
+
+    bib_meta는 is_references 필터링 전의 첫 청크에서 뽑지만, 서지값은 모든 청크에 동일하게
+    복제돼 있으므로 어느 것을 골라도 결과는 같다 — 필터링 순서는 무관하다."""
     #$and = : 이후의 모든 조건 만족시
-    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]}) 
+    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]})
+    metadatas = result["metadatas"]
+    bib_meta = _pick_bib_meta(metadatas[0]) if metadatas else {}
+
     items = [
         {"text": doc, "index": meta.get("index", 0), "is_references": meta.get("is_references", False)}
-        for doc, meta in zip(result["documents"], result["metadatas"])
+        for doc, meta in zip(result["documents"], metadatas)
     ]
     items.sort(key=lambda c: c["index"])
-    return [c for c in items if not c["is_references"]]
-
-
-def _fetch_bib_meta(vectorstore, paper_id: str) -> dict:
-    """등록 시 fulltext_chunk 메타데이터에 복제해둔 서지 필드(_BIBLIOGRAPHIC_WHITELIST)를
-    아무 청크에서나 하나 가져와 반환한다(07-29, 답변 근거 표시 작업 중 발견 — summary
-    문서엔 title이 없어서 답변 근거에 논문 제목 대신 paper_id만 표시되던 문제).
-    register_paper()가 모든 청크에 같은 값을 복제해뒀으므로 어느 청크를 봐도 동일하다 —
-    첫 번째 결과로 충분. bibliographic 없이 등록된 논문(해시 기반 paper_id)은 청크에도
-    이 필드들이 없으므로 빈 dict를 돌려준다(abstract와 동일하게 그 경우는 paper_id
-    폴백을 그대로 받아들인다 — 애초에 데이터가 없는 것까지 만들어낼 수는 없음)."""
-    result = vectorstore.get(where={"$and": [{"paper_id": paper_id}, {"doc_type": "fulltext_chunk"}]})
-    metadatas = result.get("metadatas", [])
-    if not metadatas:
-        return {}
-    return {k: metadatas[0][k] for k in _BIBLIOGRAPHIC_WHITELIST if k in metadatas[0]}
+    return [c for c in items if not c["is_references"]], bib_meta
 
 
 def _fetch_summary(vectorstore, paper_id: str) -> PaperExtraction | None:
@@ -382,7 +392,7 @@ def _store_summary(vectorstore, paper_id: str, extraction: PaperExtraction, bib_
             "paper_id": paper_id,
             "doc_type": "summary",
             "extraction_json": extraction.model_dump_json(),
-            **(bib_meta or {}),  # title 등(07-29) — _fetch_bib_meta() 참고
+            **(bib_meta or {}),  # title 등(07-29) — _fetch_fulltext()가 청크에서 같이 뽑아 넘겨준다
         }],
         ids=[f"{paper_id}-summary"],
     )
@@ -421,7 +431,9 @@ def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, v
             "tokens_used": None,
         }
 
-    chunks = _fetch_fulltext_chunks(vectorstore, paper_id)
+    # 청크와 서지 메타데이터를 한 번의 조회로 같이 받는다(_fetch_fulltext 참고) — 예전엔
+    # 여기서 청크를, 아래 _store_summary 호출부에서 서지값을 각각 조회해 같은 쿼리가 두 번 나갔다.
+    chunks, bib_meta = _fetch_fulltext(vectorstore, paper_id)
     if not chunks:
         raise ValueError(f"paper_id={paper_id!r}: 등록된 전문 청크가 없음 — register_paper()를 먼저 호출해야 함")
 
@@ -454,7 +466,7 @@ def get_paper_summary(paper_id: str, *, model: str = BACKGROUND_SUMMARY_MODEL, v
         model, messages, structured=PaperExtraction
     )
 
-    _store_summary(vectorstore, paper_id, extraction, _fetch_bib_meta(vectorstore, paper_id))
+    _store_summary(vectorstore, paper_id, extraction, bib_meta)
 
     return {
         "paper_id": paper_id,

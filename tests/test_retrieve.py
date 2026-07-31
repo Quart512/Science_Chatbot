@@ -100,8 +100,9 @@ def test_retrieve_triggers_background_summary_for_papers_missing_it(monkeypatch,
 
 
 def test_retrieve_skips_background_summary_when_only_summary_docs_found(monkeypatch, make_state):
-    # doc_type이 이미 summary인 문서만 검색됐다는 건 그 논문 요약이 이미 있다는 뜻 —
-    # fulltext_chunk가 아니므로 애초에 백그라운드 생성 후보에 안 들어가야 한다
+    # doc_type이 이미 summary인 문서가 검색됐다는 건 그 논문 요약이 이미 있다는 확실한
+    # 증거 — ensure_summary_in_background()를 부르면 어차피 False가 나오지만, 그 판정을
+    # 위해 DB를 한 번 조회하므로 공짜로 아는 건 공짜로 거른다(graph.py 주석 참고)
     paper_docs = [Document(page_content="요약", metadata={"paper_id": "arxiv:has-summary", "doc_type": "summary"})]
     monkeypatch.setattr("graph.vectorstore", _FakeVectorstore([]))
     monkeypatch.setattr("graph.papers_vectorstore", _FakeVectorstore(paper_docs))
@@ -113,6 +114,28 @@ def test_retrieve_skips_background_summary_when_only_summary_docs_found(monkeypa
 
     assert calls == []
     assert "백그라운드로 시작함" not in result["trace"]
+
+
+def test_retrieve_triggers_background_summary_for_abstract_only_hit(monkeypatch, make_state):
+    # 07-31 수정 회귀 방지 — abstract 문서(6-3b①)가 생기면서 난 구멍: 한 논문이 차지할 수
+    # 있는 자리는 MAX_CHUNKS_PER_PAPER=2뿐이라, 그 논문 몫이 abstract 하나만 남는 경우
+    # 논문이 분명히 context에 들어왔는데도 요약 생성이 시작되지 않았다(후보 조건이
+    # doc_type == "fulltext_chunk"였기 때문). 후보를 "paper_id가 있는 문서 전체"로 넓혀
+    # 고쳤고, 이 테스트가 그게 다시 좁혀지는 걸 막는다.
+    paper_docs = [Document(page_content="초록", metadata={"paper_id": "arxiv:abstract-only", "doc_type": "abstract"})]
+    monkeypatch.setattr("graph.vectorstore", _FakeVectorstore([]))
+    monkeypatch.setattr("graph.papers_vectorstore", _FakeVectorstore(paper_docs))
+
+    calls = []
+    def _spy(paper_id, **kwargs):
+        calls.append(paper_id)
+        return True
+    monkeypatch.setattr(paper_ingest, "ensure_summary_in_background", _spy)
+
+    result = retrieve(make_state())
+
+    assert calls == ["arxiv:abstract-only"]
+    assert "백그라운드로 시작함" in result["trace"]
 
 
 def test_retrieve_caps_total_context_at_k_via_score_merge(monkeypatch, make_state):
