@@ -153,7 +153,8 @@ Science_Chatbot/
 │   ├── test_title_check.py          # 제목 정규화·유사도 등급 분류 (difflib, 결정론적)
 │   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
-│   └── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
+│   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
+│   └── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -163,6 +164,7 @@ Science_Chatbot/
 │   └── results/               # evaluate.py 실행 결과 (모델별 JSON)
 ├── models/               # GGUF 모델 가중치 (git 제외)
 ├── chroma_db/            # ChromaDB 영구 저장소
+├── data/                 # SQLite 파일들 (git 제외) — checkpoints.sqlite(대화 이력) + app.db(관심사 등 앱 데이터), 파일은 분리하되 디렉터리는 공유
 ├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
 ├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
@@ -177,6 +179,7 @@ Science_Chatbot/
 │   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
+├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```
