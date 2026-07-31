@@ -145,7 +145,7 @@ Science_Chatbot/
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
 │   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
 │   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
-│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱 + fetch_by_id (네트워크 없이)
+│   ├── test_arxiv_api.py            # arxiv Atom XML 파싱(journal_ref/doi 포함) + fetch_by_id (네트워크 없이)
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
 │   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
 │   ├── test_paper_chunking.py       # 헤더 분할·References/Abstract 태깅·임베딩용 청킹
@@ -156,6 +156,8 @@ Science_Chatbot/
 │   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 │   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
 │   ├── test_paper_catalog.py        # 논문 카탈로그 RDB CRUD (상태 전이: recommended/owned/dismissed)
+│   ├── test_paper_search.py         # 논문 검색 어댑터 (arxiv_search 몽키패치, paper_id 조립)
+│   ├── test_paper_screening.py      # 논문 스크리닝(②b) — 관련도만 LLM 몽키패치, peer_reviewed/인용수/연도는 계산 검증
 │   ├── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
 │   └── test_main.py                 # POST /interests (TestClient, interests.py CRUD 몽키패치)
 ├── evaluation/
@@ -184,6 +186,8 @@ Science_Chatbot/
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
 ├── paper_catalog.py      # 논문 카탈로그 RDB(SQLite) — data/app.db(interests.py와 같은 파일, 다른 테이블), status: recommended/owned/dismissed
+├── paper_search.py       # 논문 검색 어댑터 — arxiv_search()를 감싸 paper_id·지표 자리까지 채운 후보 목록 반환(나중에 Crossref/OpenAlex로 교체 대비)
+├── paper_screening.py    # 논문 스크리닝(②b) — 관련도만 LLM 판단, peer-review/인용수/연도는 계산·전달(한 점수로 안 합침)
 ├── main.py               # FastAPI: POST /query
 └── .env                  # API 키 (git 제외)
 ```

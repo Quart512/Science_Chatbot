@@ -26,6 +26,24 @@ SAMPLE_ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 </feed>
 """
 
+# journal_ref/doi가 있는 게재된 논문 응답(07-31) — 실제 arxiv API 응답으로 네임스페이스·
+# 필드 형태 확인 후 작성. arxiv:journal_ref/arxiv:doi는 기본 Atom 네임스페이스가 아니라
+# xmlns:arxiv 네임스페이스 아래 있다(arxiv_api.py의 ARXIV_NS 주석 참고).
+PUBLISHED_ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2111.08018v2</id>
+    <published>2021-11-15T19:00:01Z</published>
+    <title>Entanglement dynamics in hybrid quantum circuits</title>
+    <summary>A review of entanglement dynamics.</summary>
+    <author><name>Andrew C. Potter</name></author>
+    <link title="pdf" href="https://arxiv.org/pdf/2111.08018v2" rel="related" type="application/pdf"/>
+    <arxiv:journal_ref>Chapter in "Entanglement in Spin Chains", Springer (2022)</arxiv:journal_ref>
+    <arxiv:doi>10.1007/978-3-031-03998-0_9</arxiv:doi>
+  </entry>
+</feed>
+"""
+
 EMPTY_ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom"></feed>
 """
@@ -41,6 +59,22 @@ def test_parses_single_entry():
     assert p["arxiv_id"] == "2301.00001v2"  # 버전 접미사(v2)까지 그대로 유지
     assert p["pdf_url"] == "http://arxiv.org/pdf/2301.00001v2"
     assert "many-body" in p["abstract"]
+
+
+def test_preprint_without_journal_ref_or_doi_returns_empty_strings():
+    # preprint 단계(대부분)에는 journal_ref/doi가 없다 — 빈 문자열이어야지 KeyError나
+    # None이 나오면 안 됨(②b 스크리닝이 "출판 안 됨"과 "필드 자체가 없음"을 구분 못 하면 곤란)
+    papers = _parse_atom_response(SAMPLE_ATOM_XML)
+    assert papers[0]["journal_ref"] == ""
+    assert papers[0]["doi"] == ""
+
+
+def test_published_entry_parses_journal_ref_and_doi():
+    papers = _parse_atom_response(PUBLISHED_ATOM_XML)
+    assert len(papers) == 1
+    p = papers[0]
+    assert "Springer" in p["journal_ref"]
+    assert p["doi"] == "10.1007/978-3-031-03998-0_9"
 
 
 def test_abstract_whitespace_normalized():

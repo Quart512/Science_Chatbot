@@ -23,6 +23,7 @@ import requests
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"  # http로 요청하면 https로 리다이렉트되며 지연 추가됨 — 처음부터 https
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
+ARXIV_NS = "{http://arxiv.org/schemas/atom}"  # journal_ref/doi 등 arxiv 전용 확장 필드의 네임스페이스
 # arxiv는 정체를 알 수 없는 요청(기본 python-requests User-Agent 등)에 응답을 지연시키는 경우가 있어 명시
 HEADERS = {"User-Agent": "Science_Chatbot/0.1 (student project; contact: d3725gt@gmail.com)"}
 
@@ -44,12 +45,19 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
 
     네트워크(requests) 호출과 분리해둔 이유: 이 부분만 순수 함수로 떼어놔야
     실제 API를 안 두드리고도(=arxiv rate limit 걱정 없이) pytest로 검증할 수 있음.
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
+    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
+    journal_ref, doi
 
     키 이름이 summary가 아니라 abstract인 이유(07-28): paper_ingest.py가 Chroma에
     저장하는 doc_type="summary"(우리가 LLM으로 만든 구조화 요약)와 이름이 겹치면
     "이 논문의 abstract"와 "우리가 생성한 요약"을 코드에서 헷갈리기 쉽다 — 이건
     저자가 쓴 원문 그대로의 초록이라 abstract로 구분한다.
+
+    journal_ref/doi(07-31, 08-09② 논문 검색 어댑터 작업 중 추가): arxiv 네임스페이스
+    (xmlns:arxiv="http://arxiv.org/schemas/atom") 아래 있는 필드라 기본 Atom 네임스페이스
+    (ATOM_NS)와 다른 프리픽스가 필요 — 실제 API 응답으로 확인. 둘 다 저자가 논문 게재
+    후에 채워 넣는 값이라 preprint 단계에서는 대부분 비어 있다(빈 문자열 = "아직 모름",
+    "출판 안 됨"으로 단정하지 않음 — ②b 스크리닝이 peer-review 신호로 쓸 때 이 구분이 중요).
     """
     root = ET.fromstring(xml_text)
     results = []
@@ -74,6 +82,9 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
                 pdf_url = link.get("href", "")
                 break
 
+        journal_ref = " ".join(entry.findtext(f"{ARXIV_NS}journal_ref", default="").split())
+        doi = entry.findtext(f"{ARXIV_NS}doi", default="").strip()
+
         results.append({
             "title": title,
             "authors": authors,
@@ -81,6 +92,8 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
             "arxiv_id": arxiv_id,
             "abstract": abstract,
             "pdf_url": pdf_url,
+            "journal_ref": journal_ref,
+            "doi": doi,
         })
     return results
 
@@ -114,7 +127,8 @@ def _query_atom(params: dict, _retries: int = 1) -> str:
 def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
     """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
 
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url
+    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
+    journal_ref, doi (journal_ref/doi는 대부분 preprint 단계라 빈 문자열인 경우가 흔함)
     """
     params = {
         "search_query": f"all:{query}",
