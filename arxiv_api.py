@@ -1,20 +1,7 @@
-# =========================================================
-# arxiv 공식 API(export.arxiv.org)를 직접 호출해 구조화된 논문 메타데이터를 가져오는 모듈.
-#
-# 기존 langchain_community의 ArxivQueryRun은 arxiv.org 서버 자체 이슈(2025-11 이후)와
-# langchain_community 쪽의 구버전 API 요구사항이 겹쳐 막혀있었다(tool.py 주석 참고).
-# 그 우회책으로 DuckDuckGo에 site:arxiv.org를 붙여 검색해왔는데, 이건 검색 스니펫만 줄 뿐
-# 제목/저자/연도/arxiv id 같은 구조화된 서지정보는 못 준다.
-#
-# 이 모듈은 langchain_community 래퍼를 거치지 않고 arxiv의 export API
-# (https://export.arxiv.org/api/query, Atom XML)를 requests로 직접 호출·파싱한다.
-# 새 의존성 추가 없이(표준 라이브러리 xml + 이미 쓰던 requests) 구조화된 결과를 얻는다.
-#
-# 두 곳에서 재사용됨:
-#   - tool.py: 물리 QA 능력의 tool-calling 루프에서 쓰는 "arxiv 논문 검색" tool
-#   - (예정) 6-3 논문 분석기: abstract 트리아지 단계가 이 구조화된 메타데이터를 그대로 소비
-#     (서지정보가 이미 갖춰져 있어야 인용 포맷(BibTeX 등)을 만들 수 있음)
-# =========================================================
+# arxiv 공식 export API(https://export.arxiv.org/api/query, Atom XML)를 requests로 직접
+# 호출·파싱한다 — langchain_community의 ArxivQueryRun이 막혀 있어(tool.py 참고) 새
+# 의존성 없이 구조화된 서지정보(제목/저자/연도/id 등)를 얻으려고 만들었다.
+# tool.py(QA)와 paper/(논문 분석기) 양쪽이 이 모듈을 공유한다.
 
 import time
 import xml.etree.ElementTree as ET
@@ -41,23 +28,17 @@ def _throttle():
 
 
 def _parse_atom_response(xml_text: str) -> list[dict]:
-    """arxiv API의 Atom XML 응답을 파싱해 구조화된 메타데이터 리스트로 변환.
+    """arxiv API의 Atom XML 응답을 구조화된 메타데이터 리스트로 변환한다(네트워크
+    호출과 분리 — 실제 API 없이 pytest 가능).
 
-    네트워크(requests) 호출과 분리해둔 이유: 이 부분만 순수 함수로 떼어놔야
-    실제 API를 안 두드리고도(=arxiv rate limit 걱정 없이) pytest로 검증할 수 있음.
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
-    journal_ref, doi
+    반환 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
+    journal_ref, doi. 이름을 summary가 아니라 abstract로 둔 이유: paper_ingest.py가
+    저장하는 doc_type="summary"(LLM 생성 요약)와 헷갈리지 않게 원문 초록은 abstract로
+    구분한다.
 
-    키 이름이 summary가 아니라 abstract인 이유(07-28): paper_ingest.py가 Chroma에
-    저장하는 doc_type="summary"(우리가 LLM으로 만든 구조화 요약)와 이름이 겹치면
-    "이 논문의 abstract"와 "우리가 생성한 요약"을 코드에서 헷갈리기 쉽다 — 이건
-    저자가 쓴 원문 그대로의 초록이라 abstract로 구분한다.
-
-    journal_ref/doi(07-31, 08-09② 논문 검색 어댑터 작업 중 추가): arxiv 네임스페이스
-    (xmlns:arxiv="http://arxiv.org/schemas/atom") 아래 있는 필드라 기본 Atom 네임스페이스
-    (ATOM_NS)와 다른 프리픽스가 필요 — 실제 API 응답으로 확인. 둘 다 저자가 논문 게재
-    후에 채워 넣는 값이라 preprint 단계에서는 대부분 비어 있다(빈 문자열 = "아직 모름",
-    "출판 안 됨"으로 단정하지 않음 — ②b 스크리닝이 peer-review 신호로 쓸 때 이 구분이 중요).
+    journal_ref/doi는 기본 Atom 네임스페이스가 아니라 arxiv 전용 네임스페이스
+    (ARXIV_NS) 아래 있다. preprint 단계엔 대부분 빈 문자열 — "아직 모름"이지
+    "미출판"으로 단정하지 않는다(②b 스크리닝이 peer-review 신호로 구분해서 씀).
     """
     root = ET.fromstring(xml_text)
     results = []
@@ -99,9 +80,8 @@ def _parse_atom_response(xml_text: str) -> list[dict]:
 
 
 def _query_atom(params: dict, _retries: int = 1) -> str:
-    """arxiv API에 실제 요청을 보내고(스로틀·429/503 재시도 포함) 원문 Atom XML을
-    반환한다. arxiv_search()(키워드 검색, search_query)와 fetch_by_id()(정확한 id 조회,
-    id_list)가 파라미터만 다르고 요청·재시도 로직은 완전히 같아서 공용으로 뺐다(07-29)."""
+    """arxiv API에 요청을 보내고(스로틀·429/503 재시도 포함) 원문 Atom XML을 반환한다.
+    arxiv_search()/fetch_by_id()가 파라미터만 다르고 요청·재시도 로직은 같아 공용으로 뺐다."""
     for attempt in range(_retries + 1):
         _throttle()
         try:
@@ -124,30 +104,25 @@ def _query_atom(params: dict, _retries: int = 1) -> str:
     return resp.text
 
 
-def arxiv_search(query: str, max_results: int = 5, _retries: int = 1) -> list[dict]:
-    """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다.
+def arxiv_search(query: str, max_results: int = 5, start: int = 0, _retries: int = 1) -> list[dict]:
+    """arxiv 논문을 검색해 구조화된 메타데이터 리스트로 반환한다(반환 키는
+    _parse_atom_response 참고).
 
-    각 항목의 키: title, authors(list[str]), year, arxiv_id, abstract, pdf_url,
-    journal_ref, doi (journal_ref/doi는 대부분 preprint 단계라 빈 문자열인 경우가 흔함)
+    start: arXiv API의 페이지네이션 오프셋을 그대로 노출 — 이전까지 받은 개수만큼
+    올려 호출하면 다음 순위 후보를 이어서 받는다(같은 쿼리는 정렬이 안정적이라는 전제).
     """
     params = {
         "search_query": f"all:{query}",
-        "start": 0,
+        "start": start,
         "max_results": max_results,
     }
     return _parse_atom_response(_query_atom(params, _retries))
 
 
 def fetch_by_id(arxiv_id: str, _retries: int = 1) -> dict | None:
-    """arxiv id로 정확히 그 논문 하나를 조회한다(검색이 아니라 조회 — id_list 파라미터).
-
-    arxiv_search()는 키워드 검색이라 제목 등으로 찾으면 다른 논문이 걸릴 위험이 있는데,
-    이미 정확한 arxiv_id를 알고 있을 때는 이렇게 조회하는 게 맞다(paper_ingest.py의
-    register_paper()가 등록 시 bibliographic을 자동으로 채울 때 씀, 07-29).
-
-    반환 키는 arxiv_search()와 동일: title, authors, year, arxiv_id, abstract, pdf_url.
-    존재하지 않는 id(오타 등)면 None.
-    """
+    """arxiv id로 정확히 그 논문 하나를 조회한다(검색이 아니라 id_list 조회) — 이미
+    정확한 id를 아는데 키워드 검색을 쓰면 다른 논문이 걸릴 위험이 있어 분리했다
+    (register_paper()의 서지정보 자동 조회가 사용). 존재하지 않는 id면 None."""
     params = {"id_list": arxiv_id, "start": 0, "max_results": 1}
     results = _parse_atom_response(_query_atom(params, _retries))
     return results[0] if results else None

@@ -10,40 +10,25 @@ import paper_screening
 import paper_search
 
 
-def recommend_for_interest(interest_id: int, *, max_results: int = 5, conn=None) -> list[dict]:
-    """관심사 하나를 기준으로 논문을 검색·스크리닝한다.
+def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int = 0, conn=None) -> list[dict]:
+    """관심사 하나를 기준으로 논문을 검색·스크리닝한다. 검색 쿼리는 looking_for(비어
+    있으면 title 폴백). start는 페이지네이션 오프셋("추가 검색"이 다음 순위부터 이어받게).
 
-    검색 쿼리는 관심사의 looking_for를 쓴다(비어 있으면 title로 폴백) — "찾는 것"이
-    title보다 실제 검색 의도를 더 구체적으로 담고 있다.
+    **카탈로그 저장**(관련 있는 것만 — dismissed는 "사용자가 직접 기각"만을 위한
+    신호라 스크리닝이 거른 것과 섞으면 오염됨)과 **반환 목록**(관련 없다고 판정된
+    것도 포함 — false negative여도 사용자가 직접 볼 기회를 남김)을 분리한다.
 
-    "카탈로그에 남기는 것"과 "화면에 보여주는 것"을 분리한다(07-31, 사용자 지적으로
-    재검토) — 처음엔 관련 없다고 판정된 후보를 반환값에서도 통째로 뺐는데, 그러면
-    스크리닝 LLM이 틀렸을 때(false negative — 실제로는 관련 있는데 관련 없다고 판정)
-    사용자가 그 논문을 볼 기회 자체가 없어진다. reasoning도 이미 계산돼 있는데
-    버려지는 낭비였다. 그래서:
-      - **카탈로그 저장**은 그대로 관련 있는 것만 — dismissed는 "사용자가 직접
-        기각했다"는 신호인데, 스크리닝이 미리 거른 것까지 섞으면 그 신호가 오염된다
-        (로드맵 "기각 이력이 평가 기준의 정답 레이블" 설계 노트).
-      - **반환 목록**은 관련 없다고 판정된 것도 포함 — "추천에서 끝나고 결정은
-        사람이"라는 이 프로젝트의 기존 원칙과 일관되게, 최종 판단 기회를 사용자에게
-        남긴다.
+    반환 정렬은 관련도만 기준(관련 있음이 앞, 안정 정렬이라 그 안 순서는 유지) —
+    peer_reviewed/citation_count/year는 정렬에 안 섞는다("스크리닝 축을 합치지 않는다").
 
-    반환 정렬은 관련도(is_relevant)를 유일한 기준으로만 쓴다(관련 있음이 앞) — 안정
-    정렬이라 그 안에서는 검색 엔진이 준 원래 순서가 유지된다. peer_reviewed/
-    citation_count/year는 서로 안 섞고 정렬에도 안 쓴다("스크리닝 축을 합치지
-    않는다" 원칙, RoadMap 참고) — 그 축들로 어떻게 다시 정렬할지는 호출하는 쪽(UI)이
-    고르면 된다.
-
-    관심사가 없으면 ValueError. 후보 하나의 스크리닝이 실패해도(모델 소진 등) 그
-    후보만 건너뛰고 나머지는 계속 진행한다 — 검색 자체가 실패한 것과 후보 하나가
-    실패한 것은 다르게 다뤄야 한다(전자는 사용자에게 알릴 일, 후자는 부분 결과로 충분).
+    관심사가 없으면 ValueError. 후보 하나의 스크리닝 실패는 그 후보만 건너뛴다.
     """
     interest = interests.get_interest(interest_id, conn=conn)
     if interest is None:
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
 
     query = interest["looking_for"] or interest["title"]
-    candidates = paper_search.search_papers(query, max_results=max_results)
+    candidates = paper_search.search_papers(query, max_results=max_results, start=start)
 
     results = []
     for candidate in candidates:
@@ -68,6 +53,50 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, conn=None)
 
     results.sort(key=lambda r: not r["is_relevant"])
     return results
+
+
+def refresh_for_interest(
+    interest_id: int, existing_candidates: list[dict], *, max_results: int = 5, conn=None
+) -> list[dict]:
+    """관심사 수정 직후 호출 — 기존에 검색해둔 후보를 버리지 않고 새 기준으로
+    재스크리닝해 관련 있는 것만 남긴 뒤, 새 페이지 하나(start=0)를 더 검색해 합친다.
+
+    existing_candidates는 recommend_for_interest() 반환 형태(paper_id/abstract/
+    peer_reviewed/citation_count/year/title). journal_ref 원본이 없어(peer_reviewed로만
+    축약돼 전달됨) screen_candidate() 입력을 역산해 넣는다 — peer_reviewed=True면
+    journal_ref에 아무 비어있지 않은 문자열을 넣어 bool() 복원만 하고 재계산은 안 함.
+
+    재스크리닝으로 살아남은 후보는 doi/arxiv_id가 없어 카탈로그에 재upsert하지
+    않는다(새로 검색된 것만 upsert). 겹치는 paper_id는 새 쪽에서 제거해 중복 방지.
+    """
+    interest = interests.get_interest(interest_id, conn=conn)
+    if interest is None:
+        raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
+
+    kept_old = []
+    for c in existing_candidates:
+        pseudo_candidate = {
+            "paper_id": c.get("paper_id"),
+            "abstract": c.get("abstract", ""),
+            "journal_ref": "peer-reviewed" if c.get("peer_reviewed") else "",
+            "citation_count": c.get("citation_count"),
+            "year": c.get("year"),
+        }
+        try:
+            screened = paper_screening.screen_candidate(pseudo_candidate, interest)
+        except RuntimeError as e:
+            print(f"재스크리닝 실패, 이 후보는 건너뜀(paper_id={c.get('paper_id')}): {type(e).__name__}: {e}")
+            continue
+        if screened["is_relevant"]:
+            kept_old.append({**screened, "title": c.get("title", ""), "abstract": c.get("abstract", "")})
+
+    seen_ids = {r["paper_id"] for r in kept_old}
+    fresh = recommend_for_interest(interest_id, max_results=max_results, start=0, conn=conn)
+    fresh = [r for r in fresh if r["paper_id"] not in seen_ids]
+
+    combined = kept_old + fresh
+    combined.sort(key=lambda r: not r["is_relevant"])
+    return combined
 
 
 if __name__ == "__main__":

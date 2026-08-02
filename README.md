@@ -12,13 +12,13 @@
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
 | **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다 |
 | **To Do List** (Obsidian 칸반) | 실행 순서만 (한 줄 요약 — **세부 내용의 정본은 RoadMap**) | 상시 — RoadMap과 짝으로 동기화 |
-| **docs/README_08~12.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
+| **docs/README_08~13.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
 > 평소엔 **RoadMap ↔ To Do List**만 동기화하면 된다. 완료한 기능이 현황을 바꾸는 순간(예: 프론트엔드 추가 → 실행법 변경)에만 README/DEPLOY도 함께 손본다.
 
 ## 목표 아키텍처
 
-> **2026-07-24 개편**: "오케스트레이터 하나가 전문 에이전트들을 라우팅하는 단일 챗봇"에서 **표면 / 능력 / 데이터 3층 구조**로 전환했다. 배경·근거·수정사항은 [docs/README_12.md §7](docs/README_12.md) 참고.
+> 아래는 **표면 / 능력 / 데이터 3층 구조**다. 개편 배경·근거는 [docs/README_12.md §4](docs/README_12.md) 참고.
 
 ![표면/능력/데이터 3층 아키텍처](docs/architecture.png)
 
@@ -70,16 +70,16 @@
 - **논문 처리를 요약(②a) / 스크리닝(②b) / 검색으로 3분할**: "abstract 트리아지 → 통과하면 전문 요약"이라는 단일 파이프라인은 성립하지 않는다 — 유료 저널은 트리아지를 통과해도 전문을 읽을 수 없고, 반대로 라이브러리 보유 논문은 이미 선별이 끝나 트리아지가 불필요하다. 입력(전문 vs abstract+지표)·비용(비싸고 드묾 vs 싸고 대량)·호출자가 전부 다르므로 별개 능력으로 나눈다.
 - **등록 시 인코딩, 요약은 lazy**: 논문 등록 시점에는 전문 청킹·임베딩만 해서 검색 가능하게 만들고(인코딩 ≠ 요약), 요약은 라이브러리에서 요청받거나 QA·논문 작성이 필요로 할 때 생성 후 캐시. **QA 중 요약이 없으면 전문 청크로 답하고 요약 생성은 백그라운드로** — 인라인 생성은 응답을 수십 초 늘린다(스트리밍 도입으로 생기는 진행상황 채널에 얹는다).
 - **권위 판단은 LLM이 아니라 지표로**: 스크리닝에서 LLM은 "관심사와 관련 있나"(abstract 기반)만 담당하고, 신뢰도·권위는 저널·인용수 계산으로 낸다 — LLM에게 권위를 물으면 환각한다. 지표는 API 어댑터가 붙기 전엔 비어 있으므로 관련도만으로 랭킹하고, 필드는 미리 준비해둔다. 저자 h-index 같은 명성 지표는 쓰지 않는다(논문을 사람으로 판단하는 편향).
-- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록. **References 판정은 대표 라벨이 아니라 헤더 계층 전체로**(07-28 수정) — 조각마다 표시용 대표 라벨은 가장 깊은 헤더 하나만 남기지만, `is_references` 분류는 그 라벨 하나가 아니라 헤더 계층 전체에 `any()`로 판정해 "References 아래 하위헤더"가 있는 조각도 빠짐없이 잡음
-- **논문 "품질 평가"는 보류 — 평가 대신 추출**: 실험 설계의 건전성·통계적 타당성·분야 내 신규성 판정은 피어 리뷰의 영역이고 도메인 전문성이 필요하다. LLM에 "신뢰도 점수"를 물으면 그럴듯한 노이즈가 나오는데, 하류(⑦ 인용·가설 수립)가 그걸 신호로 취급하므로 없는 것보다 나쁘다. 07-15에 verify 판정 기준을 "사실 오류만"으로 좁힌 것과 같은 실패 양상 — 모호한 품질 판정을 요구하면 모델이 아무 말이나 만들어낸다. 그래서 ②a는 판정 대신 **저자 자신의 진술을 추출**한다(추출은 판단이 아니라 신뢰 가능). 품질 평가 자체는 **논문 작성(⑦)이 실제로 그것을 소비할 수 있게 된 시점에 재검토** — 소비처가 없으면 기준을 검증할 방법도 없다.
+- **전문 처리는 헤더 기반 분할 + 점진적 길이 관리**: `pymupdf4llm` 마크다운 출력을 `MarkdownHeaderTextSplitter`로 섹션 분할(References는 태깅·제외). 구조화 추출은 관련 섹션을 묶어 LLM에 전달하고, 컨텍스트를 넘으면 서브헤더·문단 단위로 재귀 분할해 요약한 뒤 합침(map-reduce 원리) — 길이를 호출 전에 먼저 체크하므로 컨텍스트 초과가 `invoke_with_fallback`의 모델 fallback으로 잘못 새지 않음(`models.py` 단일 지점 원칙 유지). 임베딩 청크는 검색 정밀도가 목적이라 헤더 경계와 무관하게 기존 500자 방식을 유지하고, 섹션은 메타데이터로만 기록. References/Abstract 판정은 대표 라벨이 아니라 헤더 계층 전체로(하위헤더가 있는 조각도 빠짐없이 잡기 위함)
+- **논문 "품질 평가"는 보류 — 평가 대신 추출**: 실험 설계의 건전성·통계적 타당성·분야 내 신규성 판정은 피어 리뷰의 영역이고 도메인 전문성이 필요하다. LLM에 "신뢰도 점수"를 물으면 그럴듯한 노이즈가 나오는데, 하류(⑦ 인용·가설 수립)가 그걸 신호로 취급하므로 없는 것보다 나쁘다. 그래서 ②a는 판정 대신 **저자 자신의 진술을 추출**한다(추출은 판단이 아니라 신뢰 가능). 품질 평가 자체는 **논문 작성(⑦)이 실제로 그것을 소비할 수 있게 된 시점에 재검토** — 소비처가 없으면 기준을 검증할 방법도 없다.
 - **스크리닝 축을 합치지 않는다**: 관련도·최근성·인용·peer-review는 성격이 다른 축이라 하나의 점수로 합치면 가중치가 임의적이고 정보가 사라진다. 관련도로 1차 필터만 하고 나머지는 나란히 표시해 사용자가 정렬하게 한다("추천에서 끝나고 결정은 사람이" 방침과 일치). 최신이 항상 좋은 것도 아니다 — 기초 물리는 오래된 정전이, 실험 기법은 최신이 중요하므로 방향은 관심사별로 다르다.
 - **기각 이력이 평가 기준의 정답 레이블**: 카탈로그의 `status: dismissed`가 사용자의 판단 기록이므로, 스크리닝 기준을 바꿨을 때 "예전에 기각한 논문을 여전히 상위에 올리나"로 비교할 수 있다 — 별도 데이터 수집 없이 얻는 평가셋.
 - **관련도 정확도는 관심사 문서 품질에 달려 있다**: ① 템플릿에 "무엇을 찾고 있나 / 이미 아는 것 / 제외할 주제"를 넣어야 판정이 정확해진다 — 평가 기준의 일부는 사용자가 관심사에 써주는 것..
-- **피드와 추천의 분리**: 피드는 관심사와 무관한 hype 소식을 cron으로 싸고 넓게 수집(키워드 태깅 → 관심사 일치 키워드만 색 강조 + 상단 정렬), 추천 검색(③)은 관심사에서 트리거할 때만 실행(②b 스크리닝 포함). 추천 리스트에서 끝나고 구매·ingest는 사람이 밖에서 결정 — 그래프 차원의 HITL이 아니다 (기존 결정 유지). 등록되면 카탈로그 DOI 매칭으로 추천 목록에서 자동으로 내려간다.
+- **피드와 추천의 분리**: 피드는 관심사와 무관한 hype 소식을 cron으로 싸고 넓게 수집(키워드 태깅 → 관심사 일치 키워드만 색 강조 + 상단 정렬), 추천 검색(③)은 관심사에서 트리거할 때만 실행(②b 스크리닝 포함). 추천 리스트에서 끝나고 구매·ingest는 사람이 밖에서 결정 — 그래프 차원의 HITL이 아니다. 등록되면 카탈로그 DOI 매칭으로 추천 목록에서 자동으로 내려간다.
 - **외부 API는 최종 단계의 어댑터**: 유료 저널 대응(Crossref 신착 감지, Unpaywall/CORE OA 본문, OpenAlex 인용수·권위 논문)은 검색 함수 뒤에 숨는 구현 세부 — 초기엔 arxiv·웹 검색만으로 전 기능을 완성하고, API 어댑터는 마지막에 갈아끼운다. API 연결 자체가 목표가 되지 않게.
-- **프론트 스택 재검토 예정**: 표면이 셋(챗·워크플로우·라이브러리)으로 늘면 Streamlit만으로는 한계 — 지금은 Streamlit(multipage)로 버티고, 라이브러리 표면 구축 시점에 React 등 전환을 검토. 후순위로 내린 피드까지 살린다면 그때 함께.
+- **프론트 스택은 Streamlit 유지**: 표면이 늘어도 백엔드 엔드포인트는 스택과 무관하고 `st.navigation()`(multipage)이 저비용이라 당분간 Streamlit으로 간다. React 등 전환은 화면이 더 늘거나 한계에 부딪힐 때 재검토.
 - **"관심사로 등록할까요?" 제안은 턴 종료 후 훅**: 에이전트가 아니라 챗 그래프의 final_answer 뒤에서 싼 모델로 1회 판정 → 제안 → 수락 시 문서 작성기 호출. 한 번 구현해 모든 표면에 붙인다.
-- **가설 수립과 실험 설계 분리**: 가설을 세우는 일(귀추적 추론)과 검증 가능한 실험으로 번역하는 일(방법론·장비·통제조건)은 성격이 다른 작업. 재실험·대체실험 루프는 실험 운영이 **실험 설계만 재호출** — 가설은 고정한 채 프로토콜만 다시 짜는 게 흔한 경로라 매번 가설부터 재추론하면 낭비 (기존 결정 유지).
+- **가설 수립과 실험 설계 분리**: 가설을 세우는 일(귀추적 추론)과 검증 가능한 실험으로 번역하는 일(방법론·장비·통제조건)은 성격이 다른 작업. 재실험·대체실험 루프는 실험 운영이 **실험 설계만 재호출** — 가설은 고정한 채 프로토콜만 다시 짜는 게 흔한 경로라 매번 가설부터 재추론하면 낭비.
 - **참고문헌은 워크플로우가 끌고 다니는 누적 산출물**: 가설 수립(배경 문헌) → 실험 설계(방법론) → 실험 운영(결과 비교) → 논문 작성(고찰) 각 단계가 참고문헌 추천기를 호출해 공유 references 목록에 append(서지정보 + 인용 이유 + 추가된 단계 기록), ⑦이 최종 소비자. 목록에 없는 인용이 초안에 등장하면 그 자체가 환각 신호 — 자체 검토에서 걸러낸다. QA(④)에서는 기본은 retrieve가 이미 가져온 문서의 메타데이터를 "참고"로 붙이고(추가 호출 0), 사용자가 요청할 때만 추천기 풀 호출(라우터 분기).
 - **안전 가드레일 (Human-in-the-loop)**: 실험 안전은 각 능력이 자체 판단하지 않고 공유 규칙을 설계·운영 양 단계에서 공통 조회. 임계치 초과 시 사람 승인 전까지 진행 불가 — `interrupt_before` 기반 진짜 HITL이 필요한 지점은 여기(와 문서 작성기의 등록 확인)뿐이다. interrupt로 멈춘 상태가 서버 재시작에 살아남아야 하므로 **SqliteSaver 영속화가 선행**된다.
 - **긴 작업·진행상황은 스트리밍 전제**: 연구 워크플로우와 실시간 진행상황 안내는 동기 요청-응답으로는 불가능 — `astream` + SSE 엔드포인트를 워크플로우 구축 전에 도입한다.
@@ -94,7 +94,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
              └──────────────────────────┘── 컨텍스트 부족 → retrieve (top_k+1)
 ```
 
-> **[아키텍처 개편]** 이 그래프(`graph.py`)는 이제 "물리 QA" 능력(서브그래프)이다 — 자체 checkpointer가 없고, `orchestrator.py`가 매번 fresh하게 `.invoke()`로 호출한다. 예전엔 `reset_turn` 노드가 매 턴 진입 시 임시 상태를 초기화했는데, fresh invoke 자체가 Pydantic 기본값으로 이미 초기화된 상태라 이 노드가 통째로 불필요해졌다 — 단기기억(대화 이력)·턴 경계·체크포인터는 이제 `orchestrator.py`가 소유한다.
+> 이 그래프(`graph.py`)는 "물리 QA" 능력(서브그래프)이다 — 자체 checkpointer가 없고, `orchestrator.py`가 매번 fresh하게 `.invoke()`로 호출한다. fresh invoke 자체가 Pydantic 기본값으로 이미 초기화된 상태라 별도 리셋 노드가 필요 없다 — 단기기억(대화 이력)·턴 경계·체크포인터는 `orchestrator.py`가 소유한다.
 
 - **retrieve**: 벡터 검색 (기본 top_k=3). 재검색 시 벡터DB 문서는 교체하되 tool로 수집한 증거는 보존
 - **generate**: 대화 이력(`add_messages` reducer) 기반 답변 생성. tool이 필요하면 `tool_calls`만 요청 — 실행은 run_tools 노드 담당. 재시도 시 verify의 지적사항을 대화 메시지로 반영
@@ -106,8 +106,8 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 
 ### 특징
 
-- **단기기억 (멀티턴 대화, 디스크 영속화)**: `AsyncSqliteSaver` checkpointer + `thread_id` — **`orchestrator.py`가 그래프 구조와 DB 경로(`CHECKPOINT_DB_PATH`)를, `main.py`의 FastAPI `lifespan`이 실제 컴파일(체크포인터 연결)을 소유**(물리 QA 능력 자체는 checkpointer 없이 fresh invoke). 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. `data/checkpoints.sqlite`에 저장돼 **서버 재시작에도 대화가 살아남는다**(6-4, 07-31 — 이전엔 `MemorySaver`로 프로세스 메모리에만 있어 재시작 시 소멸했음). 동기 `SqliteSaver`가 아니라 비동기 버전을 쓰는 이유: `/query`가 `astream()`을 쓰는데 동기 버전은 이 경로에서 지원되지 않음(실제 라이브러리 소스로 확인)
-- **모델 선택 + fallback 체인**: `model_map`(gemini-2.5-flash / claude-haiku / **Qwen-tuned**)에서 요청별 선택, rate limit·접속 오류 시 남은 모델로 자동 전환. 실패한 모델은 `disabled_models`로 State에 기록되어 같은 요청 안에서는 재시도하지 않음 (노드를 넘나드는 모델 서킷 브레이커). 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음.
+- **단기기억 (멀티턴 대화, 디스크 영속화)**: `AsyncSqliteSaver` checkpointer + `thread_id` — **`orchestrator.py`가 그래프 구조와 DB 경로(`CHECKPOINT_DB_PATH`)를, `main.py`의 FastAPI `lifespan`이 실제 컴파일(체크포인터 연결)을 소유**(물리 QA 능력 자체는 checkpointer 없이 fresh invoke). 같은 thread_id로 요청하면 대화 이력이 이어져 후속 질문("방금 답을 요약해줘")이 가능. thread_id 미지정 시 uuid가 자동 발급되어 단발 요청도 안전. verify에는 "맥락상 답할 수 없는 모호한 질문에 명확화를 요청한 답변은 정확한 대응" 기준을 추가해 멀티턴 특유의 불완전한 질문에 대응. `data/checkpoints.sqlite`에 저장돼 **서버 재시작에도 대화가 살아남는다**. 동기 `SqliteSaver`가 아니라 비동기 버전을 쓰는 이유: `/query`가 `astream()`을 쓰는데 동기 버전은 이 경로에서 지원되지 않음(실제 라이브러리 소스로 확인)
+- **모델 선택 + fallback 체인**: `model_map`(gemini-3.5-flash-lite / claude-haiku / **Qwen-tuned**)에서 요청별 선택, rate limit·접속 오류 시 남은 모델로 자동 전환. 실패한 모델은 `disabled_models`로 State에 기록되어 같은 요청 안에서는 재시도하지 않음 (노드를 넘나드는 모델 서킷 브레이커). 회피 대상(`models_skip`, 요청마다 새로 정함)과 고장 목록(`disabled_models`, 실패 시 누적)을 별도 파라미터로 분리 — 합쳐서 관리하면 "이번엔 피하고 싶을 뿐"과 "완전히 죽었음"이 뒤섞여 생성자 자신이 영구 배제될 수 있음.
 
 2개 모델이 동시에 장애여도 3번째로 정상 응답 — 상세 로그: [docs/README_09.md](docs/README_09.md#장애-복원력-테스트)
 - **자체 파인튜닝 모델 연동**: Qwen2.5-1.5B를 물리 QA로 QLoRA 파인튜닝 → Q4_K_M GGUF → 로컬 llama-server(OpenAI 호환)로 서빙 ([docs/README_09.md](docs/README_09.md) 참고)
@@ -118,12 +118,12 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 
 `paper_ingest.py`가 등록(`register_paper`)과 조회 시 lazy 요약(`get_paper_summary`) 두 함수로 최소 구현되어 있다. 그래프가 아니라 평범한 함수 조합 — 지금 범위엔 조건 분기·HITL이 필요 없어 LangGraph로 감쌀 이유가 없었다.
 
-- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_chunking.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy). `bibliographic`은 화이트리스트(title/authors/year/arxiv_id/pdf_url)만 청크 메타데이터로 복제한다 — abstract 같은 긴 필드를 그대로 받으면 청크 수만큼 그대로 복제돼 쌓인다(07-28 리뷰로 발견·수정).
+- `register_paper(pdf_path, doi=, arxiv_id=, bibliographic=)`: `pdf_parse.py`로 파싱 → `paper_chunking.py`의 `split_for_embedding()`으로 500자/오버랩50 청킹(`ingest.py`와 같은 결) → `paper_id.py`로 식별자 계산(DOI>arXiv>파일 해시) → `papers_vectorstore`에 `doc_type: fulltext_chunk`로 저장. 요약은 여기서 만들지 않는다(등록 시 인코딩, 요약은 lazy). 등록 성공 시 `paper_catalog.mark_owned()`로 카탈로그 상태를 `owned`로 전환(추천이었던 논문이면 목록에서 내려감). `bibliographic`은 화이트리스트(title/authors/year/arxiv_id/pdf_url)만 청크 메타데이터로 복제한다 — abstract 같은 긴 필드를 그대로 받으면 청크 수만큼 그대로 복제돼 쌓이기 때문.
 - `get_paper_summary(paper_id)`: 캐시(`doc_type: summary`)가 있으면 그대로 반환(추가 LLM 호출 0). 없으면 등록된 청크(References 제외)를 모아 `paper_extraction.py`의 구조화 스키마로 LLM을 한 번 호출한다 — 컨텍스트 예산을 넘으면 `ContextBudgetExceeded`를 그대로 전파(단순 경로 우선, map-reduce 재귀 분할은 아직 미구현).
-- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택 — 컬렉션별로 top_k씩 이어붙이면 항상 최대 2×top_k가 들어가던 문제를 수정(07-28 리뷰). 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(07-15 근접-오검색을 반대 방향으로 재현하므로).
-- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림) — 07-28 리뷰로 발견·수정.
+- `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택. 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(근접-오검색을 반대 방향으로 재현하므로).
+- **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림).
 
-미구현: 라이브러리 등록 폼(UI), 논문 카탈로그(SQLite — 6-6 예정, 지금은 벡터DB 메타데이터가 등록 여부의 유일한 기록).
+라이브러리 UI(논문 탭·관심사 탭)와 논문 카탈로그(SQLite, `paper_catalog.py`)는 구현됨 — 아래 [API](#api) 참고. 미구현: 관심사별 보유/추천 논문 필터(`interest_paper` 조인 테이블 없음), 실험도구 탭, 지식 노트 탭.
 
 ## 파일 구조
 
@@ -139,6 +139,7 @@ Science_Chatbot/
 │   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
 │   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
 │   ├── README_12.md         # 개발 회고 (CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
+│   ├── README_13.md         # 개발 회고 (라이브러리 표면 1차·모델 fallback 버그 수정)
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
 ├── tests/
 │   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
@@ -189,8 +190,15 @@ Science_Chatbot/
 ├── paper_catalog.py      # 논문 카탈로그 RDB(SQLite) — data/app.db(interests.py와 같은 파일, 다른 테이블), status: recommended/owned/dismissed
 ├── paper_search.py       # 논문 검색 어댑터 — arxiv_search()를 감싸 paper_id·지표 자리까지 채운 후보 목록 반환(나중에 Crossref/OpenAlex로 교체 대비)
 ├── paper_screening.py    # 논문 스크리닝(②b) — 관련도만 LLM 판단, peer-review/인용수/연도는 계산·전달(한 점수로 안 합침)
-├── paper_recommend.py    # 추천 검색(③) — 검색→스크리닝→카탈로그 recommended 기록 오케스트레이션
-├── main.py               # FastAPI: POST /query
+├── paper_recommend.py    # 추천 검색(③) — 검색→스크리닝→카탈로그 recommended 기록 오케스트레이션, 관심사 수정 시 재검색(refresh_for_interest)
+├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers
+├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사 탭)
+│   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
+│   ├── common.py             # BACKEND_URL 등 공용 설정
+│   └── views/
+│       ├── chat.py               # 메인 챗 화면
+│       ├── papers.py             # 논문 탭 — 등록 폼(POST /papers) + 카탈로그 조회(GET /papers)
+│       └── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
 └── .env                  # API 키 (git 제외)
 ```
 
@@ -294,7 +302,26 @@ POST /interests/{interest_id}/search
                      "citation_count", "year", "title", "abstract"}, ...]}
 ```
 
-- 그 관심사 기준으로 논문을 검색(arxiv)·스크리닝(②b)한다. **관심사에서 사용자가 트리거할 때만 실행**(cron 배치 아님). 논문 카탈로그(`paper_catalog.py`)에 `status: recommended`로는 관련 있다고 판정된 것만 기록되지만, **반환되는 목록엔 관련 없다고 판정된 것도 포함**된다(스크리닝 LLM이 틀릴 수 있으므로 사용자가 직접 보고 판단할 여지를 남김 — "추천에서 끝나고 결정은 사람이"). 목록은 관련도(`is_relevant`)만을 기준으로 정렬(관련 있음이 앞) — `peer_reviewed`/`citation_count`/`year`는 서로 안 섞고 정렬 기준으로도 안 씀, 그 축으로 다시 정렬하고 싶으면 프론트가 하면 됨. 관심사 id가 없으면 404
+- 그 관심사 기준으로 논문을 검색(arxiv)·스크리닝(②b)한다. **관심사에서 사용자가 트리거할 때만 실행**(cron 배치 아님). 논문 카탈로그(`paper_catalog.py`)에 `status: recommended`로는 관련 있다고 판정된 것만 기록되지만, **반환되는 목록엔 관련 없다고 판정된 것도 포함**된다(스크리닝 LLM이 틀릴 수 있으므로 사용자가 직접 보고 판단할 여지를 남김 — "추천에서 끝나고 결정은 사람이"). 목록은 관련도(`is_relevant`)만을 기준으로 정렬(관련 있음이 앞) — `peer_reviewed`/`citation_count`/`year`는 서로 안 섞고 정렬 기준으로도 안 씀, 그 축으로 다시 정렬하고 싶으면 프론트가 하면 됨. `start`(쿼리 파라미터, 기본 0)로 다음 페이지 검색. 관심사 id가 없으면 404
+
+```
+GET /interests                       → {"interests": [...]}
+DELETE /interests/{interest_id}      → {"interest_id", "action": "deleted"}  (없으면 404)
+POST /interests/{interest_id}/refresh
+{ "existing_candidates": [...] }     # 이전 /search 응답을 그대로 되돌려보냄
+→ {"recommended": [...]}             # 기존 후보 재스크리닝(관련 있는 것만) + 새 페이지 검색을 합쳐 반환
+```
+
+- `refresh`는 관심사 수정 직후 프론트가 호출 — `paper_recommend.refresh_for_interest()` 참고(상세: [docs/README_13.md §3.2](docs/README_13.md)).
+
+```
+POST /papers  (multipart/form-data: file, doi?, arxiv_id?)
+→ {"paper_id", "text_extractable", "chunk_count", "page_count", "title_check"}
+
+GET /papers?status=recommended|owned|dismissed   → {"papers": [...]}
+```
+
+- `POST /papers`는 `register_paper()`를 그대로 호출 — 잘못된 PDF는 400. `GET /papers`는 카탈로그 전역 조회(관심사별 필터는 아직 없음).
 
 ## 평가
 
@@ -325,7 +352,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 지금까지의 진행 과정과 앞으로의 계획은 별도 문서에 정리되어 있다:
 
 - **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 진행 중, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
-- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD) · [README_12](docs/README_12.md)(CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
+- **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD) · [README_12](docs/README_12.md)(CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성) · [README_13](docs/README_13.md)(라이브러리 표면 1차·모델 fallback 버그 수정)
 
 ## 데이터 & 감사
 

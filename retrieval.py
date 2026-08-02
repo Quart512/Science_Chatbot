@@ -16,13 +16,9 @@ vectorstore = Chroma(
     collection_name=collection_name
 )
 
-# =========================================================
-# 논문 요약기(②a, paper_ingest.py)가 쓰는 별도 컬렉션. 물리 QA용 "feynman" 컬렉션과
-# 같은 임베딩 모델(embeddings)·persist_directory를 공유하되(모델 재로딩 방지·디스크
-# 위치 통일), 컬렉션은 분리한다 — 논문 전문·요약과 파인만 강의록은 성격이 다른 근거라
-# 섞이면 검색 품질이 떨어진다. 한 컬렉션 안에서 doc_type(fulltext_chunk/summary/abstract,
-# 07-29 abstract 추가)으로 나누는 건 같은 논문 안에서의 구분이고, 이건 그 상위의
-# "논문 vs QA 강의록" 구분이다.
+# 논문 요약기(②a, paper_ingest.py) 전용 컬렉션 — 같은 임베딩 모델·persist_directory를
+# 공유하되(재로딩 방지) 파인만 강의록과는 성격이 다른 근거라 컬렉션을 분리한다.
+# doc_type(fulltext_chunk/summary/abstract)으로 논문 내부 구분은 이 컬렉션 안에서 한다.
 papers_collection_name = "papers"
 papers_vectorstore = Chroma(
     persist_directory=persist_directory,

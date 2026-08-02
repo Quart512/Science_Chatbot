@@ -11,10 +11,21 @@ import하므로 retrieval의 무거운 import-time 로딩과도 아예 무관하
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from anthropic import BadRequestError as AnthropicBadRequestError
 from google.api_core.exceptions import ResourceExhausted
+from google.genai.errors import ServerError
 
 import models
+
+
+def _anthropic_bad_request(message: str) -> AnthropicBadRequestError:
+    resp = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json={"error": {"message": message}},
+    )
+    return AnthropicBadRequestError(message, response=resp, body={"error": {"message": message}})
 
 
 def make_fake_model(*, raises=None):
@@ -52,6 +63,37 @@ def test_falls_back_to_secondary_on_resource_exhausted(monkeypatch):
     assert used_model == "claude"
     assert disabled == ["gemini"]  # 실패한 모델이 기록됨
     fake_claude.invoke.assert_called_once()
+
+
+def test_falls_back_on_google_genai_server_error(monkeypatch):
+    # 08-11② 실사용 중 발견 — langchain_google_genai가 내부적으로 google-genai SDK로
+    # 갈아탄 뒤로 과부하(503) 시 ChatGoogleGenerativeAIError가 아니라 이 SDK의
+    # ServerError가 그대로 올라온다. 예전 예외 화이트리스트로는 못 잡아 fallback을
+    # 못 타고 500까지 샜던 실제 사례(models.py의 GoogleGenAIAPIError 주석 참고).
+    fake_gemini = make_fake_model(raises=ServerError(503, {"error": {"message": "overloaded"}}))
+    fake_claude = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": fake_claude})
+
+    response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    assert used_model == "claude"
+    assert disabled == ["gemini"]
+    fake_claude.invoke.assert_called_once()
+
+
+def test_falls_back_on_anthropic_credit_balance_error(monkeypatch):
+    # 08-11② 실사용 중 발견 — anthropic 계정 크레딧 부족도 anthropic.BadRequestError(400)로
+    # 온다. openai.BadRequestError(이미 화이트리스트에 있음)와 이름은 같지만 서로 다른
+    # SDK의 별개 클래스라 따로 잡아야 한다(models.py의 AnthropicBadRequestError 주석 참고).
+    fake_claude = make_fake_model(raises=_anthropic_bad_request("credit balance too low"))
+    fake_gemini = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"claude": fake_claude, "gemini": fake_gemini})
+
+    response, used_model, disabled, tokens = models.invoke_with_fallback("claude", messages=["dummy"])
+
+    assert used_model == "gemini"
+    assert disabled == ["claude"]
+    fake_gemini.invoke.assert_called_once()
 
 
 def test_raises_runtime_error_when_all_models_exhausted(monkeypatch):

@@ -4,7 +4,7 @@
 #  같은 이유로, 이 테스트도 "외부 의존성 없이 1~2초 안에 끝나야 한다"는 톨게이트 원칙을 따름)
 
 import arxiv_api
-from arxiv_api import _parse_atom_response, fetch_by_id
+from arxiv_api import _parse_atom_response, arxiv_search, fetch_by_id
 
 SAMPLE_ATOM_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -116,3 +116,30 @@ def test_fetch_by_id_queries_by_id_list_not_keyword_search(monkeypatch):
 
     assert captured["id_list"] == "2301.00001"
     assert "search_query" not in captured
+
+
+# --- arxiv_search() 페이지네이션 (08-11①, "추가 검색") ----------------------
+
+
+def test_arxiv_search_defaults_start_to_zero(monkeypatch):
+    captured = {}
+    def _fake_query(params, _retries=1):
+        captured.update(params)
+        return EMPTY_ATOM_XML
+    monkeypatch.setattr(arxiv_api, "_query_atom", _fake_query)
+
+    arxiv_search("quantum")
+
+    assert captured["start"] == 0
+
+
+def test_arxiv_search_forwards_start_offset(monkeypatch):
+    captured = {}
+    def _fake_query(params, _retries=1):
+        captured.update(params)
+        return EMPTY_ATOM_XML
+    monkeypatch.setattr(arxiv_api, "_query_atom", _fake_query)
+
+    arxiv_search("quantum", start=5)
+
+    assert captured["start"] == 5
