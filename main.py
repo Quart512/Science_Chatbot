@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import tempfile
 from contextlib import asynccontextmanager
 
@@ -26,7 +25,7 @@ import paper_recommend
 # graph 구조만, 체크포인터 연결(컴파일)은 여기서 책임진다.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    os.makedirs(os.path.dirname(orchestrator.CHECKPOINT_DB_PATH), exist_ok=True)
+    orchestrator.ensure_checkpoint_dir()
     async with AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer:
         app.state.graph = orchestrator.graph.compile(checkpointer=checkpointer)
         yield

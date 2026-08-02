@@ -353,6 +353,28 @@ def test_register_paper_explicit_bibliographic_overrides_fetched(monkeypatch, tm
     assert abstract_docs == ["arxiv 초록"]  # 없던 자리는 조회 결과로 채워짐
 
 
+def test_register_paper_none_bibliographic_value_does_not_override_fetched(monkeypatch, tmp_path):
+    # 호출자가 {"title": None}처럼 "모른다"는 뜻으로 None을 넘겨도, 그 None이 arxiv
+    # 조회 결과를 덮어쓰면 안 된다 — 키가 있다는 이유만으로 우선시키면(**딕셔너리 병합은
+    # 값이 None이든 아니든 키 존재만 본다) 방금 가져온 title이 사라지는 버그가 있었다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(
+        paper_ingest, "fetch_by_id",
+        lambda arxiv_id: {"title": "arxiv 제목", "abstract": "arxiv 초록"},
+    )
+
+    vs = FakeVectorstore()
+    paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.66669",
+        bibliographic={"title": None}, vectorstore=vs,
+    )
+
+    chunk_metas = [m for m in vs.metadatas if m["doc_type"] == "fulltext_chunk"]
+    assert all(m["title"] == "arxiv 제목" for m in chunk_metas)  # None에 안 덮임
+
+
 def test_register_paper_continues_when_arxiv_fetch_fails(monkeypatch, tmp_path):
     # 네트워크 오류 등으로 조회가 실패해도 등록 자체는 막으면 안 된다 — 서지정보 없이 진행
     pdf_path = tmp_path / "paper.pdf"

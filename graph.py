@@ -10,7 +10,7 @@ from langgraph.graph.message import add_messages
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage, RemoveMessage
 
-from models import invoke_with_fallback
+from models import invoke_with_fallback, model_map
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
 from paper import paper_ingest
@@ -40,7 +40,7 @@ EFFORT_PROFILES: dict[str, dict[str, int]] = {
 }
 
 # retrieve()가 feynman·papers를 점수로 병합한 뒤 같은 paper_id 문서를 몇 개까지 허용할지 —
-# 점수 병합만 하면 논문 한 편(summary+fulltext_chunk 중복, chunk_overlap, 반복 서술)이
+# 점수 병합만 하면 논문 한 편(summary+abstract+fulltext_chunk 중복, chunk_overlap, 반복 서술)이
 # k 슬롯을 다 차지할 수 있다. feynman 문서는 paper_id가 없어 이 제한과 무관.
 MAX_CHUNKS_PER_PAPER = 2
 
@@ -353,7 +353,14 @@ def verify(state: State) ->dict:
             "try_count" : state.try_count+1,
             "needs_more_context" : False,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
-            "disabled_models" : state.disabled_models+ [state.generated_by],
+            # 이 분기에 온 시점엔 이미 model_map의 전 모델이 실패한 상태다(1차 시도가
+            # generated_by를 뺀 나머지 전부를 시도하다 RuntimeError로 끝났고, 2차 시도의
+            # generated_by도 방금 실패) — 그런데 예전엔 state.disabled_models+[generated_by]만
+            # 기록해서 1차 시도 중 실패한 다른 모델들이 이 턴 이후엔 "안 막힌 것"처럼 보이는
+            # 버그가 있었다(invoke_with_fallback이 RuntimeError를 던질 때 그 시도에서 새로
+            # disabled된 모델 목록을 반환하지 않고 버리기 때문 — 되살릴 방법이 없어 아예
+            # "전부 실패했다"는 사실 자체로 model_map 전체를 막는 쪽이 더 정확하다).
+            "disabled_models" : list(model_map.keys()),
             "trace" : state.trace+
             f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략""",
             "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}  # 사용자도 알아야 할 진짜 주의점

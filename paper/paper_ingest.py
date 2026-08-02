@@ -141,7 +141,12 @@ def register_paper(
         try:
             fetched = fetch_by_id(arxiv_id)
             if fetched:
-                bibliographic = {**fetched, **(bibliographic or {})}  # 호출자가 명시한 값이 우선
+                # 호출자가 명시한 값이 우선이지만, "명시"를 키 존재만으로 판단하면 안 된다 —
+                # 호출자가 {"title": None}처럼 값을 모른다는 뜻으로 None을 넘겨도 **로 그냥
+                # 병합하면 그 None이 arxiv에서 방금 가져온 title을 덮어써버린다. None인
+                # 키는 "명시 안 함"으로 취급해 걸러내고 남은 값만 우선순위를 준다.
+                explicit = {k: v for k, v in bibliographic.items() if v is not None} if bibliographic else {}
+                bibliographic = {**fetched, **explicit}
         except Exception as e:
             print(f"arxiv 서지정보 자동 조회 실패(등록은 계속 진행, arxiv_id={arxiv_id}): {type(e).__name__}: {e}")
 

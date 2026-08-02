@@ -1,14 +1,11 @@
 #import chromadb
 from dotenv import load_dotenv
-import os
-import hashlib
 #from google import genai
 
 from retrieval import embeddings, persist_directory, collection_name
 
 #langchain
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
 # Chroma DB 가져오기.  langchain이 알아서

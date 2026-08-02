@@ -1,3 +1,4 @@
+import os
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -172,16 +173,26 @@ graph.add_edge("physics_qa", END)
 # 공유(docker-compose.yml/.gitignore 설정을 한 번만 하면 되게).
 CHECKPOINT_DB_PATH = "data/checkpoints.sqlite"
 
+
+def ensure_checkpoint_dir() -> None:
+    """CHECKPOINT_DB_PATH의 디렉터리를 만든다 — main.py의 lifespan과 아래 스모크 테스트가
+    공유(예전엔 두 곳에 각각 복제돼 있었음). 경로를 디렉터리 없는 파일명만으로 바꾸면
+    os.path.dirname()이 ""을 돌려주는데, os.makedirs("")는 FileNotFoundError를 던지므로
+    그 경우는 건너뛴다(실제로 겪은 적은 없지만 재현 가능한 버그였음)."""
+    dirname = os.path.dirname(CHECKPOINT_DB_PATH)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
+
+
 if __name__ == "__main__":
     # 터미널 스모크 테스트 — main.py의 lifespan과 같은 방식(AsyncSqliteSaver)으로 컴파일해
     # 실제 영속화 경로를 검증한다. 같은 thread_id로 두 번 실행하면 재시작 후에도 대화가 이어지는지 확인 가능.
     import asyncio
-    import os
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
     async def _smoke_test():
-        os.makedirs(os.path.dirname(CHECKPOINT_DB_PATH), exist_ok=True)
+        ensure_checkpoint_dir()
         async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
             app = graph.compile(checkpointer=checkpointer)
             result = await app.ainvoke(
