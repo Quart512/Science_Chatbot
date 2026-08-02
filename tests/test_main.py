@@ -4,14 +4,53 @@ interests.py의 CRUD를 몽키패치해 라우팅·분기 로직만 검증 — �
 TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query와 무관한 엔드포인트
 테스트라도 앱을 띄우는 이상 거쳐가는 경로이므로 그대로 둔다(가볍고 실제 파일 I/O만 발생).
 """
+import uuid
+
 import fitz
 from fastapi.testclient import TestClient
 
 import interests
 import main
+import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+
+
+# --- GET /interests/draft (08-02, 챗 사이드바 "관심사로 등록" 버튼) ----------------
+# orchestrator.draft_interest_from_messages를 몽키패치해 LLM 호출 없이 엔드포인트
+# 배관(체크포인트 조회 → 함수 호출 → 응답)만 검증한다. thread_id는 매번 새로 발급해
+# 이전 테스트·실제 데이터의 체크포인트와 안 섞이게 한다(빈 상태 → messages=[]).
+
+
+def test_draft_interest_returns_draft_from_orchestrator(monkeypatch):
+    fake_draft = {"title": "위상 물질", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    monkeypatch.setattr(
+        orchestrator, "draft_interest_from_messages",
+        lambda messages: (fake_draft, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}),
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/interests/draft", params={"thread_id": str(uuid.uuid4())})
+
+    assert resp.status_code == 200
+    assert resp.json() == fake_draft
+
+
+def test_draft_interest_passes_thread_messages_to_orchestrator(monkeypatch):
+    captured = {}
+    def _fake_draft(messages):
+        captured["messages"] = messages
+        return {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}, {
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        }
+    monkeypatch.setattr(orchestrator, "draft_interest_from_messages", _fake_draft)
+
+    with TestClient(main.app) as client:
+        client.get("/interests/draft", params={"thread_id": str(uuid.uuid4())})
+
+    # 한 번도 실행 안 된(새로 발급한) thread_id라 체크포인트가 비어있음 — messages=[]로 전달돼야 함
+    assert captured["messages"] == []
 
 
 def test_list_interests_returns_all(monkeypatch):

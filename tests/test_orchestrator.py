@@ -193,3 +193,45 @@ def test_find_duplicate_gracefully_handles_model_failure(monkeypatch):
     dup, tokens = orchestrator._find_duplicate({"title": "x", "looking_for": "y"})
     assert dup is None
     assert tokens["total_tokens"] == 0
+
+
+# --- draft_interest_from_messages() (08-02, 챗 버튼 트리거) ------------------
+
+
+def _fake_draft_result(**draft_fields):
+    return (
+        orchestrator.InterestDraft(**draft_fields),
+        "gemini", [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    )
+
+
+def test_draft_interest_returns_empty_when_no_messages():
+    draft, tokens = orchestrator.draft_interest_from_messages([])
+    assert draft == {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    assert tokens == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
+def test_draft_interest_returns_fields_from_llm(monkeypatch):
+    calls = []
+    def _fake_invoke(model, messages, structured=None):
+        calls.append(structured)
+        return _fake_draft_result(**DRAFT_FIELDS)
+    monkeypatch.setattr(orchestrator, "invoke_with_fallback", _fake_invoke)
+
+    draft, tokens = orchestrator.draft_interest_from_messages([HumanMessage(content="위상 물질 재밌다")])
+
+    assert draft == DRAFT_FIELDS
+    assert tokens["total_tokens"] == 2
+    # should_suggest 판정 없이 곧장 InterestDraft로 물어봄(InterestSuggestion 아님)
+    assert calls == [orchestrator.InterestDraft]
+
+
+def test_draft_interest_continues_when_model_fails(monkeypatch):
+    def _boom(*a, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(orchestrator, "invoke_with_fallback", _boom)
+
+    draft, tokens = orchestrator.draft_interest_from_messages([HumanMessage(content="질문")])
+
+    assert draft == {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    assert tokens["total_tokens"] == 0

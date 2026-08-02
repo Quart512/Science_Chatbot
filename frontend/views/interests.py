@@ -29,15 +29,24 @@ def _to_table_rows(results: list[dict]) -> list[dict]:
     ]
 
 
-# 수동 생성 폼 — 원래 경로는 챗의 제안 흐름(suggest_interest_node가 초안을 만들면
-# "관심사 등록" 버튼으로 저장)이지만 그 버튼이 아직 프론트에 없어, 관리 UI답게
-# 직접 만드는 경로도 같이 둔다.
-with st.expander("새 관심사 만들기"):
+# 수동 생성 폼 — 직접 만드는 경로. 챗 사이드바 "이 대화를 관심사로 등록" 버튼을 누르면
+# GET /interests/draft로 만든 초안이 session_state.interest_draft에 실려 이 페이지로
+# 넘어온다(chat.py 참고). value=로 프리필하면 매 rerun마다 초안 값으로 되돌아가
+# 사용자가 고친 내용이 지워지므로(위젯에 매번 재적용됨), key=로 위젯 자체의 세션 상태에
+# 최초 1회만 심어두고 그 다음부터는 사용자가 고친 값이 그대로 유지되게 한다.
+_draft = st.session_state.pop("interest_draft", None)
+if _draft:
+    st.session_state["create_title"] = _draft.get("title", "")
+    st.session_state["create_looking_for"] = _draft.get("looking_for", "")
+    st.session_state["create_already_known"] = _draft.get("already_known", "")
+    st.session_state["create_excluded_topics"] = _draft.get("excluded_topics", "")
+
+with st.expander("새 관심사 만들기", expanded=bool(_draft)):
     with st.form("create_interest_form", clear_on_submit=True):
-        title = st.text_input("제목")
-        looking_for = st.text_area("찾는 것", height=80)
-        already_known = st.text_area("이미 아는 것", height=80)
-        excluded_topics = st.text_input("제외할 주제")
+        title = st.text_input("제목", key="create_title")
+        looking_for = st.text_area("찾는 것", key="create_looking_for", height=80)
+        already_known = st.text_area("이미 아는 것", key="create_already_known", height=80)
+        excluded_topics = st.text_input("제외할 주제", key="create_excluded_topics")
         create_submitted = st.form_submit_button("만들기")
 
     if create_submitted:

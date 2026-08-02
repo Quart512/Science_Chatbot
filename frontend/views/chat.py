@@ -22,6 +22,24 @@ with st.sidebar:
     effort = st.selectbox("검색/재시도 강도 (effort)", ["low", "medium", "high"], index=1)
     st.caption(f"thread_id: `{st.session_state.thread_id}`")
 
+    st.divider()
+    # 라우터 대신 명시적 버튼(RoadMap "메인 챗 라우터 착수 보류" 08-02 결정) — 클릭
+    # 자체가 의도 신호라 GET /interests/draft가 should_suggest 판정 없이 곧장 초안을
+    # 만든다. 저장은 안 하고 관심사 탭으로 넘겨 폼에서 확인·수정 후 저장하게 한다.
+    if st.button("💡 이 대화를 관심사로 등록"):
+        try:
+            draft_resp = requests.get(
+                f"{BACKEND_URL}/interests/draft",
+                params={"thread_id": st.session_state.thread_id},
+                timeout=60,
+            )
+            draft_resp.raise_for_status()
+        except requests.RequestException as e:
+            st.error(f"초안 생성 실패: {e}")
+        else:
+            st.session_state.interest_draft = draft_resp.json()
+            st.switch_page("views/interests.py")
+
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])

@@ -195,6 +195,55 @@ def suggest_interest_node(state: ParentState, config: RunnableConfig) -> dict:
     return update
 
 
+# 라이브러리의 "관심사로 등록" 버튼(명시적 요청)이 부르는 초안 생성 — 그래프 노드가
+# 아니라 main.py의 GET /interests/draft가 직접 호출하는 평범한 함수다. suggest_interest_node와
+# 로직을 공유하지 않는 이유(RoadMap 08-02 결정): 그쪽의 should_suggest는 "대화에서 이 주제가
+# 반복됐는가"를 판정하는 필드인데, 버튼 클릭 자체가 이미 명시적 의도 신호라 그 판정이 무의미하고
+# 오히려 위험하다 — 한 번만 언급하고 바로 등록해달라고 해도 "반복 안 됨"으로 판정되면
+# InterestSuggestion의 필드 설명("should_suggest가 True일 때만 채워라")대로 LLM이 title 등을
+# 빈 채로 돌려줄 수 있다. 그래서 아예 그 질문을 안 묻는 별도 프롬프트+스키마를 쓴다.
+EXPLICIT_INTEREST_DRAFT_PROMPT = """사용자가 방금 이 대화를 관심사로 등록해달라고 명시적으로
+요청했다. 대화 이력을 보고 title/looking_for/already_known/excluded_topics를 채워라 — 대화에
+실제로 언급된 내용만 쓰고 없는 내용을 추론해서 채우지 마라. 대화가 너무 짧거나 주제가
+불분명하면 title만 대화 맥락에서 최대한 뽑고 나머지는 빈 문자열로 둬라(사용자가 이후 폼에서
+직접 채울 수 있다)."""
+
+
+class InterestDraft(BaseModel):
+    title: str = Field(default="", description="관심사 제목")
+    looking_for: str = Field(default="", description="무엇을 찾고 있는지")
+    already_known: str = Field(default="", description="이미 아는 것")
+    excluded_topics: str = Field(default="", description="제외할 주제")
+
+
+def draft_interest_from_messages(messages: list[BaseMessage]) -> tuple[dict, dict]:
+    """저장은 안 하고 초안만 반환한다 — 저장은 기존 POST /interests가 그대로 담당(재사용).
+    중복 검사도 여기선 안 한다(수동 생성 폼도 원래 안 하던 것 — 단순 경로부터, 필요해지면 추가).
+    반환: (draft dict, 이번 호출에서 쓴 토큰)
+    """
+    zero_tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    empty_draft = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    if not messages:
+        return empty_draft, zero_tokens
+
+    llm_messages = [SystemMessage(content=EXPLICIT_INTEREST_DRAFT_PROMPT)] + messages
+    try:
+        result, _, _, tokens_used = invoke_with_fallback(
+            INTEREST_SUGGESTION_MODEL, llm_messages, structured=InterestDraft
+        )
+    except RuntimeError as e:
+        print(f"관심사 초안 생성 실패: {type(e).__name__}: {e}")
+        return empty_draft, zero_tokens
+
+    draft = {
+        "title": result.title,
+        "looking_for": result.looking_for,
+        "already_known": result.already_known,
+        "excluded_topics": result.excluded_topics,
+    }
+    return draft, tokens_used
+
+
 graph = StateGraph(ParentState)
 graph.add_node("physics_qa", physics_qa_node)
 graph.add_node("suggest_interest", suggest_interest_node)

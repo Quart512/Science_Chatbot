@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -78,6 +79,21 @@ class InterestRegistration(BaseModel):
 @app.get("/interests")
 def list_interests():
     return {"interests": interests.list_interests()}
+
+
+# 챗 사이드바 "관심사로 등록" 버튼이 부르는 엔드포인트 — 저장은 안 하고 초안만 반환한다
+# (라이브러리 관심사 탭의 "새 관심사 만들기" 폼을 이 값으로 프리필한 뒤, 저장은 그 폼이
+# 기존 POST /interests를 그대로 호출). 체크포인트 조회(aget_state)가 AsyncSqliteSaver
+# 전용이라 async def가 필수 — 그 안의 LLM 호출(invoke_with_fallback)은 동기 함수라
+# asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다(/query와 달리 그래프를 안 타므로
+# LangGraph가 알아서 스레드로 돌려주는 처리가 없다).
+@app.get("/interests/draft")
+async def draft_interest(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.graph.aget_state(config)
+    messages = snapshot.values.get("messages", [])
+    draft, _ = await asyncio.to_thread(orchestrator.draft_interest_from_messages, messages)
+    return draft
 
 
 @app.post("/interests")
