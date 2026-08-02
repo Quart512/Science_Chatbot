@@ -5,9 +5,8 @@ from common import BACKEND_URL
 
 st.title("📄 논문")
 
-# 등록 폼 — POST /papers(08-11①)를 그대로 호출한다. doi/arxiv_id는 이 중
-# 있는 것만 넘기면 register_paper()가 우선순위(DOI>arXiv>해시)로 paper_id를
-# 계산한다(paper/paper_id.py) — 둘 다 비워도 파일 해시로 등록은 된다.
+# 등록 폼 — doi/arxiv_id는 있는 것만 넘기면 register_paper()가 우선순위(DOI>arXiv>해시)로
+# paper_id를 계산한다 — 둘 다 비워도 파일 해시로 등록은 된다.
 with st.form("register_paper_form", clear_on_submit=True):
     uploaded = st.file_uploader("PDF 파일", type=["pdf"])
     col1, col2 = st.columns(2)
@@ -55,8 +54,7 @@ if submitted:
 st.divider()
 st.subheader("카탈로그 상태")
 
-# GET /papers(08-11③) — 전역 목록만 가능(관심사별 필터는 interest_paper 조인 테이블
-# 미구현이라 아직 없음, RoadMap "관심사↔논문이 다대다다" 참고).
+# 전역 목록만 가능 — 관심사별 필터는 interest_paper 조인 테이블이 없어 아직 없음(RoadMap 참고).
 try:
     resp = requests.get(f"{BACKEND_URL}/papers", timeout=10)
     resp.raise_for_status()
@@ -65,8 +63,6 @@ except requests.RequestException as e:
     st.error(f"카탈로그 조회 실패: {e}")
 else:
     if papers:
-        # 고정 높이 — 안 주면 논문이 많아질수록 페이지가 계속 늘어난다(interests.py의
-        # RESULTS_TABLE_HEIGHT와 같은 이유).
-        st.dataframe(papers, width="stretch", height=300)
+        st.dataframe(papers, width="stretch", height=300)  # 고정 높이 — 안 그러면 논문이 많아질수록 페이지가 계속 늘어남
     else:
         st.caption("등록된 논문이 없습니다.")

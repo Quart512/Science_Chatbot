@@ -11,23 +11,15 @@ import interests
 from graph import app as physics_qa_app, _add_tokens
 from models import invoke_with_fallback
 
-# =========================================================
-# 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다.
-# 지금은 능력이 물리 QA 하나뿐이라 라우팅 없이 곧장 물리 QA로 감(6-7에서 실제 라우터 추가 예정).
+# 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다. 능력이
+# 물리 QA 하나뿐이라 라우팅 없이 곧장 물리 QA로 간다(추후 라우터 추가 예정).
 #
-# 능력을 부모 노드로 "직접" 꽂지 않고 래퍼 함수에서 invoke()로 입출력을 명시 매핑하는 이유:
-#   - 물리 QA의 State(try_count, tool_rounds, disabled_tools 등)는 그 능력 내부 전용이라
-#     부모가 알 필요도, State 스키마를 공유할 이유도 없음
-#   - messages(add_messages reducer)를 공유하면 능력 내부의 재시도 초안·tool 메시지가
-#     그대로 부모 이력에 섞여버림 — 래퍼가 "이번에 새로 추가된 깨끗한 메시지만" 골라 반환
+# 능력을 부모 노드로 직접 꽂지 않고 래퍼 함수가 invoke()로 입출력을 명시 매핑하는 이유:
+# 능력 내부 State(try_count 등)를 부모가 공유할 이유가 없고, messages를 그냥 공유하면
+# 능력 내부의 재시도 초안·tool 메시지가 부모 이력에 섞인다 — 래퍼가 새 메시지만 골라 반환.
 #
-# [SqliteSaver 영속화, 6-4·07-31] 이 파일은 이제 컴파일된 app이 아니라 컴파일 "전" graph
-# 빌더만 export한다 — 체크포인터 연결(컴파일)은 main.py의 FastAPI lifespan에서 한다.
-# 이유: AsyncSqliteSaver는 비동기 컨텍스트 매니저로 열어야 하는데(아래 CHECKPOINT_DB_PATH
-# 참고), 그 컨텍스트가 살아있는 동안(서버 생명주기)만 유효하다 — 이 모듈을 임포트하는
-# 시점(동기)엔 그 컨텍스트를 열 수 없다. 그래서 "무엇으로 컴파일할지"는 main.py가 결정하고,
-# 이 파일은 "무엇을 컴파일할지"(그래프 구조)만 책임진다.
-# =========================================================
+# 컴파일 전 graph 빌더만 export한다(컴파일=체크포인터 연결은 main.py의 lifespan에서) —
+# AsyncSqliteSaver가 비동기 컨텍스트 매니저라 서버 생명주기에 묶여야 하기 때문.
 
 
 class ParentState(BaseModel):
@@ -45,37 +37,29 @@ class ParentState(BaseModel):
 
 
 def physics_qa_node(state: ParentState) -> dict:
-    # get_stream_writer(): 부모(orchestrator)가 stream_mode="custom"으로 스트리밍될 때만 실제로
-    # 뭔가를 흘려보내는 "쓰기 채널". 일반 invoke()/stream_mode 미사용 호출에서는 그냥 아무 효과 없는
-    # no-op이라 안전 — 그래서 아래 로직이 기존 동기 호출(테스트 등)을 전혀 깨지 않는다.
+    # get_stream_writer()는 stream_mode="custom" 스트리밍 중에만 효과 있는 채널 — 일반
+    # invoke()에서는 no-op이라 기존 동기 호출(테스트 등)을 깨지 않는다.
     writer = get_stream_writer()
 
-    # 능력을 fresh invoke()하는 대신 stream(stream_mode="values")으로 돌린다 — "values"는 매 노드가
-    # 끝날 때마다 그 시점까지의 전체 State를 스냅샷으로 주므로, 마지막 스냅샷은 기존 invoke()의
-    # 반환값과 완전히 동일하다(정확성 그대로 유지). 그 대신 중간 스냅샷들을 이용해 진행 상황을
-    # writer로 부모 스트림에 흘려보낼 수 있다 — trace는 각 노드가 계속 이어붙이는 내부 디버그 로그라
-    # 매번 그 시점 전체를 보내면 "지금까지의 판단 기록"이 그대로 진행 로그가 된다. (comment는 이거랑
-    # 다른 채널 — verify/final_answer가 채우는 "진짜 사용자용 코멘트"라 진행 중엔 안 보내고 최종에만 실어 보냄)
+    # fresh invoke() 대신 stream(stream_mode="values")로 돌려서 마지막 스냅샷(=invoke()
+    # 반환값과 동일)은 유지하되, 중간 스냅샷의 trace를 진행 상황으로 흘려보낸다.
     result = None
     for snapshot in physics_qa_app.stream({
         "question": state.question,
-        "messages": state.messages,          # 지금까지의 대화 이력을 그대로 넘김 (능력 내부에서 단기기억으로 씀)
+        "messages": state.messages,
         "model": state.model,
-        "effort": state.effort,              # low/medium/high 그대로 전달 — 숫자 매핑은 능력 내부(graph.py) 책임
+        "effort": state.effort,
         "disabled_models": state.disabled_models,
-        "turn_start_len": len(state.messages),  # 이 길이 이후가 "이번 호출에서 새로 쌓인 것" — 능력이 알아서 정리해 돌려줌
+        "turn_start_len": len(state.messages),
     }, stream_mode="values"):
         result = snapshot
         writer({"trace": result.get("trace", ""), "final": False})
 
-    # 스트림이 끝났다는 건 final_answer까지 완료됐다는 뜻 — 이번엔 answer+comment(사용자용)까지 실어
-    # "최종 답변 도착"을 final=True로 신호. trace도 마지막 한 번 더 실어서 "판단 과정 보기"가 전체를 볼 수 있게
+    # 스트림 종료 = final_answer 완료 — answer+comment까지 실어 final=True로 신호.
     writer({"trace": result.get("trace", ""), "answer": result["answer"], "comment": result["comment"], "final": True})
 
-    # 능력이 돌려준 messages는 [기존 이력 그대로] + [이번 턴 정리된 질문+최종답변]이므로,
-    # 뒷부분(새로 생긴 것)만 잘라내 부모의 add_messages reducer에 넘긴다 — add_messages는 id 기준
-    # 병합이라 통째로 넘겨도 "중복 append"는 안 되지만(기존 id는 교체될 뿐), 매 턴 안 바뀐 옛
-    # 메시지들까지 매번 교체 시도(내용은 같아 눈에 안 보이는 낭비)하게 되므로 아예 슬라이싱으로 피한다
+    # 능력이 돌려준 messages는 [기존 이력]+[이번 턴 신규]이므로 뒷부분만 잘라 부모의
+    # add_messages reducer에 넘긴다(안 바뀐 옛 메시지까지 매번 교체 시도하는 낭비 방지).
     new_msgs = result["messages"][len(state.messages):]
 
     return {
@@ -87,32 +71,17 @@ def physics_qa_node(state: ParentState) -> dict:
     }
 
 
-# 관심사 등록 제안 훅(08-07 턴 종료 후 훅, 07-31 — 설계 논의 중 재설계) — 물리 QA가 채워진
-# 초안(템플릿)까지 만들어서 보여주고, 사용자는 (a) 다음 채팅에서 "이렇게 고쳐줘"라고 하면
-# 이 노드가 다시 돌아 새 초안을 보여주거나 (b) 프론트의 "관심사 등록" 버튼으로 저장한다.
+# 관심사 등록 제안 훅 — 물리 QA 답변 뒤에 초안(템플릿)을 만들어 보여준다. 사용자는
+# 다음 채팅에서 "이렇게 고쳐줘"라고 하면 이 노드가 다시 돌아 새 초안을 보여주거나,
+# 프론트의 "관심사 등록" 버튼으로 저장한다 — interrupt() 기반 독립 그래프로 갔다가
+# 폐기한 이력이 있다(RoadMap 참고: "이렇게 고쳐줘"는 이미 정상적인 멀티턴 대화라
+# interrupt가 막아주는 문제 자체가 없었음).
 #
-# 당초엔 이 판단+작성+확인을 interrupt() 기반 독립 그래프(문서 작성기)로 만들었었다 —
-# "하나의 작업이 중간에 사람 승인만 받고 이어져야 한다"고 착각했기 때문. 실제로는 그렇지
-# 않다: "이렇게 고쳐줘"는 이미 정상적인 멀티턴 대화(매 턴이 독립된 요청, 대화 이력은 이미
-# 체크포인터가 이어줌)이고, 새 지시가 오면 초안을 "다시 계산"하는 게 정확히 맞는 동작이라
-# interrupt()가 막아주려는 "이전 계산 유실"이 애초에 문제가 아니었다. "등록" 버튼도 그 순간
-# 화면에 보이는 값을 저장하는 평범한 단발 요청일 뿐 재개할 실행이 없다. 그래서 독립
-# 그래프·자체 체크포인터·interrupt를 전부 걷어내고 평범한 노드+평범한 REST 엔드포인트로
-# 다시 짰다(폐기된 interest_writer.py는 삭제 — RoadMap 완료 표에 이력만 남김).
+# physics_qa_node 안이 아니라 별도 노드인 이유: 물리 QA 능력이 관심사 서비스의 존재를
+# 몰라야 한다(캡슐화) — 능력 간 제안·연결은 부모(오케스트레이터)의 책임.
 #
-# physics_qa_node 안이 아니라 별도 노드로 둔 이유는 그대로 유효하다: 물리 QA 능력이
-# "관심사 서비스"라는 다른 능력의 존재를 알 필요가 없어야 한다(캡슐화) — 능력 간 제안·연결은
-# 여러 능력을 다 아는 부모(오케스트레이터)의 책임이다.
-#
-# 매 턴 다시 판정하고 반복 제안을 억제하는 로직은 없다(단순 경로부터, 설계 논의에서
-# 의도적으로 미룸). 판정 자체가 실패해도(모델 전부 소진 등) 원래 답변 흐름은 막지 않는다 —
-# register_paper()의 arxiv 자동 조회 실패 처리와 같은 패턴.
-#
-# SSE로는 별도 청크로 흘려보낸다(07-31, 실사용 테스트로 발견한 문제의 수정) — physics_qa_node가
-# 이미 writer({"final": True, ...})로 답변을 다 흘려보낸 "뒤"에 이 노드가 돈다. "final"의
-# 의미를 "이게 진짜 답변 본문"으로만 쓰고 "스트림이 끝났다"로는 안 쓰기로 하면, 그 뒤에
-# {"suggestion": {...}} 청크를 하나 더 흘려보내도 문제없다 — 프론트는 답변을 먼저 렌더링하고,
-# 뒤이어 도착하는 suggestion 청크로 템플릿+등록 버튼을 이어지는 말풍선처럼 보여주면 된다.
+# SSE는 physics_qa_node의 final=True 청크 "뒤"에 별도 {"suggestion": {...}} 청크로
+# 흘려보낸다 — "final"을 "스트림 종료"가 아니라 "답변 도착"으로만 쓰면 그 뒤에 더 보낼 수 있다.
 INTEREST_SUGGESTION_MODEL = "gemini"
 
 INTEREST_SUGGESTION_PROMPT = """대화 이력을 보고 사용자가 관심사로 등록할 만한 주제를 반복해서
@@ -207,21 +176,16 @@ def suggest_interest_node(state: ParentState, config: RunnableConfig) -> dict:
 
     note = "이 대화 내용을 관심사로 등록해볼까요? 이대로 괜찮으면 아래에서 등록해주세요."
     if duplicate:
-        # comment(비-스트리밍 채널)에도 중복 안내가 그대로 보이게 — draft/duplicate 구조화
-        # 정보는 SSE suggestion 청크에만 실리므로, comment만 보는 호출자도 문맥을 알 수 있게 한다.
+        # comment(비-스트리밍 채널)도 문맥을 알 수 있게 — draft/duplicate 구조화 정보는
+        # SSE suggestion 청크에만 실린다.
         note += f" (비슷한 관심사 '{duplicate['title']}'가 이미 있어요 — 등록하면 그걸 대신 수정할 수도 있어요)"
     update = {
         "tokens_used": _add_tokens(state.tokens_used, tokens_used),
         "comment": f"{state.comment}\n\n{note}" if state.comment else note,
     }
 
-    # comment에도 남기지만(체크포인트·비-스트리밍 호출용), 실시간 스트림에는 physics_qa_node의
-    # "final" 답변 청크가 이미 지나간 뒤라 별도 청크로 흘려보내야 프론트에 실제로 도착한다
-    # (위 모듈 주석 참고). get_stream_writer()는 "그래프 실행 컨텍스트 안"(stream_mode
-    # 무관, invoke()든 stream()이든)이면 항상 안전하지만, 그래프 밖에서 이 노드를 맨
-    # 함수로 직접 부르면(단위 테스트 등) RuntimeError를 던진다(실제 확인) — physics_qa_node의
-    # "no-op이라 안전"이라는 전제는 그래프를 통해 실행될 때만 성립했다. 이 노드는 테스트에서
-    # 맨 함수로 직접 부르는 게 이 저장소 관례라 방어적으로 감싼다.
+    # get_stream_writer()는 그래프 실행 컨텍스트 안에서만 안전 — 이 노드를 테스트에서
+    # 맨 함수로 직접 부르면(이 저장소 관례) RuntimeError가 나서 방어적으로 감싼다.
     try:
         writer = get_stream_writer()
     except RuntimeError:
@@ -238,18 +202,14 @@ graph.add_edge(START, "physics_qa")
 graph.add_edge("physics_qa", "suggest_interest")
 graph.add_edge("suggest_interest", END)
 
-# 단기기억(멀티턴)의 저장소 경로 — 이 파일이 소유(위 모듈 docstring 참고). data/ 디렉터리는
-# chroma_db/와 같은 성격(바인드 마운트로 컨테이너 재시작에도 살아남아야 하는 영속 데이터)이고,
-# 나중에 관심사·실험도구 RDB(앱 데이터, RoadMap "VDB vs RDB" 참고)가 같은 디렉터리에 추가될
-# 예정이라 파일은 분리하되(체크포인트는 LangGraph가 스키마를 관리, 앱 데이터는 우리 것)
-# 디렉터리는 공유한다 — docker-compose.yml/.gitignore/.dockerignore를 디렉터리 단위로
-# 한 번만 설정해두면 나중에 앱 DB 파일이 추가돼도 그 설정들을 다시 안 고쳐도 된다.
+# 단기기억(멀티턴) 저장소 경로 — data/ 디렉터리는 chroma_db/와 같은 성격(바인드 마운트로
+# 재시작에도 살아남는 영속 데이터). 앱 데이터 DB(관심사 등)와 파일은 분리하되 디렉터리는
+# 공유(docker-compose.yml/.gitignore 설정을 한 번만 하면 되게).
 CHECKPOINT_DB_PATH = "data/checkpoints.sqlite"
 
 if __name__ == "__main__":
-    # 터미널 스모크 테스트 — main.py의 FastAPI lifespan과 정확히 같은 방식(AsyncSqliteSaver)으로
-    # 컴파일해서, 이 파일만 실행해도 실제 영속화 경로를 검증할 수 있게 한다. 같은 thread_id로
-    # 두 번 실행해보면 재시작 후에도 대화가 이어지는지(디스크 파일에 남아있는지) 확인 가능.
+    # 터미널 스모크 테스트 — main.py의 lifespan과 같은 방식(AsyncSqliteSaver)으로 컴파일해
+    # 실제 영속화 경로를 검증한다. 같은 thread_id로 두 번 실행하면 재시작 후에도 대화가 이어지는지 확인 가능.
     import asyncio
     import os
 

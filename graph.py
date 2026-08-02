@@ -15,53 +15,33 @@ from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
 from paper import paper_ingest
 
-# =========================================================
-# Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력 (서브그래프)
-#   retrieve(검색) -> generate(답변 생성) -(tool_calls 있으면)-> tools(실행) -> generate 루프
-#   -(없으면)-> verify(자체 검증) -> route_by_fix 분기:
-#      문제없거나 limit 도달 시 종료 / 컨텍스트 부족하면 retrieve로 / 아니면 generate 재시도
-#   tool 예외처리: 실패도 반드시 ToolMessage로 응답(API 요구사항) -> LLM이 다음 라운드에
-#   에러를 읽고 자가수정. 연속 2회 실패한 tool은 disabled_tools로 이번 런에서 제외(서킷 브레이커)
-#
-#   [아키텍처 개편] 이 그래프는 이제 checkpointer를 직접 갖지 않는다 — 매번 orchestrator.py의
-#   래퍼 노드가 fresh하게 .invoke()로 호출한다. 턴 경계(예전 reset_turn)도 부모(orchestrator) 소속.
-#   fresh invoke이므로 messages 외 필드는 Pydantic 기본값으로 이미 "리셋된" 상태로 시작함 —
-#   reset_turn이 하던 일 대부분이 필요 없어짐. 다만 turn_start_len만은 호출자가
-#   len(messages)로 명시적으로 넘겨줘야 함(이번 호출에서 새로 쌓인 메시지 경계).
-# =========================================================
+# Self-RAG 스타일 에이전틱 RAG 그래프 — "물리 QA" 능력(서브그래프).
+#   retrieve → generate -(tool_calls)→ run_tools → generate 루프 -(없으면)→ verify
+#   → route_by_fix: 문제없거나 limit 도달 시 종료 / 컨텍스트 부족하면 retrieve / 아니면 generate 재시도.
+# checkpointer는 없다 — orchestrator.py가 매번 fresh하게 invoke하는 능력이라 messages 외
+# 필드는 Pydantic 기본값으로 항상 리셋된 상태로 시작한다. turn_start_len만 호출자가
+# len(messages)로 명시 전달(이번 호출에서 새로 쌓인 메시지 경계).
 
 
-# 여러 노드에 걸쳐 tokens_used를 계속 더해 넣을 때 쓰는 헬퍼.
-# current(state.tokens_used)는 Pydantic default_factory가 키를 보장해주지만,
-# new(LLM provider가 반환한 usage_metadata)는 우리가 통제 못 하는 외부 값이라
-# 키가 다르거나 없을 수 있음 — 그래서 new 쪽을 위해 .get(...,0)으로 방어.
-# 합집합이 아니라 이 세 스칼라 키만 골라서 더한다 — provider별로 딸려오는
-# input_token_details(dict) 같은 중첩 세부 항목까지 합치려 하면 int+dict로 터짐
+# tokens_used 누적 헬퍼. new(provider의 usage_metadata)는 통제 밖 값이라 .get(...,0)으로
+# 방어. 이 세 스칼라 키만 더함 — provider별 중첩 세부 항목(dict)까지 합치면 타입 에러.
 TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
 
 def _add_tokens(current: dict, new: dict) -> dict:
     return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
 
 
-# effort(low/medium/high) -> 실제 top_k/limit 매핑. "얼마나 검색을 넓게 하고 몇 번까지 재시도할지"는
-# 이 능력(물리 QA)만 아는 내부 지식이라 여기 둔다 — 호출자(orchestrator)는 effort 이름만 넘기고
-# 실제 숫자는 몰라도 된다. 다른 능력이 생기면 그 능력은 자기만의 프로필을 따로 가질 수 있음
+# effort → 실제 top_k/limit 매핑. 숫자 자체는 이 능력만의 내부 지식이라 여기 둔다 —
+# 호출자(orchestrator)는 이름만 넘긴다.
 EFFORT_PROFILES: dict[str, dict[str, int]] = {
     "low":    {"top_k": 2, "limit": 2},
     "medium": {"top_k": 3, "limit": 4},
     "high":   {"top_k": 5, "limit": 6},
 }
 
-# retrieve()가 feynman·papers를 점수로 병합한 뒤, 같은 paper_id의 문서를 몇 개까지
-# 허용할지(07-28, 리뷰 지적) — 점수 병합만 하면 논문 한 편이 k 슬롯을 전부 차지할 수
-# 있다. 한 논문 내부에 중복 원인이 여러 겹 있기 때문이다: (1) 같은 논문의 summary와
-# fulltext_chunk가 둘 다 검색 대상이라 내용이 구조적으로 겹치고, (2)
-# paper_chunking.split_for_embedding()의 chunk_overlap=50 때문에 인접 청크가 텍스트를
-# 공유하고, (3) 한 논문의 여러 청크가 같은 주장을 반복 서술하는 경우가 흔하다.
-# effort="low"(top_k=2)에서 관련 논문 한 편만 등록돼 있어도 context가 그 논문의
-# summary+청크 하나로 다 채워지고 feynman 문서가 0개가 될 수 있다(eval.json 코퍼스엔
-# 논문이 없어 이 문제를 평가가 못 잡음). MAX_CHUNKS_PER_PAPER는 그래서 둔 상한 —
-# feynman 문서는 paper_id가 없으므로 이 제한에 안 걸린다.
+# retrieve()가 feynman·papers를 점수로 병합한 뒤 같은 paper_id 문서를 몇 개까지 허용할지 —
+# 점수 병합만 하면 논문 한 편(summary+fulltext_chunk 중복, chunk_overlap, 반복 서술)이
+# k 슬롯을 다 차지할 수 있다. feynman 문서는 paper_id가 없어 이 제한과 무관.
 MAX_CHUNKS_PER_PAPER = 2
 
 
@@ -103,16 +83,9 @@ class State(BaseModel):
         return self
 
 def _cap_docs_per_paper(scored_sorted: list, k: int, max_per_paper: int = MAX_CHUNKS_PER_PAPER) -> list:
-    """이미 점수순으로 정렬된 (doc, score) 목록에서 상위 k개를 뽑되, 같은 paper_id를
-    가진 문서는 max_per_paper개까지만 담는다(MAX_CHUNKS_PER_PAPER 모듈 상수 참고 —
-    feynman 문서는 metadata에 paper_id가 없어 이 제한과 무관하다).
-
-    캡에 걸려 건너뛴 자리는 그대로 비우지 않고, 정렬 순서상 그다음으로 점수 좋은
-    후보(다른 논문이든 feynman이든)가 자연스럽게 채운다 — "feynman 몫을 최소
-    보장"하는 별도 컬렉션 쿼터는 두지 않는다(07-28, 리뷰 지적: 특정 논문에 관한
-    질문에 feynman 문서를 억지로 끼워 넣으면 07-15에 고친 근접-오검색을 반대
-    방향으로 재현하는 셈이라 오히려 안 하는 게 맞다).
-    """
+    """점수순 정렬된 (doc, score) 목록에서 상위 k개를 뽑되 같은 paper_id는
+    max_per_paper개까지만 담는다. 캡에 걸려 빠진 자리는 다음 순위 후보가 채운다 —
+    "feynman 몫 최소 보장" 같은 컬렉션별 쿼터는 두지 않는다(근접-오검색 재현 위험)."""
     docs = []
     counts: dict[str, int] = {}
     for doc, _score in scored_sorted:
@@ -127,26 +100,15 @@ def _cap_docs_per_paper(scored_sorted: list, k: int, max_per_paper: int = MAX_CH
     return docs
 
 
-# doc_type -> 사용자에게 보여줄 한글 라벨 (07-29, 답변 근거 표시 작업)
 DOC_TYPE_LABELS = {"fulltext_chunk": "전문 발췌", "summary": "요약", "abstract": "초록"}
 
 
 def describe_context_sources(context: list[Document]) -> str:
-    """이번 턴 context에 담긴 문서들의 출처를 사람이 읽을 수 있게 정리한다(07-29,
-    답변 근거 표시 작업) — 메타데이터를 그대로 읽어 정리할 뿐 LLM 판단이 아니다
-    (RoadMap "결정론적으로 계산 가능한 값은 LLM 스키마에 넣지 않는다" 원칙과 같은 이유로
-    verified/final_answer_structure에 필드로 넣지 않고 이 순수 함수로 뺐다).
-
-    "실제로 답변이 근거로 삼았는지"가 아니라 "이번 턴에 참고할 수 있었는지"를 보여준다 —
-    generate()의 시스템 프롬프트가 "문서가 틀렸거나 무관하면 무시해라"를 허용하므로
-    전자는 LLM 판단(비결정론적)이 필요해 이 함수의 책임 밖이다. 논문 관련 정보를
-    "판정"이 아니라 "추출"만 하는 ②a·②b의 원칙과 같은 결.
-
-    논문은 paper_id로 묶어 doc_type이 여러 개 섞여 있으면(같은 논문의 전문 청크와
-    요약이 같이 검색되는 경우가 흔함) 괄호 안에 나열한다. title 메타데이터가 없으면
-    (bibliographic 없이 등록된 논문 — 해시 기반 paper_id라 애초에 title 자체가 없음,
-    paper_ingest.py의 _pick_bib_meta 참고) paper_id를 그대로 표시한다.
-    """
+    """이번 턴 context 문서들의 출처를 정리한다 — 메타데이터만 읽는 순수 함수(LLM
+    판단 아님, "결정론적으로 계산 가능한 값은 LLM 스키마에 넣지 않는다" 원칙).
+    "실제로 답변이 근거로 삼았는지"가 아니라 "참고할 수 있었는지"만 보여준다 —
+    전자는 LLM 판단이 필요해 이 함수 책임 밖이다. 논문은 paper_id로 묶고, title이
+    없으면(해시 기반 paper_id) paper_id를 그대로 표시한다."""
     has_feynman = False
     tool_sources: set[str] = set()
     papers: dict[str, dict] = {}  # paper_id -> {"title": str|None, "doc_types": set[str]}
@@ -183,55 +145,21 @@ def retrieve(state: State) -> dict:
         print(f"질문: {state.question}")
     k = state.top_k + (1 if state.needs_more_context else 0)
 
-    # feynman(물리 강의록)과 papers_vectorstore(②a 논문 라이브러리, paper_ingest.py가 채움)를
-    # 같은 질문으로 둘 다 검색해 "참고"로 붙인다 — 별도 LLM 호출 없이 벡터 검색만으로 되므로
-    # 추가 비용 0(To Do "완성 직후 QA에 참고 부착... 추가 호출 0" 참고).
-    #
-    # 점수 기준으로 병합해 최종 문서 수를 k로 맞춘다(07-28, 리뷰 반영) — 예전엔 두 컬렉션에서
-    # 각각 k개씩 가져와 단순히 이어붙였는데, 그러면 논문이 하나라도 등록된 순간부터 매번
-    # 최대 2k개가 context에 들어갔다. top_k는 effort 프로필이 정하는 비용 다이얼인데
-    # "컬렉션당 몇 개"가 아니라 "총 몇 개의 문서를 볼지"가 원래 의도이므로, 두 컬렉션의
-    # 후보를 유사도 점수 기준 하나의 랭킹으로 합친 뒤 상위 k개만 취한다. 같은 임베딩
-    # 모델(bge-m3)·같은 거리 함수(Chroma 기본 L2, 값이 작을수록 더 유사)를 쓰는 두
-    # 컬렉션이라 점수를 직접 비교해도 된다. 등록된 논문이 없으면(컬렉션이 비어있으면)
-    # papers 쪽 후보가 없을 뿐이라 안전 — feynman 전용이던 기존 동작을 깨지 않는다
-    # (eval.json 평가 코퍼스에는 논문이 등록돼 있지 않으므로 기존 점수도 그대로).
-    #
-    # 단순 점수 병합만으로는 논문 한 편이 k 슬롯을 전부 차지할 수 있다(위
-    # MAX_CHUNKS_PER_PAPER 모듈 상수 참고) — _cap_docs_per_paper()로 paper_id별
-    # 개수를 제한하면서 상위 k개를 뽑는다.
+    # feynman과 papers_vectorstore(②a 논문 라이브러리)를 같이 검색해 "참고"로 붙인다
+    # (벡터 검색만이라 추가 비용 0). top_k는 "총 몇 개를 볼지"이지 컬렉션당 개수가
+    # 아니므로, 같은 임베딩 모델·거리 함수를 쓰는 두 컬렉션의 후보를 점수 기준 하나의
+    # 랭킹으로 합쳐 상위 k개만 취한다 — 그중 같은 paper_id 쏠림은 _cap_docs_per_paper()가 제한.
     feynman_scored = vectorstore.similarity_search_with_score(state.question, k=k)
     paper_scored = papers_vectorstore.similarity_search_with_score(state.question, k=k)
     merged_sorted = sorted(feynman_scored + paper_scored, key=lambda pair: pair[1])
     docs = _cap_docs_per_paper(merged_sorted, k)
 
-    # QA 중 요약 부재 시 전문 청크로 답하고 요약 생성은 백그라운드로(To Do 6-3). "전문
-    # 청크로 답한다" 쪽은 이미 그냥 되는 동작이다 — summary 문서가 없으면 위 유사도 검색이
-    # 애초에 fulltext_chunk만 돌려주기 때문에 이 함수는 항상 하던 대로 답변용 문서를 모을
-    # 뿐이다. 여기서 하는 일은 그 "요약이 아직 없다"는 걸 감지해서 백그라운드 생성을
-    # 트리거하는 것뿐 — 이번 턴 응답을 막지 않는다(paper_ingest.py의
-    # ensure_summary_in_background 모듈 docstring 참고). 후보는 위 점수 병합에서 살아남아
-    # 실제로 이번 context에 들어간 문서만 본다 — 병합에서 밀려난(점수가 낮아 잘린) 논문까지
-    # 백그라운드 생성 대상으로 삼을 이유는 없다. papers_vectorstore를 그대로 넘기는 이유:
-    # 위에서 검색에도 쓴 같은 Chroma 객체라 get/delete/add_texts도 지원한다 — 별도 커넥션을
-    # 새로 만들 필요가 없다. model은 일부러 안 넘긴다(07-28, 리뷰 지적) — 요약은 모든
-    # 사용자·모든 턴이 공유하는 캐시 산출물이라 그 턴에 우연히 고른 state.model(예: 예산이
-    # 작은 Qwen-tuned)을 따라가면 안 된다. paper_ingest.py의 기본값(BACKGROUND_SUMMARY_MODEL,
-    # 예산이 가장 넉넉한 모델로 고정)을 그대로 쓴다.
-    #
-    # 후보 조건은 "paper_id가 있는 모든 문서"다(07-31 수정) — 예전엔 doc_type이
-    # fulltext_chunk인 것만 봤는데, abstract 문서가 생기면서(6-3b①) 구멍이 났다: 한 논문이
-    # 차지할 수 있는 자리는 MAX_CHUNKS_PER_PAPER=2뿐이라, 그 논문 몫이 abstract 문서 하나만
-    # 남는 경우(effort="low"면 top_k=2라 현실적) 논문이 분명히 context에 들어왔는데도 요약
-    # 생성이 시작되지 않았다. abstract 도입 전에는 "논문 등장 = fulltext_chunk 등장"이라
-    # 없던 구멍 — doc_type이 늘어날 때 그걸 걸러야 할 곳 하나가 빠지는 이 저장소의 반복
-    # 패턴이다(07-28 retrieve() 2k 버그와 같은 모양).
-    #
-    # 단, 이번 검색에 summary 문서가 나온 논문은 제외한다 — 그 논문 요약이 이미 있다는
-    # 확실한 증거라 ensure_summary_in_background()를 부를 필요조차 없다(그 함수도 결국
-    # False를 돌려주지만, 그 판정을 위해 _fetch_summary()가 DB를 한 번 조회한다). 공짜로
-    # 아는 건 공짜로 거른다 — _PERMANENTLY_FAILED 검사를 DB 조회보다 앞에 둔 07-28 수정과
-    # 같은 논리.
+    # 요약이 없는 논문은 전문 청크로 답하고(summary 문서가 없으면 검색이 애초에
+    # fulltext_chunk만 반환하므로 별도 처리 불필요) 생성만 백그라운드로 트리거한다
+    # (paper_ingest.ensure_summary_in_background 참고, 이번 턴을 안 막음). 후보는 이번
+    # context에 실제로 들어간 문서만(병합에서 밀린 논문은 대상 아님). model은 state.model이
+    # 아니라 파이프라인 기본값(BACKGROUND_SUMMARY_MODEL)을 씀 — 요약은 전 사용자 공유 캐시.
+    # summary 문서가 이미 나온 논문은 제외(요약 존재의 공짜 증거, DB 재조회 안 함).
     papers_with_summary = {
         d.metadata["paper_id"] for d in docs
         if d.metadata.get("doc_type") == "summary" and "paper_id" in d.metadata
@@ -332,10 +260,9 @@ def run_tools(state: State) -> dict:
     rounds = state.tool_rounds
 
     tool_msgs, tool_docs = [], []
-    attempted = False  # 이번 run_tools() 호출에서 실제로 invoke()를 시도한 tool_call이 하나라도 있었는지
-    # ([한도 초과]/[사용 불가]로 조기 거절된 요청은 실행이 아니므로 라운드 예산을 안 깎음 —
-    #  안 그러면 이미 disabled된 tool을 LLM이 모르고 재요청하는 라운드가 fallback tool이
-    #  실제로 시도될 라운드를 잡아먹어버림, arxiv 서킷 브레이커 케이스에서 실제로 겪음)
+    attempted = False  # 실제 invoke()를 시도한 tool_call이 있었는지 — [한도 초과]/[사용
+    # 불가]로 조기 거절된 요청은 실행이 아니므로 라운드 예산을 안 깎는다(안 그러면
+    # disabled된 tool 재요청이 fallback tool이 시도될 라운드를 잡아먹음)
     for tc in last.tool_calls:
         name, tid = tc["name"], tc["id"]
 
@@ -355,9 +282,6 @@ def run_tools(state: State) -> dict:
             result = str(tool_map[name].invoke(tc["args"]))[:4000]  # 길이 제한: messages+context 이중 반입되므로 토큰 폭발 방지
         except Exception as e:
             failures[name] = failures.get(name, 0) + 1
-            # 실패 1회차부터 바로 콘솔에 실제 예외 내용을 찍음 — 예전엔 서킷 브레이커(2회차)가
-            # 켜질 때만 print해서, 1번만 실패한 경우엔 콘솔에 아무 흔적도 안 남고 SSE trace를
-            # 뒤져야만 원인을 알 수 있었음(예: arxiv ReadTimeout 디버깅 때 겪음)
             print(f"tool '{name}' 실패({failures[name]}회차): {type(e).__name__}: {e}")
             if failures[name] >= 2 and name not in disabled:  # 서킷 브레이커
                 disabled.append(name)
@@ -432,8 +356,7 @@ def verify(state: State) ->dict:
             "disabled_models" : state.disabled_models+ [state.generated_by],
             "trace" : state.trace+
             f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략""",
-            # 검증을 아예 못 했다는 건 트레이스 뒤에 숨길 일이 아니라 사용자도 알아야 할 진짜 주의점
-            "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}
+            "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}  # 사용자도 알아야 할 진짜 주의점
         
     # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
     # 필드 간 불일치에 대한 안전망 — false negative(고칠 게 있는데 통과)가 false positive보다 위험
@@ -512,9 +435,8 @@ def final_answer(state: State) ->dict:
         except RuntimeError:
             final_text, comment_text = state.answer, state.comment
 
-    # 답변 근거 표시(07-29) — try_count==1/재시도 두 경로 모두 여기서 한 번만 붙인다.
-    # LLM 호출이 아니라 state.context 메타데이터를 그대로 정리하는 것뿐이라(위
-    # describe_context_sources 참고) 이 분기와 무관하게 추가 비용 0.
+    # 답변 근거 표시 — 두 경로(try_count==1/재시도) 모두 여기서 한 번만 붙인다.
+    # LLM 호출 아님(메타데이터 정리만, describe_context_sources 참고), 추가 비용 0.
     source_note = describe_context_sources(state.context)
     if source_note:
         comment_text = f"{comment_text}\n\n참고한 자료:\n{source_note}" if comment_text else f"참고한 자료:\n{source_note}"

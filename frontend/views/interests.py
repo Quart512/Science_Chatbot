@@ -5,23 +5,17 @@ from common import BACKEND_URL
 
 st.title("🔬 관심사")
 
-# 검색 페이지 크기 — 백엔드 recommend_for_interest()의 max_results 기본값(5)과 맞춘다.
-# "추가 검색"이 start를 이 값만큼씩 밀어야 다음 페이지를 이어받는다(arxiv_api.py의
-# start 오프셋 참고) — 요청마다 max_results를 명시하지 않고 백엔드 기본값에 맡기는
-# 대신, 오프셋 계산용으로만 이 상수를 프론트에도 둔다.
+# 백엔드 recommend_for_interest()의 max_results 기본값(5)과 맞춘 페이지 크기 —
+# "추가 검색"이 start를 이만큼씩 밀어야 다음 페이지를 이어받는다.
 SEARCH_PAGE_SIZE = 5
 
-# 검색 결과 테이블 높이(08-11①, 사용자 지적) — 지정 안 하면 st.dataframe이 행 수만큼
-# 페이지를 계속 늘어뜨린다. 고정 높이를 주면 내부 스크롤로 바뀐다.
+# 지정 안 하면 st.dataframe이 행 수만큼 페이지를 계속 늘어뜨린다 — 고정 높이로 내부 스크롤.
 RESULTS_TABLE_HEIGHT = 300
 
 
 def _to_table_rows(results: list[dict]) -> list[dict]:
-    """스크리닝 결과를 화면 표시용으로 다듬는다 — abstract/tokens_used(길거나 내부용)는
-    빼고, "관련 있음" O/X 컬럼 대신 순위 번호를 붙인다(사용자 지적: 이미 관련도순으로
-    정렬돼 오는데 O/X까지 있으면 중복 정보). 순위는 이 리스트의 현재 순서를 그대로
-    따른다 — paper_recommend.py가 관련도만으로 정렬해 넘겨준 순서(관련 있음이 앞,
-    그 안에서는 검색 엔진 원래 순서 유지)를 그대로 신뢰한다."""
+    """스크리닝 결과를 화면 표시용으로 다듬는다 — abstract/tokens_used는 빼고, 이미
+    관련도순으로 정렬돼 오는 순서를 그대로 신뢰해 O/X 대신 순위 번호를 붙인다."""
     return [
         {
             "순위": i + 1,
@@ -35,11 +29,9 @@ def _to_table_rows(results: list[dict]) -> list[dict]:
     ]
 
 
-# 수동 생성 폼 — 관심사를 만드는 원래 경로는 챗의 제안 흐름(orchestrator.py의
-# suggest_interest_node가 초안을 만들면 "관심사 등록" 버튼으로 저장)이지만, 그 버튼은
-# 아직 프론트에 안 붙어 있다(08-10/향후 과제). 그때까지 이 화면만으로는 테스트할
-# 관심사가 하나도 안 생기므로, 관리 UI답게 직접 만드는 경로도 같이 둔다 —
-# POST /interests(08-07 호출 경로)를 그대로 호출.
+# 수동 생성 폼 — 원래 경로는 챗의 제안 흐름(suggest_interest_node가 초안을 만들면
+# "관심사 등록" 버튼으로 저장)이지만 그 버튼이 아직 프론트에 없어, 관리 UI답게
+# 직접 만드는 경로도 같이 둔다.
 with st.expander("새 관심사 만들기"):
     with st.form("create_interest_form", clear_on_submit=True):
         title = st.text_input("제목")
@@ -83,8 +75,8 @@ if not interest_list:
     st.caption("등록된 관심사가 없습니다.")
 
 # 카드별 수정/삭제/검색. 보유/권위 논문 목록은 아직 못 붙인다 — interest_paper 조인
-# 테이블이 없어 "이 관심사의" 논문을 못 특정한다(RoadMap "관심사↔논문이 다대다다"
-# 열린 질문). 지금은 검색 버튼을 누른 그 순간의 반환 목록만 세션에 쌓아 보여준다.
+# 테이블이 없어 "이 관심사의" 논문을 못 특정한다(RoadMap 참고). 지금은 검색 버튼을
+# 누른 그 순간의 반환 목록만 세션에 쌓아 보여준다.
 for interest in interest_list:
     interest_id = interest["id"]
     results_key = f"results_{interest_id}"
@@ -96,9 +88,8 @@ for interest in interest_list:
             st.caption(f"찾는 것: {interest['looking_for']}")
 
         # 수정 폼 — POST /interests에 update_existing_id를 실어 보내면 새로 안 만들고
-        # 그 id를 갱신한다(08-07 호출 경로, 그대로 재사용). 저장되면 이전에 쌓아둔
-        # 검색 결과를 버리지 않고 POST /interests/{id}/refresh로 새 기준 재스크리닝
-        # +재검색을 자동으로 한 번 돌린다(아래 저장 성공 분기 참고, 08-11②).
+        # 그 id를 갱신한다. 저장되면 이전에 쌓아둔 검색 결과를 버리지 않고
+        # POST /interests/{id}/refresh로 새 기준 재스크리닝+재검색을 자동으로 돌린다.
         with st.expander("수정"):
             with st.form(f"edit_interest_form_{interest_id}"):
                 edit_title = st.text_input("제목", value=interest["title"])
@@ -127,12 +118,10 @@ for interest in interest_list:
                     except requests.RequestException as e:
                         st.error(f"수정 실패: {e}")
                     else:
-                        # 수정 직후 자동 재검색(08-11②, 사용자 지적으로 부활) — "수정이
-                        # 큰 변화가 아닐 수도 있다"는 전제로, 기존에 쌓아둔 후보를
-                        # 버리지 않고 새 기준으로 재스크리닝해 관련 있는 것만 남긴
-                        # 뒤 새 페이지 검색과 합친다(POST /interests/{id}/refresh,
-                        # paper_recommend.refresh_for_interest() 참고). 결과 없이
-                        # 수정만 한 카드는 재활용할 기존 후보가 없을 뿐 그대로 동작.
+                        # 수정이 큰 변화가 아닐 수도 있으니 기존 후보를 버리지 않고
+                        # 새 기준으로 재스크리닝해 관련 있는 것만 남긴 뒤 새 페이지
+                        # 검색과 합친다(refresh_for_interest() 참고). 결과 없이 수정만
+                        # 한 카드는 재활용할 기존 후보가 없을 뿐 그대로 동작.
                         with st.spinner("관심사가 바뀌어 다시 검색 중..."):
                             try:
                                 refresh_resp = requests.post(
@@ -162,11 +151,9 @@ for interest in interest_list:
                 st.session_state.pop(offset_key, None)
                 st.rerun()
 
-        # 검색/추가 검색 통합 버튼(08-11②, 사용자 지적) — 별도 버튼 두 개가 아니라
-        # 하나의 버튼이 상태에 따라 라벨과 동작을 바꾼다: 이 카드에 쌓인 결과가 아직
-        # 없으면 "지금 검색"(start=0으로 처음 검색), 이미 있으면 "추가 검색"(start=
-        # offset부터 이어서 검색해 기존 목록에 병합) — 관련도만 기준으로 재정렬한다
-        # (peer_review/인용수/연도는 정렬에 안 씀, "스크리닝 축을 합치지 않는다" 원칙).
+        # 검색/추가 검색 통합 버튼 — 하나의 버튼이 상태에 따라 라벨과 동작을 바꾼다:
+        # 쌓인 결과가 없으면 "지금 검색"(start=0), 있으면 "추가 검색"(start=offset부터
+        # 이어서 검색해 병합). 정렬은 관련도만 기준(peer_review/인용수/연도는 안 씀).
         has_results = results_key in st.session_state
         button_label = "추가 검색" if has_results else "지금 검색"
         if col_search.button(button_label, key=f"search_{interest_id}"):

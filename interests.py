@@ -1,20 +1,7 @@
-# =========================================================
-# 관심사 저장소(①) — RDB(SQLite). RoadMap "VDB vs RDB" 설계 노트 참고: 필드 단위 수정이
-# 흔하고(문서 작성기의 "기존 편집 제안") 논문 카탈로그와 다대다 조인이 필요해서(관심사
-# 카드별 보유·추천·권위 논문 목록) VDB가 아니라 RDB로 결정됐다.
-#
-# data/app.db에 저장한다 — orchestrator.py의 CHECKPOINT_DB_PATH(체크포인트)와 파일을
-# 분리하되(전자는 LangGraph가 스키마 관리, 이건 우리 스키마) 같은 data/ 디렉터리를 쓴다
-# (chroma_db/와 같은 패턴, RoadMap "파일 배치" 참고). 실험도구(⑤)·논문 카탈로그도 결국
-# RDB로 이 파일에 합류할 예정이라 도메인마다 DB 파일을 쪼개지 않는다 — 관심사↔논문
-# 카탈로그처럼 조인이 필요한 관계가 이미 예정돼 있는데, SQLite는 파일이 다르면 조인이
-# 번거로워진다(ATTACH 필요). 테이블 하나뿐인 지금은 SQLAlchemy 같은 ORM 없이 표준
-# 라이브러리 sqlite3로 충분하다(단순 경로부터) — 나중에 조인·마이그레이션이 복잡해지면
-# 재검토.
-#
-# 테스트 방식: Chroma를 흉내낸 FakeVectorstore 같은 가짜가 필요 없다 — sqlite3는
-# ":memory:"로 열면 진짜 DB가 밀리초 단위로 돈다(tests/test_interests.py 참고).
-# =========================================================
+# 관심사 저장소(①) — RDB(SQLite). 필드 단위 수정이 흔하고 논문 카탈로그와 조인이
+# 필요해서 VDB 대신 RDB로 결정(RoadMap "VDB vs RDB" 참고). data/app.db에 저장 —
+# 체크포인트 DB와 파일은 분리하되 같은 data/ 디렉터리 공유. 테이블 하나뿐이라
+# ORM 없이 표준 라이브러리 sqlite3(단순 경로부터).
 
 import os
 import sqlite3
@@ -68,9 +55,7 @@ def create_interest(
     *,
     conn: sqlite3.Connection | None = None,
 ) -> int:
-    """관심사 하나를 등록하고 새 id를 반환한다. conn을 안 넘기면 이 함수가 알아서
-    열고 닫는다(paper_ingest.py의 vectorstore=None 패턴과 같은 결 — 호출자가 커넥션을
-    공유하고 싶을 때만 명시적으로 넘기면 됨)."""
+    """관심사 하나를 등록하고 새 id를 반환한다. conn을 안 넘기면 이 함수가 알아서 열고 닫는다."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
@@ -110,14 +95,9 @@ def get_interest(interest_id: int, *, conn: sqlite3.Connection | None = None) ->
 
 
 def update_interest(interest_id: int, *, conn: sqlite3.Connection | None = None, **fields) -> bool:
-    """주어진 필드만 부분 갱신한다(문서 작성기의 "기존 편집 제안"이 필드 단위로 고치는
-    용도 — VDB였다면 문서 전체를 재구성해야 했을 일). 반환값은 실제로 갱신된 행이
-    있었는지(id가 존재했는지) — 없는 id를 조용히 무시하지 않고 호출자가 알 수 있게 한다.
-
-    _UPDATABLE_FIELDS 밖의 키가 오면 ValueError — 오타(예: "titel")를 조용히 무시하는
-    대신 바로 드러낸다. 필드명이 SQL 문자열에 그대로 들어가므로(값은 파라미터 바인딩,
-    컬럼명은 f-string) 이 화이트리스트 검사가 인젝션 방지 역할도 겸한다.
-    """
+    """주어진 필드만 부분 갱신한다. 반환값은 실제로 갱신된 행이 있었는지(없는 id는
+    조용히 무시하지 않고 알린다). _UPDATABLE_FIELDS 밖의 키는 ValueError — 필드명이
+    SQL에 f-string으로 들어가므로 이 화이트리스트가 인젝션 방지도 겸한다."""
     unknown = set(fields) - set(_UPDATABLE_FIELDS)
     if unknown:
         raise ValueError(f"업데이트할 수 없는 필드: {unknown}")
@@ -138,13 +118,9 @@ def update_interest(interest_id: int, *, conn: sqlite3.Connection | None = None,
 
 
 def delete_interest(interest_id: int, *, conn: sqlite3.Connection | None = None) -> bool:
-    """관심사를 삭제한다. 반환값은 실제로 지워진 행이 있었는지(존재하지 않는 id를
-    조용히 무시하지 않고 호출자가 알 수 있게 한다 — update_interest()와 같은 계약).
-
-    관심사↔논문 조인(interest_paper)이 아직 없어(RoadMap "관심사↔논문이 다대다다"
-    열린 질문) 지금은 이 테이블 행 하나만 지우면 된다 — 조인 테이블이 생기면 그때
-    같이 지울지(CASCADE) 남길지(추천 이력은 살리고 관심사만 지우는 경우)를 다시 정해야 한다.
-    """
+    """관심사를 삭제한다(반환값은 실제로 지워졌는지 — update_interest()와 같은 계약).
+    interest_paper 조인 테이블이 아직 없어 이 행 하나만 지우면 된다(생기면 CASCADE
+    여부를 다시 정해야 함, RoadMap "관심사↔논문이 다대다다" 참고)."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:

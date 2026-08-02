@@ -1,19 +1,7 @@
-# =========================================================
-# 논문 검색 어댑터 — ③ 추천 검색·참고문헌 추천기가 공용으로 쓸 인터페이스(RoadMap "논문
-# 검색 (어댑터)" 참고). 지금은 arxiv_api.py의 arxiv_search()만 뒤에 두지만, 나중에
-# Crossref/OpenAlex로 교체할 때 호출하는 쪽이 이 함수 시그니처만 알면 되도록 격리한다 —
-# pdf_parse.py(PyMuPDF 격리)·arxiv_api.py(langchain_community 우회) 때와 같은 어댑터 패턴.
-#
-# 반환 형태를 paper_catalog.py의 upsert_recommended()가 그대로 받아 쓸 수 있게 맞춘다 —
-# paper_id는 여기서 미리 계산해둔다(paper/paper_id.py, arxiv_id 기준 — doi는 arxiv API가
-# 주면 같이 쓰지만, doi가 있어도 arxiv preprint는 doi가 우선순위상 앞서더라도 실제로는
-# "이 시점에 우리가 아는 게 arxiv_id뿐"인 경우가 대부분이라 결과 확인 후 판단할 것 — 지금은
-# doi가 있으면 doi를 우선 쓴다, normalize_paper_id의 우선순위와 일관되게).
-#
-# citation_count는 항상 None이다 — 계산할 방법이 없다(RoadMap "외부 API는 최종 단계의
-# 어댑터" 참고, OpenAlex 등을 붙이기 전까지는 값을 만들어낼 수 없으므로 빈 채로 둔다).
-# journal_ref는 arxiv_search()가 실제로 채워준다(비어있으면 대부분 preprint 단계).
-# =========================================================
+# 논문 검색 어댑터 — ③ 추천 검색·참고문헌 추천기가 공용으로 쓸 인터페이스. arxiv_api.py의
+# arxiv_search()를 뒤에 두고, 나중에 Crossref/OpenAlex로 교체해도 호출부는 이 함수
+# 시그니처만 알면 되게 격리한다. citation_count는 계산 방법이 없어 항상 None(OpenAlex
+# 등을 붙이기 전까지, RoadMap "외부 API는 최종 단계의 어댑터" 참고).
 
 from arxiv_api import arxiv_search
 from paper.paper_id import normalize_paper_id
