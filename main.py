@@ -60,9 +60,9 @@ async def query(request: Request, body: Query):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-# "관심사 등록" 버튼이 부르는 엔드포인트 — suggest_interest_node가 채팅 답변에 실은
-# 초안을 프론트가 그대로(또는 고쳐서) 돌려보내면 저장. 중복 검사는 제안 시점에 이미
-# 끝나서 여기선 다시 LLM을 안 부른다.
+# "관심사 등록" 버튼(라이브러리 폼)이 부르는 엔드포인트 — GET /interests/draft가 만든
+# 초안을 프론트가 그대로(또는 고쳐서) 돌려보내면 저장. 중복 검사는 없다(08-02에 통째로
+# 삭제 — RoadMap "메인 챗 라우터 착수 보류" 참고).
 #
 # 아래 sqlite3 기반 엔드포인트들은 전부 평범한 def(async 아님) — FastAPI가 스레드풀에서
 # 돌려주므로 짧은 동기 DB 호출도 /query의 이벤트 루프를 막지 않는다.
@@ -87,12 +87,32 @@ def list_interests():
 # 전용이라 async def가 필수 — 그 안의 LLM 호출(invoke_with_fallback)은 동기 함수라
 # asyncio.to_thread로 감싸 이벤트 루프를 막지 않는다(/query와 달리 그래프를 안 타므로
 # LangGraph가 알아서 스레드로 돌려주는 처리가 없다).
+#
+# disabled_models(모델 서킷 브레이커)도 physics_qa_node와 같은 체크포인트에서 읽고 쓴다 —
+# 그래프를 안 타는 1회성 호출이지만 결국 같은 ParentState를 보는 orchestrator 안의
+# 함수이므로, 이미 읽어온 스냅샷에서 같이 꺼내 쓰고(공짜) 갱신됐으면 aupdate_state로
+# 다시 써준다. 그래야 여기서 gemini가 소진됐다는 걸 알아내면 다음 /query 턴이나 다음
+# 클릭이 그 사실을 재발견하지 않고 곧장 claude로 간다.
 @app.get("/interests/draft")
 async def draft_interest(request: Request, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.graph.aget_state(config)
     messages = snapshot.values.get("messages", [])
-    draft, _ = await asyncio.to_thread(orchestrator.draft_interest_from_messages, messages)
+    disabled_models = snapshot.values.get("disabled_models", [])
+    draft, _, updated_disabled_models = await asyncio.to_thread(
+        orchestrator.draft_interest_from_messages, messages, disabled_models
+    )
+    # snapshot.values가 비어있으면(한 번도 /query가 안 돈 thread) ParentState.question이
+    # 없는 상태라 aupdate_state가 다음 태스크를 계산하려다 Pydantic 검증에서 터진다(실제로
+    # 재현·확인함) — 이 경우는 애초에 messages도 비어있어 draft_interest_from_messages가
+    # disabled_models를 안 바꾸므로(빈 메시지면 곧장 반환) 아래 조건에서 자연히 걸러진다.
+    # as_node="__start__"가 필요한 이유도 실제로 재현해서 확인함 — 그래프 노드가 실행한
+    # 게 아니라 값을 직접 주입하는 것이므로 LangGraph가 "어느 노드의 쓰기로 취급할지"를
+    # 스스로 못 정해 as_node 없인 InvalidUpdateError("Ambiguous update")를 던진다.
+    if snapshot.values and updated_disabled_models != disabled_models:
+        await request.app.state.graph.aupdate_state(
+            config, {"disabled_models": updated_disabled_models}, as_node="__start__"
+        )
     return draft
 
 

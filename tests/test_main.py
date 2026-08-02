@@ -4,6 +4,7 @@ interests.py의 CRUD를 몽키패치해 라우팅·분기 로직만 검증 — �
 TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query와 무관한 엔드포인트
 테스트라도 앱을 띄우는 이상 거쳐가는 경로이므로 그대로 둔다(가볍고 실제 파일 I/O만 발생).
 """
+import asyncio
 import uuid
 
 import fitz
@@ -27,7 +28,9 @@ def test_draft_interest_returns_draft_from_orchestrator(monkeypatch):
     fake_draft = {"title": "위상 물질", "looking_for": "", "already_known": "", "excluded_topics": ""}
     monkeypatch.setattr(
         orchestrator, "draft_interest_from_messages",
-        lambda messages: (fake_draft, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}),
+        lambda messages, disabled_models=None: (
+            fake_draft, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, disabled_models or [],
+        ),
     )
 
     with TestClient(main.app) as client:
@@ -39,11 +42,10 @@ def test_draft_interest_returns_draft_from_orchestrator(monkeypatch):
 
 def test_draft_interest_passes_thread_messages_to_orchestrator(monkeypatch):
     captured = {}
-    def _fake_draft(messages):
+    def _fake_draft(messages, disabled_models=None):
         captured["messages"] = messages
-        return {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}, {
-            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
-        }
+        empty = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+        return empty, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, disabled_models or []
     monkeypatch.setattr(orchestrator, "draft_interest_from_messages", _fake_draft)
 
     with TestClient(main.app) as client:
@@ -51,6 +53,53 @@ def test_draft_interest_passes_thread_messages_to_orchestrator(monkeypatch):
 
     # 한 번도 실행 안 된(새로 발급한) thread_id라 체크포인트가 비어있음 — messages=[]로 전달돼야 함
     assert captured["messages"] == []
+
+
+def test_draft_interest_persists_updated_disabled_models(monkeypatch):
+    # physics_qa_node와 공유하는 서킷 브레이커 — 첫 호출에서 갱신한 disabled_models가
+    # 체크포인트에 반영돼(aupdate_state) 같은 thread의 다음 호출에 그대로 읽혀야 한다.
+    seen = []
+    def _fake_draft(messages, disabled_models=None):
+        seen.append(disabled_models)
+        empty = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+        tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        if len(seen) == 1:
+            return empty, tokens, ["gemini"]  # 첫 호출에서 gemini가 소진됐다고 흉내
+        return empty, tokens, disabled_models
+    monkeypatch.setattr(orchestrator, "draft_interest_from_messages", _fake_draft)
+
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    with TestClient(main.app) as client:
+        # 실제로는 /query(물리 QA)가 먼저 돌아 이 thread의 체크포인트를 채워두는데(question 등
+        # ParentState 필수 필드), 여기선 QA 그래프를 실제로 안 돌리고 체크포인트만 직접
+        # 시드해 가볍게 유지한다 — "한 번도 /query가 안 된 thread"는 별개 케이스(아래
+        # test_draft_interest_skips_persist_on_fresh_thread)로 다룬다.
+        asyncio.run(main.app.state.graph.aupdate_state(config, {"question": "테스트"}, as_node="__start__"))
+
+        client.get("/interests/draft", params={"thread_id": thread_id})
+        client.get("/interests/draft", params={"thread_id": thread_id})
+
+    assert seen[0] == []
+    assert seen[1] == ["gemini"]
+
+
+def test_draft_interest_skips_persist_on_fresh_thread(monkeypatch):
+    # 한 번도 /query가 안 된 thread는 체크포인트가 비어있어(ParentState.question 없음)
+    # aupdate_state를 부르면 다음 aget_state가 Pydantic 검증에서 터진다(실제로 재현·확인함) —
+    # 이 가드가 없으면 이 테스트의 두 번째 호출에서 그 예외가 그대로 난다.
+    def _fake_draft(messages, disabled_models=None):
+        empty = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+        return empty, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, ["gemini"]
+    monkeypatch.setattr(orchestrator, "draft_interest_from_messages", _fake_draft)
+
+    thread_id = str(uuid.uuid4())
+    with TestClient(main.app) as client:
+        first = client.get("/interests/draft", params={"thread_id": thread_id})
+        second = client.get("/interests/draft", params={"thread_id": thread_id})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
 
 
 def test_list_interests_returns_all(monkeypatch):
