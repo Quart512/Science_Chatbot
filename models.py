@@ -46,6 +46,12 @@ CONTEXT_BUDGET_CHARS: dict[str, int] = {
     "Qwen-tuned": 6_000,
 }
 
+# 오케스트레이터(orchestrator.py)의 멀티턴 대화 이력 트리밍용 — CONTEXT_BUDGET_CHARS를
+# 그대로 쓰지 않고 절반만 떼어둔다(대략치, 08-13 착수 시 정한 값이라 실측 후 조정 가능).
+# 대화 이력이 예산 전체를 차지하면 같은 호출에 실리는 검색 문서·tool 결과가 들어갈
+# 자리가 없어지므로, 모델 전체 예산과는 별도로 "질문+답변 역사"만을 위한 몫을 둔다.
+MESSAGE_HISTORY_BUDGET_CHARS: dict[str, int] = {model: budget // 2 for model, budget in CONTEXT_BUDGET_CHARS.items()}
+
 
 class ContextBudgetExceeded(Exception):
     """모델별 컨텍스트 예산 초과 예외. invoke_with_fallback()의 fallback 대상 목록에는

@@ -3,11 +3,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, RemoveMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app, _add_tokens
-from models import invoke_with_fallback
+from models import MESSAGE_HISTORY_BUDGET_CHARS, invoke_with_fallback
 
 # 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다. 능력이
 # 물리 QA 하나뿐이라 라우팅 없이 곧장 물리 QA로 간다(추후 라우터 추가 예정).
@@ -34,21 +34,48 @@ class ParentState(BaseModel):
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
 
 
+def _trim_history(messages: list[BaseMessage], model: str) -> tuple[list[BaseMessage], list[BaseMessage]]:
+    """오래된 턴([Human, AI] 쌍 — final_answer의 clean_msgs가 항상 이 짝으로 쌓음)부터
+    모델별 문자 예산(MESSAGE_HISTORY_BUDGET_CHARS)을 넘는 만큼 잘라낸다. 결정론적 문자
+    수 컷을 쓰는 이유(08-13, LLM 요약 대신): 지금 문제 자체가 "비용 관리"인데 요약은
+    LLM 호출을 하나 더 늘려 모순이고, 이 프로젝트가 계속 "판정 대신 계산"을 선호해온
+    결과 예측 가능성도 있다. 최소 마지막 한 턴은 예산을 넘더라도 항상 남긴다 — 직전
+    질문 맥락 없이 답할 수는 없으므로.
+    반환: (남길 메시지, 잘라낼 메시지 — 호출자가 RemoveMessage로 지울 대상)
+    """
+    budget = MESSAGE_HISTORY_BUDGET_CHARS.get(model)
+    if budget is None or len(messages) <= 2:
+        return messages, []
+
+    kept_chars = sum(len(m.content) for m in messages[-2:])
+    keep_from = len(messages) - 2
+    for i in range(len(messages) - 2, 0, -2):
+        pair_chars = sum(len(m.content) for m in messages[i - 2:i])
+        if kept_chars + pair_chars > budget:
+            break
+        kept_chars += pair_chars
+        keep_from = i - 2
+
+    return messages[keep_from:], messages[:keep_from]
+
+
 def physics_qa_node(state: ParentState) -> dict:
     # get_stream_writer()는 stream_mode="custom" 스트리밍 중에만 효과 있는 채널 — 일반
     # invoke()에서는 no-op이라 기존 동기 호출(테스트 등)을 깨지 않는다.
     writer = get_stream_writer()
+
+    kept_messages, removed_messages = _trim_history(state.messages, state.model)
 
     # fresh invoke() 대신 stream(stream_mode="values")로 돌려서 마지막 스냅샷(=invoke()
     # 반환값과 동일)은 유지하되, 중간 스냅샷의 trace를 진행 상황으로 흘려보낸다.
     result = None
     for snapshot in physics_qa_app.stream({
         "question": state.question,
-        "messages": state.messages,
+        "messages": kept_messages,
         "model": state.model,
         "effort": state.effort,
         "disabled_models": state.disabled_models,
-        "turn_start_len": len(state.messages),
+        "turn_start_len": len(kept_messages),
     }, stream_mode="values"):
         result = snapshot
         writer({"trace": result.get("trace", ""), "final": False})
@@ -56,16 +83,19 @@ def physics_qa_node(state: ParentState) -> dict:
     # 스트림 종료 = final_answer 완료 — answer+comment까지 실어 final=True로 신호.
     writer({"trace": result.get("trace", ""), "answer": result["answer"], "comment": result["comment"], "final": True})
 
-    # 능력이 돌려준 messages는 [기존 이력]+[이번 턴 신규]이므로 뒷부분만 잘라 부모의
+    # 능력이 돌려준 messages는 [넘긴 이력]+[이번 턴 신규]이므로 뒷부분만 잘라 부모의
     # add_messages reducer에 넘긴다(안 바뀐 옛 메시지까지 매번 교체 시도하는 낭비 방지).
-    new_msgs = result["messages"][len(state.messages):]
+    # 트리밍으로 잘라낸 옛 메시지는 RemoveMessage로 부모 체크포인트에서도 실제로 지운다 —
+    # 안 그러면 이번 호출엔 안 보냈어도 SQLite 파일 자체는 계속 커진다.
+    new_msgs = result["messages"][len(kept_messages):]
+    prune = [RemoveMessage(id=m.id) for m in removed_messages]
 
     return {
         "answer": result["answer"],
         "comment": result["comment"],
         "tokens_used": _add_tokens(state.tokens_used, result["tokens_used"]),
         "disabled_models": result["disabled_models"],
-        "messages": new_msgs,
+        "messages": prune + new_msgs,
     }
 
 

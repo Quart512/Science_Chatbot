@@ -4,10 +4,19 @@ GET /interests/draft를 통해 호출하는 초안 생성 함수(08-02). 당초 
 (suggest_interest_node, 08-07~07-31)은 이 버튼 방식으로 교체되며 08-02에 삭제됐다 —
 배경은 orchestrator.py의 draft_interest_from_messages 앞 주석 참고. invoke_with_fallback을
 몽키패치해 순수 로직만 검증 — 실제 LLM 호출 없음.
+
+_trim_history() — 08-13 멀티턴 메시지 트리밍의 순수 로직(오래된 [Human, AI] 쌍부터
+문자 예산 초과분을 잘라냄). MESSAGE_HISTORY_BUDGET_CHARS를 몽키패치해 예산을 테스트마다
+통제 가능한 작은 값으로 고정.
 """
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 import orchestrator
+
+
+def _turn(n: int) -> list:
+    # 매 턴 [Human, AI] 2개, 각각 정확히 10자(ASCII) — 예산 계산을 손으로 검증하기 쉽게
+    return [HumanMessage(content=f"h{n:09d}"), AIMessage(content=f"a{n:09d}")]
 
 
 DRAFT_FIELDS = dict(title="위상 물질", looking_for="기초 개념", already_known="", excluded_topics="")
@@ -69,3 +78,61 @@ def test_draft_interest_passes_disabled_models_through(monkeypatch):
 
     assert captured["disabled_models"] == ["claude"]
     assert updated == ["claude", "gemini"]
+
+
+# --- _trim_history() (08-13, 멀티턴 메시지 트리밍) ---------------------------
+
+
+def test_trim_history_no_trim_when_under_budget(monkeypatch):
+    monkeypatch.setattr(orchestrator, "MESSAGE_HISTORY_BUDGET_CHARS", {"gemini": 1000})
+    messages = _turn(1) + _turn(2)
+
+    kept, removed = orchestrator._trim_history(messages, "gemini")
+
+    assert kept == messages
+    assert removed == []
+
+
+def test_trim_history_skips_short_history_regardless_of_budget(monkeypatch):
+    # 메시지가 1턴(2개) 이하면 예산이 아무리 작아도 자를 게 없음(최소 마지막 턴은 항상 남김)
+    monkeypatch.setattr(orchestrator, "MESSAGE_HISTORY_BUDGET_CHARS", {"gemini": 1})
+    messages = _turn(1)
+
+    kept, removed = orchestrator._trim_history(messages, "gemini")
+
+    assert kept == messages
+    assert removed == []
+
+
+def test_trim_history_removes_oldest_turn_first(monkeypatch):
+    # 턴 하나가 20자(Human 10 + AI 10) — 예산 45자면 2턴(40자)은 들어가고 3턴째(60자)부터 넘침
+    monkeypatch.setattr(orchestrator, "MESSAGE_HISTORY_BUDGET_CHARS", {"gemini": 45})
+    turn1, turn2, turn3 = _turn(1), _turn(2), _turn(3)
+    messages = turn1 + turn2 + turn3
+
+    kept, removed = orchestrator._trim_history(messages, "gemini")
+
+    assert removed == turn1  # 가장 오래된 턴만 잘림
+    assert kept == turn2 + turn3
+
+
+def test_trim_history_always_keeps_last_turn_even_over_budget(monkeypatch):
+    # 마지막 턴 하나만으로도 예산(1자)을 넘지만, 직전 맥락 없인 답할 수 없으니 항상 남긴다
+    monkeypatch.setattr(orchestrator, "MESSAGE_HISTORY_BUDGET_CHARS", {"gemini": 1})
+    turn1, turn2 = _turn(1), _turn(2)
+    messages = turn1 + turn2
+
+    kept, removed = orchestrator._trim_history(messages, "gemini")
+
+    assert kept == turn2
+    assert removed == turn1
+
+
+def test_trim_history_skips_when_model_has_no_budget(monkeypatch):
+    monkeypatch.setattr(orchestrator, "MESSAGE_HISTORY_BUDGET_CHARS", {})  # gemini 항목 없음
+    messages = _turn(1) + _turn(2) + _turn(3)
+
+    kept, removed = orchestrator._trim_history(messages, "gemini")
+
+    assert kept == messages
+    assert removed == []
