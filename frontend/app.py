@@ -8,6 +8,7 @@ st.set_page_config(page_title="Science Chatbot", page_icon="🔬")
 
 pages = {
     "메인": [st.Page("views/chat.py", title="챗", icon="💬", default=True)],
+    "연구": [st.Page("views/research.py", title="연구 워크플로우", icon="🧬")],
     "라이브러리": [
         st.Page("views/papers.py", title="논문", icon="📄"),
         st.Page("views/interests.py", title="관심사", icon="🔬"),

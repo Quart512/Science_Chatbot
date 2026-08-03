@@ -1,6 +1,6 @@
 # Science Chatbot — 물리 연구 어시스턴트
 
-실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**다. 현재는 **Self-RAG 물리 QA**(메인 챗) · **논문 파이프라인**(요약기·스크리닝·추천 검색·카탈로그, 라이브러리 화면 포함) · **연구 워크플로우**(가설 수립→실험 설계→실험 운영, 백엔드만)가 동작한다.
+실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**다. 현재는 **Self-RAG 물리 QA**(메인 챗) · **논문 파이프라인**(요약기·스크리닝·추천 검색·카탈로그, 라이브러리 화면 포함) · **연구 워크플로우**(가설 수립→실험 설계→실험 운영→보고서→논문 초안, 화면 포함)가 동작한다.
 
 ## 문서 안내
 
@@ -29,7 +29,7 @@
 | 표면 | 형태 | 내용 |
 |---|---|---|
 | 메인 챗 | 상시 대화형 | 물리 QA(④)만 수행. 당초 얇은 라우터로 QA/문서 작성기 호출/추천 조회를 분기하려 했으나(08-10) 재검토 결과 등록·조회는 라우터가 아니라 각 표면의 버튼·폼이 직접 트리거하는 쪽으로 정리됨(07-24 "등록·조회는 폼+어시스트" 원칙과 일치) — 상세: [docs/RoadMap.md](docs/RoadMap.md) 설계 노트 "메인 챗 라우터 착수 보류" |
-| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면. **백엔드 그래프는 5단계 전부 구현**(`research_workflow.py`, 체크포인트 영속화), 화면은 라이브러리와 함께 |
+| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면(`views/research.py`). **백엔드 그래프 5단계 전부(`research_workflow.py`, 체크포인트 영속화) + 세션 목록(`research_sessions.py`) + 화면까지 구현 완료**(08-04) |
 | 라이브러리 | 관리 UI (탭) | 관심사·논문·실험도구·지식 노트를 등록·조회·관리하는 통합 화면. 관심사 탭: 관심사 카드별 보유/추천/권위 논문 목록 + "지금 검색" 트리거(③). 논문 탭: PDF·DOI·arxiv id 등록 → 전문 인코딩, 요약은 요청 시 생성(②a) (등록의 주 경로 — 메인 챗 붙여넣기는 보조). 편집은 폼 + AI 어시스트(문서 작성기) |
 
 > **후순위 아이디어 — 피드 표면**: 관심사와 무관하게 hype 소식을 cron 크롤링 → 키워드 태깅 → 관심사와 일치하는 키워드를 강조·상단 정렬하는 화면. 방향은 유효하지만 지금 규모(혼자 사용)에 크롤링 인프라와 cron 스케줄러까지 얹는 건 과하다고 판단해 **후순위로 내렸다.** 착수한다면 라이브러리 표면·프론트 스택 전환과 묶어서 UI 작업으로 함께 진행한다. `docs/architecture.png`에는 아직 표면 4개로 그려져 있다 — 다음 아키텍처 변경 때 함께 갱신.
@@ -165,8 +165,9 @@ Science_Chatbot/
 │   ├── test_knowledge_notes.py      # 지식 노트 CRUD — 본문은 SQLite(:memory:), VDB는 FakeVectorstore로 재색인 시점만 확인
 │   ├── test_reference_recommender.py # 참고문헌 추천기 — 보유 VDB 우선/외부 보충 분기, 서킷 브레이커 전파
 │   ├── test_research_workflow.py    # 연구 워크플로우(⑥⑦) 노드 + stage 라우팅(MemorySaver로 5단계 통과)
+│   ├── test_research_sessions.py    # 연구 세션 목록 RDB CRUD (실제 sqlite3 :memory: 연결, PK가 thread_id)
 │   ├── test_orchestrator.py         # 대화 이력 트리밍(_trim_history), 관심사 초안 추출(draft_interest_from_messages)
-│   └── test_main.py                 # POST /interests, /interests/{id}/search, /equipment (TestClient, 몽키패치)
+│   └── test_main.py                 # POST /interests, /interests/{id}/search, /equipment, /research/{id}/advance (TestClient, 몽키패치)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -200,12 +201,14 @@ Science_Chatbot/
 ├── knowledge_notes.py    # 지식 노트 — 본문은 RDB(SQLite, data/app.db 공유), VDB(notes_vectorstore)는 검색용 청크만 담는 disposable 인덱스(수정 시 통째로 재색인)
 ├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
 ├── research_workflow.py  # 연구 워크플로우(⑥⑦) 그래프 — 가설 수립→실험 설계→실험 운영→실험 보고서→논문 초안. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
-├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD)
-├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사/실험도구/지식노트 탭)
+├── research_sessions.py  # 연구 세션 목록(⑥) RDB(SQLite) — data/app.db 공유, PK는 thread_id(호출자가 uuid4() 발급)
+├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD), /research/sessions(+CRUD)·/research/{id}/advance·/research/{id}
+├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 연구 워크플로우 + 라이브러리(논문/관심사/실험도구/지식노트 탭)
 │   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
 │   ├── common.py             # BACKEND_URL 등 공용 설정
 │   └── views/
 │       ├── chat.py               # 메인 챗 화면
+│       ├── research.py           # 연구 워크플로우 화면(08-04) — 세션 사이드바 + 5단계 완료 체크 타임라인 + 다음 단계 선택 패널
 │       ├── papers.py             # 논문 탭 — 등록 폼(POST /papers) + 카탈로그 조회(GET /papers)
 │       ├── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
 │       ├── equipment.py          # 실험도구 탭(08-03) — 카드별 생성/수정/삭제, precautions는 경고 배너로 표시
