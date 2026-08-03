@@ -346,9 +346,9 @@ def test_find_design_references_appends_with_stage_tag(monkeypatch):
 # --- analyze_results() ---------------------------------------------------------
 
 
-def _fake_analysis_result(disabled_models=None, analysis="예측을 지지함", needs_redesign=False):
+def _fake_analysis_result(disabled_models=None, analysis="예측을 지지함", outcome="supported"):
     return (
-        research_workflow.ExperimentAnalysis(analysis=analysis, needs_redesign=needs_redesign),
+        research_workflow.ExperimentAnalysis(analysis=analysis, outcome=outcome),
         "gemini", disabled_models or [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
     )
 
@@ -356,7 +356,7 @@ def _fake_analysis_result(disabled_models=None, analysis="예측을 지지함", 
 def test_analyze_results_returns_structured_fields(monkeypatch):
     monkeypatch.setattr(
         research_workflow, "invoke_with_fallback",
-        lambda *a, **kw: _fake_analysis_result(analysis="예측과 일치", needs_redesign=False),
+        lambda *a, **kw: _fake_analysis_result(analysis="예측과 일치", outcome="supported"),
     )
 
     state = research_workflow.WorkflowState(
@@ -366,7 +366,39 @@ def test_analyze_results_returns_structured_fields(monkeypatch):
     result = research_workflow.analyze_results(state)
 
     assert result["analysis"] == "예측과 일치"
-    assert result["needs_redesign"] is False
+    assert result["outcome"] == "supported"
+
+
+def test_analyze_results_sets_comment_from_outcome_guidance(monkeypatch):
+    # comment는 LLM이 자유롭게 쓴 문장이 아니라 outcome별로 고정된 코드 문구여야 한다
+    # (WorkflowState.comment의 "결정론적 안내" 원칙과 같은 결).
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_analysis_result(outcome="design_flawed"),
+    )
+
+    state = research_workflow.WorkflowState(topic="주제")
+    result = research_workflow.analyze_results(state)
+
+    assert result["comment"] == research_workflow.OUTCOME_GUIDANCE["design_flawed"]
+    assert "재설계" in result["comment"]
+
+
+@pytest.mark.parametrize("outcome", [
+    "supported", "hypothesis_wrong", "design_flawed", "execution_error", "analysis_error",
+])
+def test_analyze_results_every_outcome_has_guidance(monkeypatch, outcome):
+    # ExperimentAnalysis.outcome의 Literal 값 다섯 개가 전부 OUTCOME_GUIDANCE에 있는지 —
+    # 하나라도 빠지면 그 갈래가 나왔을 때 analyze_results가 KeyError로 죽는다.
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_analysis_result(outcome=outcome),
+    )
+
+    state = research_workflow.WorkflowState(topic="주제")
+    result = research_workflow.analyze_results(state)
+
+    assert result["comment"] == research_workflow.OUTCOME_GUIDANCE[outcome]
 
 
 def test_analyze_results_uses_experiment_results_in_prompt(monkeypatch):
@@ -434,6 +466,32 @@ def test_find_operation_references_appends_with_stage_tag(monkeypatch):
     assert result["references"][0]["added_by_stage"] == "operation"
 
 
+def test_find_operation_references_preserves_prior_comment(monkeypatch):
+    # operation 체인은 analyze_results → find_operation_references 순으로 이어진다.
+    # analyze_results가 남긴 갈래별 안내(comment)를 이 노드가 덮어쓰면 사람에게 그
+    # 안내가 아예 전달되지 않는다 — 기존 comment 뒤에 이어붙여야 한다.
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "논문1")]))
+
+    state = research_workflow.WorkflowState(
+        topic="주제", analysis="분석", comment="실험 설계에 문제가 있어 보입니다 — 재설계를 눌러주세요.",
+    )
+    result = research_workflow.find_operation_references(state)
+
+    assert result["comment"].startswith("실험 설계에 문제가 있어 보입니다")
+    assert "선행 연구" in result["comment"]
+
+
+def test_find_hypothesis_references_does_not_prepend_when_no_prior_comment(monkeypatch):
+    # comment가 처음부터 비어 있으면(가설 단계는 analyze_results를 안 거침) 안내 문구
+    # 앞에 빈 줄이 남지 않아야 한다.
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "논문1")]))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert result["comment"].startswith("참고논문을 확인해서")
+
+
 # --- compile_experiment_report() (⑦ 착수, 08-03) --------------------------------
 
 
@@ -446,7 +504,7 @@ def test_compile_experiment_report_includes_all_stage_fields():
         testable_prediction="온도-저항 그래프가 우상향",
         independent_variable="온도", dependent_variable="저항", controlled_variables="시료 순도",
         equipment_needed="온도 조절 장치", procedure="1. 냉각한다\n2. 측정한다",
-        experiment_results="저항이 거의 안 변했다", analysis="예측과 어긋남",
+        experiment_results="저항이 거의 안 변했다", analysis="예측과 어긋남", outcome="execution_error",
     )
     result = research_workflow.compile_experiment_report(state)
     report = result["experiment_report"]
@@ -454,9 +512,18 @@ def test_compile_experiment_report_includes_all_stage_fields():
     for text in [
         "온도가 오르면 저항이 커진다", "금속의 일반적 특성", "온도-저항 그래프가 우상향",
         "온도", "저항", "시료 순도", "온도 조절 장치", "1. 냉각한다\n2. 측정한다",
-        "저항이 거의 안 변했다", "예측과 어긋남",
+        "저항이 거의 안 변했다", "예측과 어긋남", "실행 과정 오류로 추정",
     ]:
         assert text in report
+
+
+def test_compile_experiment_report_labels_unset_outcome():
+    # analyze_results를 아직 안 거친 상태(outcome="")로 report를 만들면 빈 라벨 대신
+    # "미분석"임을 명시해야 한다 — 빈 문자열을 그냥 이어붙이면 무슨 값인지 안 보임.
+    state = research_workflow.WorkflowState(topic="주제")
+    result = research_workflow.compile_experiment_report(state)
+
+    assert "(미분석)" in result["experiment_report"]
 
 
 def test_compile_experiment_report_makes_no_llm_call(monkeypatch):
@@ -517,7 +584,7 @@ def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatc
 
     monkeypatch.setattr(
         research_workflow, "invoke_with_fallback",
-        lambda *a, **kw: _fake_analysis_result(analysis="어긋남", needs_redesign=True),
+        lambda *a, **kw: _fake_analysis_result(analysis="어긋남", outcome="design_flawed"),
     )
 
     third = app.invoke(
@@ -525,9 +592,12 @@ def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatc
     )
 
     assert third["analysis"] == "어긋남"
-    assert third["needs_redesign"] is True
+    assert third["outcome"] == "design_flawed"
     assert third["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # 2단계 값도 여전히 보임
     assert third["experiment_results"] == "저항이 거의 안 변했다"
+    # analyze_results가 남긴 갈래별 안내가 뒤이은 find_operation_references에 덮어써지지
+    # 않고 앞부분에 그대로 남아 있어야 한다.
+    assert third["comment"].startswith("실험 설계에 문제가 있어 보입니다")
 
     # report 단계는 LLM 호출이 없으므로 몽키패치를 안 갈아끼워도 된다 — invoke_with_fallback이
     # 실제로 안 불린다는 것 자체가 이 전환의 검증 포인트.
@@ -536,6 +606,7 @@ def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatc
     assert "가설X" in fourth["experiment_report"]  # 1단계 값
     assert "1. 시료를 냉각한다" in fourth["experiment_report"]  # 2단계 값
     assert "어긋남" in fourth["experiment_report"]  # 3단계 값
+    assert "설계 결함으로 추정" in fourth["experiment_report"]  # outcome 라벨
 
 
 # --- check_equipment_precautions() (안전 가드레일, 08-02) ----------------------

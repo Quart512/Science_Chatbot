@@ -61,11 +61,19 @@ class WorkflowState(BaseModel):
     equipment_needed: str = ""
     procedure: str = ""
     # 실험 운영 단계 — experiment_results는 사용자가 실제로 실험을 하고 와서 입력하는
-    # 값이라 LLM이 만들지 않는다(가설/설계와 성격이 다름). analysis/needs_redesign은
+    # 값이라 LLM이 만들지 않는다(가설/설계와 성격이 다름). analysis/outcome은
     # 그 결과를 testable_prediction과 비교해 LLM이 뽑는다.
     experiment_results: str = ""
     analysis: str = ""
-    needs_redesign: bool = False
+    # 결과가 예측과 어긋났을 때 "왜"를 구분한다(08-03, 사용자 지적) — 예전엔
+    # needs_redesign: bool 하나뿐이라 "재설계해야 하는가"만 답했는데, 실제로 재실험을
+    # 요청하는 이유가 갈래마다 다르고 사람이 다음에 할 일도 다르다: 가설의 전제 자체가
+    # 틀렸으면 가설부터, 설계가 가설을 제대로 못 검증했으면 재설계, 실행 과정 문제면
+    # 같은 설계로 재실행, 결과 서술이 불충분해 판단이 어려우면 재분석만 하면 된다.
+    # needs_redesign은 outcome != "supported"로 100% 파생되는 값이라 따로 안 둔다.
+    # Literal로 안 하고 str인 이유: 분석 전 기본값("")이 이 다섯 값 중 어디에도 속하지
+    # 않는 "아직 없음" 상태라 — WorkflowState의 다른 결과 필드(hypothesis 등)와 같은 패턴.
+    outcome: str = ""
     # 실험 보고서(⑦ 착수, 08-03) — LLM 호출 없이 위 필드들을 헤더 붙여 이어붙인 결정론적
     # 산출물(compile_experiment_report 참고). 논문 작성 단계는 5개 필드를 따로 읽는 대신
     # 이 하나만 읽는다 — 인터페이스가 단순해지고, 자체 검토(Evaluator-Optimizer)가 초안을
@@ -140,8 +148,15 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
     이 노드는 워크플로우에서 LLM을 가장 많이 부르는 지점(검색어 추출 1 + 스크리닝 N)이라
     disabled_models·tokens_used도 다른 노드와 똑같이 State에 반영한다 — 안 하면 앞
     단계에서 죽은 모델을 여기서 매 후보마다 다시 때려본다.
+
+    comment는 기존 값을 지우지 않고 뒤에 이어붙인다(check_equipment_precautions와 같은
+    합성 패턴, 방향만 반대) — operation 체인에서 이 노드 앞에 analyze_results가 갈래별
+    안내를 이미 남겨두는데, 여기서 덮어쓰면 그 안내가 다음 노드로 못 넘어간다.
     """
     def node(state: WorkflowState) -> dict:
+        def _with_prior_comment(text: str) -> str:
+            return f"{state.comment}\n\n{text}" if state.comment else text
+
         try:
             found, disabled_models, tokens_used = reference_recommender.recommend_references(
                 get_text(state), disabled_models=state.disabled_models
@@ -151,7 +166,7 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
             # 실패해도 disabled_models는 못 건진다 — 예외를 던진 시점의 갱신값이 호출
             # 스택과 함께 사라지기 때문(살리려면 예외에 실어 보내야 하는데, 그건 정상
             # 경로가 아닌 곳에 데이터를 태우는 설계라 안 한다). 다음 단계가 다시 판단한다.
-            return {"comment": "참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요."}
+            return {"comment": _with_prior_comment("참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요.")}
 
         existing_ids = {r["paper_id"] for r in state.references}
         new_entries = [
@@ -168,7 +183,7 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
 
         return {
             "references": state.references + new_entries,
-            "comment": comment,
+            "comment": _with_prior_comment(comment),
             "disabled_models": disabled_models,
             "tokens_used": add_tokens(state.tokens_used, tokens_used),
         }
@@ -229,14 +244,49 @@ def design_experiment(state: WorkflowState) -> dict:
 
 EXPERIMENT_ANALYSIS_SYSTEM_PROMPT = """가설·예측·실험 절차와 사용자가 보고한 실제
 실험 결과를 비교해서 분석해라. 결과가 예측(testable_prediction)을 지지하는지,
-반박하는지, 판단하기엔 불충분한지 이유와 함께 적어라. 결과가 예측과 어긋나거나
-결론을 내리기에 불충분하면(측정 오류·통제 미흡 등) 재설계가 필요하다고 판단해라 —
-애매하면 재설계 권장 쪽으로(잘못된 결론을 그대로 받아들이는 것보다 안전하다)."""
+반박하는지, 판단하기엔 불충분한지 이유와 함께 적어라.
+
+지지하지 않는다면(반박·불충분 모두 포함) 그 이유를 아래 네 갈래 중 가장 가능성 높은
+하나로 분류해라 — 갈래마다 사용자가 다음에 해야 할 일이 다르므로 애매해도 반드시
+하나를 골라라:
+- hypothesis_wrong: 가설의 전제(이론) 자체가 틀렸다고 보인다
+- design_flawed: 전제는 맞지만 실험 설계(변수·통제·측정 방식)가 가설을 제대로 검증하지 못한다
+- execution_error: 설계는 맞지만 실행 과정에서 오류가 있었다고 보인다(오염·조작 실수 등)
+- analysis_error: 실험 자체엔 문제가 없어 보이나 결과 서술이 불충분해 판단하기 어렵다
+
+analysis에 분류 근거도 함께 적어라(별도 필드로 안 나눔 — 같은 이유를 두 번 쓰게 되는
+낭비를 피한다)."""
 
 
 class ExperimentAnalysis(BaseModel):
-    analysis: str = Field(description="결과가 예측을 지지/반박/불충분한지와 그 이유")
-    needs_redesign: bool = Field(description="실험을 다시 설계해야 하면 True")
+    analysis: str = Field(description="결과가 예측을 지지/반박/불충분한지와 그 이유, 반박·불충분이면 outcome 분류 근거도 포함")
+    outcome: Literal["supported", "hypothesis_wrong", "design_flawed", "execution_error", "analysis_error"] = Field(
+        description="예측을 지지하면 supported, 아니면 네 갈래 중 가장 가능성 높은 원인 하나"
+    )
+
+
+# analyze_results가 채우는 comment — LLM이 자유롭게 쓰지 않고 코드가 고정 문구로 채운다
+# (WorkflowState.comment 필드 설명과 같은 원칙: "결정론적 안내 문구... LLM이 아니라
+# 코드가 채움"). outcome 값 자체는 LLM 판정이지만, 그 판정에 사람이 뭘 해야 하는지
+# 안내하는 문장은 결정론적으로 고정해서 모델·문구 변동과 무관하게 일관되게 만든다.
+OUTCOME_GUIDANCE = {
+    "supported": "예측이 지지됐습니다.",
+    "hypothesis_wrong": "가설의 전제 자체가 틀렸을 수 있습니다 — 가설부터 다시 세우는 걸 권장합니다.",
+    "design_flawed": "실험 설계에 문제가 있어 보입니다 — 재설계를 눌러주세요.",
+    "execution_error": "실행 과정에 문제가 있어 보입니다 — 같은 설계로 다시 실험하고 결과를 입력해주세요.",
+    "analysis_error": "결과가 충분히 전달되지 않았을 수 있습니다 — 결과를 더 구체적으로 적어 다시 제출해주세요.",
+}
+
+# compile_experiment_report()가 보고서 본문에 쓰는 표시용 한글 라벨 — outcome 원값(영문
+# 코드)은 라우팅·비교에 쓰고, 사람이 읽는 문서엔 이 라벨을 쓴다(관심사 다르면 값도 분리).
+OUTCOME_LABELS = {
+    "supported": "예측 지지됨",
+    "hypothesis_wrong": "가설 전제 오류로 추정",
+    "design_flawed": "실험 설계 결함으로 추정",
+    "execution_error": "실행 과정 오류로 추정",
+    "analysis_error": "결과 서술 불충분으로 판단 어려움",
+    "": "(미분석)",
+}
 
 
 def analyze_results(state: WorkflowState) -> dict:
@@ -255,7 +305,8 @@ def analyze_results(state: WorkflowState) -> dict:
     )
     return {
         "analysis": result.analysis,
-        "needs_redesign": result.needs_redesign,
+        "outcome": result.outcome,
+        "comment": OUTCOME_GUIDANCE[result.outcome],
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
     }
@@ -294,7 +345,9 @@ def compile_experiment_report(state: WorkflowState) -> dict:
 {state.experiment_results}
 
 ## 분석
-{state.analysis}"""
+{state.analysis}
+
+판정: {OUTCOME_LABELS.get(state.outcome, state.outcome)}"""
     return {"experiment_report": report}
 
 
@@ -410,7 +463,7 @@ if __name__ == "__main__":
                 config=config,
             )
             print("분석:", final["analysis"])
-            print("재설계 필요:", final["needs_redesign"])
+            print("판정:", final["outcome"], "-", OUTCOME_GUIDANCE[final["outcome"]])
             print("참고문헌(전체):", [r["title"] for r in final["references"]])
             print("안내:", final["comment"])
 
