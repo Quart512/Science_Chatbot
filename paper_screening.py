@@ -11,22 +11,28 @@ from models import invoke_with_fallback
 
 SCREENING_MODEL = "gemini"
 
-RELEVANCE_SYSTEM_PROMPT = """논문 초록과 사용자의 관심사를 비교해서 이 논문이 관심사와
-관련 있는지 판정해라. 관심사의 "찾는 것"에 초점을 맞추고, "이미 아는 것"이나 "제외할
-주제"에만 해당한다면 관련 없음으로 판정해라. 애매하면 관련 있음 쪽으로 — 관련도는
-1차 필터일 뿐이고 최종 판단은 사용자가 한다."""
+RELEVANCE_SYSTEM_PROMPT = """논문 초록과 주어진 주제를 비교해서 이 논문이 주제와 관련
+있는지 판정해라. 주제에 "찾는 것"이 적혀 있다면 거기에 초점을 맞추고, "이미 아는 것"이나
+"제외할 주제"가 적혀 있고 초록이 그것에만 해당한다면 관련 없음으로 판정해라(주제에 그런
+구분이 없으면 이 기준은 그냥 무시해라). 애매하면 관련 있음 쪽으로 — 관련도는 1차
+필터일 뿐이고 최종 판단은 사용자가 한다."""
 
 
 class RelevanceScreen(BaseModel):
-    is_relevant: bool = Field(description="초록이 관심사와 관련 있으면 True")
+    is_relevant: bool = Field(description="초록이 주제와 관련 있으면 True")
     reasoning: str = Field(default="", description="짧은 판단 근거(한 문장)")
 
 
-def screen_candidate(candidate: dict, interest: dict, *, model: str = SCREENING_MODEL) -> dict:
-    """후보 논문 하나를 관심사 기준으로 스크리닝한다.
+def screen_candidate(candidate: dict, topic: str, *, model: str = SCREENING_MODEL) -> dict:
+    """후보 논문 하나를 주어진 주제 기준으로 스크리닝한다.
 
     candidate: paper_search.search_papers() 형태(abstract/journal_ref/year/
-    citation_count 포함). interest: interests.py 관심사 레코드.
+    citation_count 포함). topic: 자유 텍스트 — 관심사 레코드(title/looking_for/
+    already_known/excluded_topics를 호출자가 조립한 텍스트, ③ 추천 검색이 이렇게
+    씀)일 수도, 문장 하나(참고문헌 추천기가 텍스트에서 뽑은 주장)일 수도 있다.
+    이 함수는 그 출처를 몰라도 된다 — 그냥 주어진 텍스트와 초록을 비교할 뿐이다
+    (08-02, 관심사 dict를 통째로 요구하던 걸 문자열로 축소해 여러 호출자가 재사용
+    가능하게 함).
 
     반환: {"paper_id", "is_relevant", "reasoning", "peer_reviewed", "citation_count",
     "year", "tokens_used"}. peer_reviewed는 journal_ref 존재 여부로만 판단(LLM 아님).
@@ -34,15 +40,9 @@ def screen_candidate(candidate: dict, interest: dict, *, model: str = SCREENING_
     판정 실패(모델 소진 등)는 RuntimeError를 그대로 전파 — 여러 후보를 도는 루프에서
     하나가 실패했을 때 어떻게 할지는 호출하는 쪽(③ 추천 검색)의 몫이다.
     """
-    interest_text = (
-        f"제목: {interest.get('title', '')}\n"
-        f"찾는 것: {interest.get('looking_for', '')}\n"
-        f"이미 아는 것: {interest.get('already_known', '')}\n"
-        f"제외할 주제: {interest.get('excluded_topics', '')}"
-    )
     messages = [
         SystemMessage(content=RELEVANCE_SYSTEM_PROMPT),
-        HumanMessage(content=f"관심사:\n{interest_text}\n\n논문 초록:\n{candidate.get('abstract', '')}"),
+        HumanMessage(content=f"주제:\n{topic}\n\n논문 초록:\n{candidate.get('abstract', '')}"),
     ]
     result, _, _, tokens_used = invoke_with_fallback(model, messages, structured=RelevanceScreen)
 
