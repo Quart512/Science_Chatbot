@@ -83,9 +83,10 @@ except requests.RequestException as e:
 if not interest_list:
     st.caption("등록된 관심사가 없습니다.")
 
-# 카드별 수정/삭제/검색. 보유/권위 논문 목록은 아직 못 붙인다 — interest_paper 조인
-# 테이블이 없어 "이 관심사의" 논문을 못 특정한다(RoadMap 참고). 지금은 검색 버튼을
-# 누른 그 순간의 반환 목록만 세션에 쌓아 보여준다.
+# 카드별 수정/삭제/검색 + 보유·추천 논문(interest_paper 조인, 08-03). 검색 버튼을
+# 누른 순간의 반환 목록(세션 임시)과 보유·추천 논문(영구 기록)은 서로 다른 것 —
+# 전자는 이번 세션에서 새로 찾은 후보 전부(관련 없음 포함), 후자는 지금까지
+# 스크리닝된 것 중 관련 있다고 판정된 것만의 누적 기록.
 for interest in interest_list:
     interest_id = interest["id"]
     results_key = f"results_{interest_id}"
@@ -95,6 +96,31 @@ for interest in interest_list:
         st.subheader(interest["title"])
         if interest.get("looking_for"):
             st.caption(f"찾는 것: {interest['looking_for']}")
+
+        # 보유·추천 논문 — interest_paper 조인 테이블에서 이 관심사에 스크리닝된 것 중
+        # 관련 있다고 판정된 것만 가져온다(08-03에 조인 테이블이 생기기 전엔 전역
+        # 목록만 가능했다). 캐시 안 하고 매 rerun마다 새로 조회 — 개인 단일 사용자
+        # 규모라 부담 없고, 카탈로그 상태(recommended→owned 등) 변화를 놓치지 않는다.
+        try:
+            papers_resp = requests.get(
+                f"{BACKEND_URL}/interests/{interest_id}/papers",
+                params={"only_relevant": True},
+                timeout=10,
+            )
+            papers_resp.raise_for_status()
+            owned_papers = papers_resp.json()["papers"]
+        except requests.RequestException as e:
+            st.error(f"보유 논문 조회 실패: {e}")
+            owned_papers = []
+
+        if owned_papers:
+            status_labels = {"recommended": "추천됨", "owned": "보유", "dismissed": "기각됨"}
+            with st.expander(f"보유·추천 논문 ({len(owned_papers)})"):
+                for p in owned_papers:
+                    label = status_labels.get(p.get("status"), p.get("status") or "상태 없음")
+                    st.markdown(f"**{p['title'] or p['paper_id']}** — {label}")
+                    if p.get("reasoning"):
+                        st.caption(p["reasoning"])
 
         # 수정 폼 — POST /interests에 update_existing_id를 실어 보내면 새로 안 만들고
         # 그 id를 갱신한다. 저장되면 이전에 쌓아둔 검색 결과를 버리지 않고

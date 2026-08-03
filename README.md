@@ -124,7 +124,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택. 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(근접-오검색을 반대 방향으로 재현하므로).
 - **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림).
 
-라이브러리 UI(논문 탭·관심사 탭)와 논문 카탈로그(SQLite, `paper_catalog.py`)는 구현됨 — 아래 [API](#api) 참고. **관심사별 보유/추천 논문 필터는 백엔드 완료**(08-03, `interest_paper` 조인 테이블 + `GET /interests/{id}/papers`), **지식 노트도 백엔드 완료**(08-03, `knowledge_notes.py` + `/notes` CRUD) — 둘 다 화면 연결은 아직. 미구현: 실험도구 탭, 지식 노트 탭.
+라이브러리 UI — 논문·관심사·실험도구·지식 노트 4탭 전부 구현됨(08-03에 실험도구·지식 노트 탭 신설 + 관심사 탭에 카드별 보유·추천 논문 표시 연결). 논문 카탈로그(SQLite, `paper_catalog.py`)와 `interest_paper` 조인도 구현 — 아래 [API](#api) 참고.
 
 ## 파일 구조
 
