@@ -82,7 +82,7 @@ def test_screen_candidate_citation_count_stays_none_when_unavailable(monkeypatch
 
 def test_screen_candidate_prompt_includes_topic_and_abstract(monkeypatch):
     captured = {}
-    def _fake_invoke(model, messages, structured=None):
+    def _fake_invoke(model, messages, structured=None, **kw):
         captured["human"] = messages[-1].content
         return _fake_result(True)
     monkeypatch.setattr(paper_screening, "invoke_with_fallback", _fake_invoke)
@@ -97,7 +97,7 @@ def test_screen_candidate_accepts_plain_claim_as_topic(monkeypatch):
     # 관심사 4필드 조립 텍스트가 아니라 문장 하나만 와도 그대로 동작해야 한다 —
     # 참고문헌 추천기가 텍스트에서 뽑은 주장을 넘기는 경로(관심사 dict 불필요).
     captured = {}
-    def _fake_invoke(model, messages, structured=None):
+    def _fake_invoke(model, messages, structured=None, **kw):
         captured["human"] = messages[-1].content
         return _fake_result(True)
     monkeypatch.setattr(paper_screening, "invoke_with_fallback", _fake_invoke)

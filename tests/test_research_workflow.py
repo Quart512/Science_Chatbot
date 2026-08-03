@@ -77,10 +77,20 @@ def _ref(paper_id, title="", source="owned", reasoning=""):
     return {"paper_id": paper_id, "title": title, "source": source, "reasoning": reasoning}
 
 
+_TOKENS = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+
+def _returning(refs, disabled_models=None):
+    """recommend_references 대역 — 계약이 (목록, disabled_models, tokens_used) 3튜플이라
+    테스트마다 튜플을 손으로 쓰지 않게 감싼다. **kw를 받는 이유는 노드가 항상
+    disabled_models=를 키워드로 넘기기 때문."""
+    return lambda text, **kw: (refs, disabled_models or [], _TOKENS)
+
+
 def test_find_hypothesis_references_appends_with_stage_tag(monkeypatch):
     monkeypatch.setattr(
         reference_recommender, "recommend_references",
-        lambda text: [_ref("p1", "논문1"), _ref("p2", "논문2", source="external", reasoning="관련 있음")],
+        _returning([_ref("p1", "논문1"), _ref("p2", "논문2", source="external", reasoning="관련 있음")]),
     )
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설 문장")
@@ -92,9 +102,9 @@ def test_find_hypothesis_references_appends_with_stage_tag(monkeypatch):
 
 def test_find_hypothesis_references_searches_using_hypothesis_text(monkeypatch):
     captured = {}
-    def _fake_recommend(text):
+    def _fake_recommend(text, **kw):
         captured["text"] = text
-        return []
+        return [], [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="온도가 오르면 저항이 커진다")
@@ -106,7 +116,7 @@ def test_find_hypothesis_references_searches_using_hypothesis_text(monkeypatch):
 def test_find_hypothesis_references_dedupes_against_existing(monkeypatch):
     monkeypatch.setattr(
         reference_recommender, "recommend_references",
-        lambda text: [_ref("p1", "이미 있음"), _ref("p2", "새 논문")],
+        _returning([_ref("p1", "이미 있음"), _ref("p2", "새 논문")]),
     )
 
     state = research_workflow.WorkflowState(
@@ -119,8 +129,29 @@ def test_find_hypothesis_references_dedupes_against_existing(monkeypatch):
     assert result["references"][0]["added_by_stage"] == "design"  # 원래 태그 유지(안 덮어씀)
 
 
+def test_find_hypothesis_references_shares_circuit_breaker_and_tokens(monkeypatch):
+    # 이 노드가 워크플로우에서 LLM을 가장 많이 부르는 지점(검색어 추출 1 + 스크리닝 N)이라
+    # 다른 노드와 똑같이 disabled_models를 넘겨받고 갱신값·토큰을 State에 돌려줘야 한다 —
+    # 안 하면 앞 단계에서 죽은 모델을 후보마다 다시 때려본다.
+    captured = {}
+    def _fake_recommend(text, **kw):
+        captured["disabled_models"] = kw.get("disabled_models")
+        return [], ["claude", "gemini"], _TOKENS
+    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", disabled_models=["claude"],
+        tokens_used={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert captured["disabled_models"] == ["claude"]
+    assert result["disabled_models"] == ["claude", "gemini"]
+    assert result["tokens_used"] == {"input_tokens": 11, "output_tokens": 6, "total_tokens": 17}
+
+
 def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
-    def _boom(text):
+    def _boom(text, **kw):
         raise RuntimeError("전 모델 소진 흉내")
     monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
 
@@ -131,8 +162,24 @@ def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
     assert "검토" in result["comment"]  # 실패했다는 사실은 사용자에게 안내
 
 
+def test_find_hypothesis_references_skips_step_on_network_failure(monkeypatch):
+    # 모델 소진(RuntimeError)뿐 아니라 arxiv 네트워크 장애도 이 단계만 건너뛰어야 한다 —
+    # 여기서 예외가 새면 방금 만든 가설이 체크포인트에 커밋되지 못하고 날아간다.
+    import requests
+
+    def _boom(text, **kw):
+        raise requests.exceptions.ConnectionError("arxiv 응답 없음 흉내")
+    monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "references" not in result
+    assert "검토" in result["comment"]
+
+
 def test_find_hypothesis_references_comment_guides_review_when_found(monkeypatch):
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "논문1")]))
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
     result = research_workflow.find_hypothesis_references(state)
@@ -142,7 +189,7 @@ def test_find_hypothesis_references_comment_guides_review_when_found(monkeypatch
 
 
 def test_find_hypothesis_references_comment_suggests_regenerate_when_none_found(monkeypatch):
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([]))
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
     result = research_workflow.find_hypothesis_references(state)
@@ -154,7 +201,7 @@ def test_find_hypothesis_references_comment_suggests_regenerate_when_none_found(
 def test_find_hypothesis_references_comment_suggests_regenerate_when_all_duplicates(monkeypatch):
     # recommend_references가 뭔가 찾았어도 전부 이미 있는 paper_id면 "새로 찾은 것"은
     # 없으므로 "못 찾음" 안내와 같은 취급이어야 한다.
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "이미 있음")])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "이미 있음")]))
 
     state = research_workflow.WorkflowState(
         topic="주제", hypothesis="가설",
@@ -213,6 +260,24 @@ def test_design_experiment_includes_equipment_list_in_prompt(monkeypatch):
     assert "파형 관찰" in captured["human"]
 
 
+def test_design_experiment_includes_testable_prediction_in_prompt(monkeypatch):
+    # analyze_results가 이 예측으로 성패를 판정하므로, 설계 단계가 예측을 보고
+    # "측정 가능하게" 짜야 한다.
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_design_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", testable_prediction="온도-저항 그래프가 우상향",
+    )
+    research_workflow.design_experiment(state)
+
+    assert "온도-저항 그래프가 우상향" in captured["human"]
+
+
 def test_design_experiment_notes_when_no_equipment_registered(monkeypatch):
     monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
     captured = {}
@@ -258,9 +323,9 @@ def test_design_experiment_propagates_model_failure(monkeypatch):
 
 def test_find_design_references_searches_using_procedure_text(monkeypatch):
     captured = {}
-    def _fake_recommend(text):
+    def _fake_recommend(text, **kw):
         captured["text"] = text
-        return []
+        return [], [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", procedure="1. 시료를 냉각한다\n2. 저항을 측정한다")
@@ -270,7 +335,7 @@ def test_find_design_references_searches_using_procedure_text(monkeypatch):
 
 
 def test_find_design_references_appends_with_stage_tag(monkeypatch):
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "논문1")]))
 
     state = research_workflow.WorkflowState(topic="주제", procedure="절차")
     result = research_workflow.find_design_references(state)
@@ -349,9 +414,9 @@ def test_analyze_results_propagates_model_failure(monkeypatch):
 
 def test_find_operation_references_searches_using_analysis_text(monkeypatch):
     captured = {}
-    def _fake_recommend(text):
+    def _fake_recommend(text, **kw):
         captured["text"] = text
-        return []
+        return [], [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", analysis="결과가 예측과 어긋났다")
@@ -361,7 +426,7 @@ def test_find_operation_references_searches_using_analysis_text(monkeypatch):
 
 
 def test_find_operation_references_appends_with_stage_tag(monkeypatch):
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([_ref("p1", "논문1")]))
 
     state = research_workflow.WorkflowState(topic="주제", analysis="분석")
     result = research_workflow.find_operation_references(state)
@@ -388,7 +453,7 @@ def test_graph_routes_through_all_three_stages_via_single_invoke_calls(monkeypat
     from langgraph.checkpoint.memory import MemorySaver
 
     monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result(statement="가설X"))
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [])
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([]))
 
     app = research_workflow.graph.compile(checkpointer=MemorySaver())
     config = {"configurable": {"thread_id": "t1"}}
@@ -462,6 +527,33 @@ def test_check_equipment_precautions_ignores_equipment_without_precautions(monke
     result = research_workflow.check_equipment_precautions(state)
 
     assert result == {}  # 주의사항이 비어있으면 붙일 게 없음
+
+
+def test_check_equipment_precautions_ignores_equipment_with_empty_name(monkeypatch):
+    # 이름이 빈 문자열이면 `"" in 아무거나`가 항상 True라 모든 설계에 이 주의사항이
+    # 붙는다 — name 컬럼이 NOT NULL이어도 ""는 통과하므로 실제로 가능한 상태다.
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "", "purpose": "", "detail": "", "precautions": "이름 없는 장비 주의"}],
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", equipment_needed="오실로스코프")
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert result == {}
+
+
+def test_check_equipment_precautions_matches_equipment_name_as_substring(monkeypatch):
+    # 부분 문자열 매칭은 의도된 동작 — 설계가 장비를 수식어와 함께 부르는 게 정상이다.
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "오실로스코프", "purpose": "", "detail": "", "precautions": "정격 초과 금지"}],
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", equipment_needed="디지털 오실로스코프 2채널")
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert "정격 초과 금지" in result["comment"]
 
 
 def test_check_equipment_precautions_returns_empty_when_no_equipment_registered(monkeypatch):

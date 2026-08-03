@@ -16,12 +16,21 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from models import invoke_with_fallback
+from models import EMPTY_TOKENS, add_tokens, invoke_with_fallback
 from retrieval import papers_vectorstore
 import paper_screening
 import paper_search
 
 EXTRACTION_MODEL = "gemini"
+
+# 보유 논문 VDB에서 "논문 N편"을 얻으려면 청크는 N개보다 훨씬 많이 뒤져야 한다 — 논문
+# 한 편이 100청크를 넘고(14페이지 논문이 122청크였다) 유사도 상위권은 거의 항상 같은
+# 논문의 인접 청크라, k=N이면 dedupe 후 1~2편만 남아 보유 논문이 있어도 항상 외부 검색으로
+# 넘어간다. graph.py의 retrieve()가 MAX_CHUNKS_PER_PAPER로 푼 것과 같은 성격의 문제.
+# 임계값(거리 컷)은 두지 않는다 — 보유 논문은 사용자가 직접 등록한 것 자체가 신뢰 신호라는
+# 기존 원칙(retrieve()가 논문 VDB를 무조건 신뢰하는 것과 같은 결)을 유지하고, 실측 없이
+# 정한 L2 거리 상수는 근거 없는 숫자만 하나 늘리는 셈이라서다.
+OWNED_CHUNK_DEPTH_FACTOR = 20
 
 EXTRACTION_PROMPT = """주어진 텍스트를 읽고 참고문헌을 찾기 위한 검색어를 하나 뽑아라.
 텍스트의 핵심 주장이나 개념을 논문 검색에 쓸 수 있는 간결한 구·문장으로 요약해라 —
@@ -32,32 +41,62 @@ class SearchQuery(BaseModel):
     query: str = Field(description="논문 검색에 쓸 핵심 검색어")
 
 
-def extract_search_query(text: str, *, model: str = EXTRACTION_MODEL) -> str:
+def extract_search_query(
+    text: str, *, model: str = EXTRACTION_MODEL, disabled_models: list[str] | None = None,
+) -> tuple[str, list[str], dict]:
     """text에서 검색어 하나를 뽑는다. 실패(모델 소진 등)는 RuntimeError를 그대로
     전파 — 검색어 자체가 없으면 이 함수를 호출한 recommend_references()가 통째로
-    실패하는 게 맞다(빈 검색어로 검색해봤자 의미 없는 결과만 나옴)."""
+    실패하는 게 맞다(빈 검색어로 검색해봤자 의미 없는 결과만 나옴).
+
+    반환: (검색어, 갱신된 disabled_models, tokens_used) — invoke_with_fallback과 같은
+    모양으로 서킷 브레이커·토큰을 호출자에게 그대로 넘긴다."""
     messages = [SystemMessage(content=EXTRACTION_PROMPT), HumanMessage(content=text)]
-    result, _, _, _ = invoke_with_fallback(model, messages, structured=SearchQuery)
-    return result.query
+    result, _, disabled_models, tokens_used = invoke_with_fallback(
+        model, messages, structured=SearchQuery, disabled_models=disabled_models
+    )
+    return result.query, disabled_models, tokens_used
 
 
-def recommend_references(text: str, *, max_results: int = 5, min_owned_results: int = 3) -> list[dict]:
+def recommend_references(
+    text: str, *, max_results: int = 5, min_owned_results: int = 3,
+    disabled_models: list[str] | None = None,
+) -> tuple[list[dict], list[str], dict]:
     """text에서 검색어를 뽑아 참고문헌 후보 목록을 만든다.
 
     1. 보유 논문 VDB 우선 검색(papers_vectorstore) — 스크리닝 없이 그대로 채택.
+       청크를 max_results보다 훨씬 깊게(OWNED_CHUNK_DEPTH_FACTOR배) 가져와 paper_id로
+       접은 뒤 상위 max_results편만 남긴다 — 깊이와 개수 상한은 별개 축이라 k 하나로
+       둘 다 조절하면(원래 그랬다) 깊이를 못 키운다.
     2. 보유 결과가 min_owned_results 미만이면 paper_search.search_papers()로 신규
        검색 → screen_candidate()로 관련도만 걸러 통과분만 추가(실패한 후보는 건너뜀,
        paper_recommend.py와 같은 정책).
 
-    반환: 보유 결과가 먼저, 신규(관련 있는 것만) 결과가 뒤. 각 항목:
-    {"paper_id", "title", "source": "owned" 또는 "external", 신규만 "reasoning"도 포함}.
-    """
-    query = extract_search_query(text)
+    반환: (참고문헌 목록, 갱신된 disabled_models, 누적 tokens_used). 목록은 보유 결과가
+    먼저, 신규(관련 있는 것만) 결과가 뒤. 각 항목:
+    {"paper_id", "title", "source": "owned" 또는 "external", "reasoning"}.
 
-    owned_hits = papers_vectorstore.similarity_search_with_score(query, k=max_results)
+    보유 논문은 스크리닝을 안 거쳐 근거 문장이 없지만 `reasoning` 키 자체는 빈 문자열로
+    채워 넣는다 — 소비자(⑦ 논문 작성 등)가 source에 따라 키가 있다 없다 하는 걸 기억해야
+    하면 그 규칙은 소비자가 늘수록 언젠가 깨진다. 생산자가 한 번 채우는 쪽이 싸다.
+
+    이 함수는 검색어 추출 1회 + 스크리닝 N회로 워크플로우에서 LLM을 가장 많이 부르는
+    지점이라, 서킷 브레이커(disabled_models)와 토큰을 호출 안에서 이어받고 밖으로도
+    돌려준다. 이어받지 않으면 한 번의 호출 안에서조차 앞 후보에서 죽은 모델을 뒤 후보가
+    매번 다시 때려보고 실패한다(호출당 최대 N번 낭비).
+    """
+    query, disabled_models, query_tokens = extract_search_query(
+        text, disabled_models=disabled_models
+    )
+    tokens_used = add_tokens(EMPTY_TOKENS, query_tokens)
+
+    owned_hits = papers_vectorstore.similarity_search_with_score(
+        query, k=max_results * OWNED_CHUNK_DEPTH_FACTOR
+    )
     seen_paper_ids: set[str] = set()
     owned_results = []
     for doc, _score in owned_hits:
+        if len(owned_results) >= max_results:
+            break  # 유사도순이라 앞에서 끊으면 곧 "가장 가까운 논문 max_results편"
         paper_id = doc.metadata.get("paper_id")
         if not paper_id or paper_id in seen_paper_ids:
             continue
@@ -66,6 +105,7 @@ def recommend_references(text: str, *, max_results: int = 5, min_owned_results: 
             "paper_id": paper_id,
             "title": doc.metadata.get("title", ""),
             "source": "owned",
+            "reasoning": "",  # 스크리닝 없이 채택 — 근거 문장은 없지만 키는 맞춰둔다
         })
 
     external_results = []
@@ -75,10 +115,17 @@ def recommend_references(text: str, *, max_results: int = 5, min_owned_results: 
             if candidate["paper_id"] in seen_paper_ids:
                 continue
             try:
-                screened = paper_screening.screen_candidate(candidate, query)
+                screened = paper_screening.screen_candidate(
+                    candidate, query, disabled_models=disabled_models
+                )
             except RuntimeError as e:
+                # 이 경로에서는 disabled_models 갱신을 못 건진다 — invoke_with_fallback이
+                # 재귀하면서 쌓은 목록이 예외와 함께 스택에 묻히기 때문. 다만 이 RuntimeError는
+                # 애초에 "전 모델 소진"일 때만 나므로 남은 후보도 어차피 다 실패한다(잃는 게 없음).
                 print(f"참고문헌 스크리닝 실패, 이 후보는 건너뜀(paper_id={candidate['paper_id']}): {type(e).__name__}: {e}")
                 continue
+            disabled_models = screened["disabled_models"]
+            tokens_used = add_tokens(tokens_used, screened["tokens_used"])
             if screened["is_relevant"]:
                 seen_paper_ids.add(candidate["paper_id"])
                 external_results.append({
@@ -88,4 +135,4 @@ def recommend_references(text: str, *, max_results: int = 5, min_owned_results: 
                     "reasoning": screened["reasoning"],
                 })
 
-    return owned_results + external_results
+    return owned_results + external_results, disabled_models, tokens_used

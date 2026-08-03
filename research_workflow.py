@@ -1,11 +1,13 @@
 # 연구 워크플로우(⑥) — 가설 수립 → 실험 설계 → 실험 운영을 잇는 별도 그래프.
 # 오케스트레이터(챗) 그래프와 State를 공유하지 않는다 — README "그래프 3개"(챗·연구
 # 워크플로우·추천 파이프라인) 구조대로 독립된 최상위 그래프다. 며칠씩 걸리는 상태
-# 있는 작업이라 체크포인터 영속화가 전제(main.py가 컴파일 시 연결, orchestrator.py와
-# 같은 패턴 — 컴파일 전 graph 빌더만 여기서 export).
+# 있는 작업이라 체크포인터 영속화가 전제라, orchestrator.py와 같은 패턴으로 컴파일 전
+# graph 빌더와 CHECKPOINT_DB_PATH만 여기서 export한다 — 실제 컴파일(체크포인터 연결)은
+# 호출부 몫이다. 아직 main.py에 엔드포인트가 없어 지금 이 그래프를 컴파일해 쓰는 건
+# 아래 __main__ 스모크 테스트와 테스트뿐이다(UI는 ⑦까지 나온 뒤 한 번에 — RoadMap 참고).
 #
-# 가설 수립 → 실험 설계 → 실험 운영까지 연결됐다. 안전 가드레일(interrupt_before HITL)은
-# 다음 단위(RoadMap "연구 워크플로우(⑥)" 참고) — 노드 하나마다 검증하고 다음으로 넘어간다.
+# 가설 수립 → 실험 설계 → 실험 운영까지 연결됐고, 안전 가드레일도 붙었다
+# (check_equipment_precautions — interrupt_before를 안 쓴 근거는 그 함수 docstring).
 #
 # 단계 전환은 START의 조건부 엣지(route_by_stage)가 state.stage를 보고 담당한다(08-02,
 # 사용자 제안 — 처음엔 aget_state로 읽어 파이썬 함수를 직접 부르고 aupdate_state로
@@ -35,15 +37,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from typing import Callable, Literal
 
-from models import invoke_with_fallback
+from models import add_tokens, invoke_with_fallback
 import equipment
 import reference_recommender
-
-TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
-
-
-def _add_tokens(current: dict, new: dict) -> dict:
-    return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
 
 
 class WorkflowState(BaseModel):
@@ -106,7 +102,7 @@ def generate_hypothesis(state: WorkflowState) -> dict:
         "rationale": result.rationale,
         "testable_prediction": result.testable_prediction,
         "disabled_models": disabled_models,
-        "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+        "tokens_used": add_tokens(state.tokens_used, tokens_used),
     }
 
 
@@ -117,19 +113,35 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
     어느 필드(들)를 검색어로 쓰는지와 added_by_stage 값뿐이라 그때그때 복붙하는 대신
     get_text(state)로 위임한다.
 
-    실패(모델 소진 등)는 이 단계만 건너뛴다 — 앞 단계 산출물은 이미 나왔으므로
-    참고문헌 하나 못 찾았다고 워크플로우 전체를 실패시킬 이유가 없다(삭제된 관심사
-    자동 제안 훅이 쓰던 것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다).
+    실패는 이 단계만 건너뛴다 — 앞 단계 산출물은 이미 나왔으므로 참고문헌 하나 못
+    찾았다고 워크플로우 전체를 실패시킬 이유가 없다(삭제된 관심사 자동 제안 훅이 쓰던
+    것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다). 여기서 노드가 예외를
+    던지면 방금 LLM으로 만든 가설·설계가 체크포인트에 커밋되지 못하고 통째로 날아간다.
+
+    `RuntimeError`(모델 소진)만 잡지 않고 `Exception`을 잡는 이유: 이 함수가 부르는
+    경로가 recommend_references → paper_search → arxiv_api라서 arxiv가 잠깐 죽으면
+    `requests.RequestException`/`HTTPError`가 그대로 올라온다. 예외 타입을 열거하면
+    어댑터를 갈아끼울 때마다 목록이 새고, 그때마다 "핵심 결과가 날아가는" 방식으로
+    실패한다. 대신 잡은 예외 타입을 로그에 남겨 조용히 삼키지는 않는다.
 
     "이미 증명된 이론·이미 한 실험인지"는 LLM이 판정하지 않는다 — 찾은 참고문헌(이미
     screen_candidate의 연관성 근거가 붙어 있음)을 사람이 직접 읽고 템플릿을 고치거나
     재생성할지 판단하도록 comment로 안내만 한다.
+
+    이 노드는 워크플로우에서 LLM을 가장 많이 부르는 지점(검색어 추출 1 + 스크리닝 N)이라
+    disabled_models·tokens_used도 다른 노드와 똑같이 State에 반영한다 — 안 하면 앞
+    단계에서 죽은 모델을 여기서 매 후보마다 다시 때려본다.
     """
     def node(state: WorkflowState) -> dict:
         try:
-            found = reference_recommender.recommend_references(get_text(state))
-        except RuntimeError as e:
+            found, disabled_models, tokens_used = reference_recommender.recommend_references(
+                get_text(state), disabled_models=state.disabled_models
+            )
+        except Exception as e:
             print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
+            # 실패해도 disabled_models는 못 건진다 — 예외를 던진 시점의 갱신값이 호출
+            # 스택과 함께 사라지기 때문(살리려면 예외에 실어 보내야 하는데, 그건 정상
+            # 경로가 아닌 곳에 데이터를 태우는 설계라 안 한다). 다음 단계가 다시 판단한다.
             return {"comment": "참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요."}
 
         existing_ids = {r["paper_id"] for r in state.references}
@@ -145,7 +157,12 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
         else:
             comment = "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요."
 
-        return {"references": state.references + new_entries, "comment": comment}
+        return {
+            "references": state.references + new_entries,
+            "comment": comment,
+            "disabled_models": disabled_models,
+            "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        }
 
     return node
 
@@ -155,9 +172,11 @@ find_design_references = _make_reference_node(lambda s: s.procedure, "design")
 
 
 EXPERIMENT_DESIGN_SYSTEM_PROMPT = """주어진 가설을 검증할 실험을 설계해라. 독립변수·
-종속변수·통제변수를 명확히 구분하고, 실험 절차를 구체적인 순서로 적어라. 필요한
-장비는 아래 "보유 장비 목록"에 있는 것을 최우선으로 활용하고, 목록에 없는 장비가
-꼭 필요하면 그것도 적되 목록에 없다는 걸 명시해라."""
+종속변수·통제변수를 명확히 구분하고, 실험 절차를 구체적인 순서로 적어라. 특히 함께
+주어지는 "예측"이 실제로 측정 가능하도록 설계해라 — 실험이 끝난 뒤 그 예측이 맞았는지
+틀렸는지 판단할 수 없는 설계는 가설을 검증하지 못한다. 필요한 장비는 아래 "보유 장비
+목록"에 있는 것을 최우선으로 활용하고, 목록에 없는 장비가 꼭 필요하면 그것도 적되
+목록에 없다는 걸 명시해라."""
 
 
 class ExperimentDesign(BaseModel):
@@ -177,8 +196,12 @@ def design_experiment(state: WorkflowState) -> dict:
 
     messages = [
         SystemMessage(content=EXPERIMENT_DESIGN_SYSTEM_PROMPT),
+        # testable_prediction을 같이 넣는 이유: 다음 단계(analyze_results)가 "결과가 이
+        # 예측을 지지하는가"로 성패를 판정하는데, 정작 그 예측을 측정 가능하게 만들어야
+        # 할 설계 단계가 예측을 못 보고 짜이면 검증할 수 없는 실험이 나온다.
         HumanMessage(content=(
-            f"가설: {state.hypothesis}\n근거: {state.rationale}\n\n보유 장비 목록:\n{equipment_text}"
+            f"가설: {state.hypothesis}\n근거: {state.rationale}\n"
+            f"예측: {state.testable_prediction}\n\n보유 장비 목록:\n{equipment_text}"
         )),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
@@ -191,7 +214,7 @@ def design_experiment(state: WorkflowState) -> dict:
         "equipment_needed": result.equipment_needed,
         "procedure": result.procedure,
         "disabled_models": disabled_models,
-        "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+        "tokens_used": add_tokens(state.tokens_used, tokens_used),
     }
 
 
@@ -225,7 +248,7 @@ def analyze_results(state: WorkflowState) -> dict:
         "analysis": result.analysis,
         "needs_redesign": result.needs_redesign,
         "disabled_models": disabled_models,
-        "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+        "tokens_used": add_tokens(state.tokens_used, tokens_used),
     }
 
 
@@ -246,11 +269,17 @@ def check_equipment_precautions(state: WorkflowState) -> dict:
     설계·운영 두 단계 모두 이 노드를 거친다(README "설계·운영 양 단계 공통 조회") —
     equipment_needed는 설계 때 한 번 정해져 운영 때까지 state에 그대로 남아있으므로
     같은 노드를 두 체인 끝에 공유해서 붙인다.
+
+    매칭은 부분 문자열 그대로 둔다 — "오실로스코프"가 "디지털 오실로스코프 2채널"에
+    걸리는 게 정상 동작이고, 한국어는 정규식 단어 경계(\\b)가 사실상 안 먹는다. 과검출은
+    안전 방향이라 오탐이 실제로 성가셔지기 전엔 규칙을 정교하게 만들지 않는다. 다만
+    이름이 빈 문자열이면 `"" in x`가 항상 True라 모든 설계에 그 주의사항이 붙으므로
+    그것만 막는다(컬럼이 NOT NULL이어도 ""는 통과하니 실제로 가능한 상태다).
     """
     notes = [
         f"[{item['name']}] {item['precautions']}"
         for item in equipment.list_equipment()
-        if item["precautions"] and item["name"] in state.equipment_needed
+        if item["name"] and item["precautions"] and item["name"] in state.equipment_needed
     ]
     if not notes:
         return {}

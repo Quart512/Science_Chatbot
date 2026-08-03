@@ -201,13 +201,17 @@ def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = No
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
 # update_existing_id도 InterestRegistration과 같은 계약: None이면 새로 생성, 값이 있으면
 # 그 id를 수정.
+#
+# 선택 필드가 `""`가 아니라 `None` 기본값인 이유: 수정 시 "명시 안 함"과 "빈 값으로
+# 설정"을 구분해야 한다. `""`가 기본값이면 이름만 고쳐 보낸 요청이 precautions(안전
+# 주의사항)까지 조용히 지운다 — register_paper()의 `{"title": None}` 버그와 같은 종류다.
 class EquipmentRegistration(BaseModel):
     name: str
-    purpose: str = ""
-    detail: str = ""
+    purpose: str | None = None
+    detail: str | None = None
     # 연구 워크플로우의 안전 가드레일(check_equipment_precautions)이 읽는다 — 이 장비가
     # 실험 설계에 등장하면 이 문구를 그대로 사용자에게 보여준다.
-    precautions: str = ""
+    precautions: str | None = None
     update_existing_id: int | None = None
 
 
@@ -218,16 +222,22 @@ def list_equipment():
 
 @app.post("/equipment")
 def register_equipment(body: EquipmentRegistration):
+    # None(= 명시 안 함)인 필드는 아예 빼서 넘긴다 — update_equipment()가 **fields로
+    # 받은 것만 SET 하는 부분 갱신이라, 안 넘기면 기존 값이 그대로 유지된다.
+    optional = {
+        k: v for k, v in
+        (("purpose", body.purpose), ("detail", body.detail), ("precautions", body.precautions))
+        if v is not None
+    }
+
     if body.update_existing_id is not None:
-        updated = equipment.update_equipment(
-            body.update_existing_id, name=body.name, purpose=body.purpose,
-            detail=body.detail, precautions=body.precautions,
-        )
+        updated = equipment.update_equipment(body.update_existing_id, name=body.name, **optional)
         if not updated:
             raise HTTPException(status_code=404, detail=f"실험도구 id={body.update_existing_id}를 찾을 수 없습니다")
         return {"equipment_id": body.update_existing_id, "action": "updated"}
 
-    new_id = equipment.create_equipment(body.name, body.purpose, body.detail, body.precautions)
+    # 생성 시 빠진 필드는 create_equipment()의 기본값 ""가 채운다(컬럼이 NOT NULL).
+    new_id = equipment.create_equipment(body.name, **optional)
     return {"equipment_id": new_id, "action": "created"}
 
 

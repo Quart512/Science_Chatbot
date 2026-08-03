@@ -40,8 +40,27 @@ CREATE TABLE IF NOT EXISTS equipment (
 """
 
 
+# `CREATE TABLE IF NOT EXISTS`는 테이블이 이미 있으면 아무것도 안 한다 — 나중에 추가한
+# 컬럼(precautions)은 그 문장만으로는 기존 DB에 절대 생기지 않는다. 실제로 3필드 시절의
+# equipment 테이블이 만들어진 배포 환경(EC2는 data/를 바인드 마운트해 DB 파일이 남는다)에
+# 이 코드를 올리면 INSERT가 "no such column: precautions"로 터진다. 테스트는 매번 새
+# `:memory:` DB라 이 경로를 원리적으로 못 잡으므로, 스키마를 늘릴 땐 여기에 같이 적는다.
+_EXPECTED_COLUMNS = {
+    "purpose": "TEXT NOT NULL DEFAULT ''",
+    "detail": "TEXT NOT NULL DEFAULT ''",
+    "precautions": "TEXT NOT NULL DEFAULT ''",
+}
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # PRAGMA table_info는 (cid, name, type, notnull, dflt_value, pk) 행을 준다 — name만 씀.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(equipment)")}
+    for name, ddl in _EXPECTED_COLUMNS.items():
+        if name not in existing:
+            # ADD COLUMN은 기존 행을 DEFAULT로 채워주므로 데이터 손실이 없다(그래서
+            # NOT NULL 컬럼도 DEFAULT만 있으면 나중에 붙일 수 있다).
+            conn.execute(f"ALTER TABLE equipment ADD COLUMN {name} {ddl}")
     conn.commit()
 
 
