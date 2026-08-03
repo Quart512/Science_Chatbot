@@ -434,6 +434,50 @@ def test_find_operation_references_appends_with_stage_tag(monkeypatch):
     assert result["references"][0]["added_by_stage"] == "operation"
 
 
+# --- compile_experiment_report() (⑦ 착수, 08-03) --------------------------------
+
+
+def test_compile_experiment_report_includes_all_stage_fields():
+    # LLM 호출 없는 순수 재포맷 — 가설·설계·운영 필드가 전부 보고서 텍스트에 그대로
+    # 나타나야 한다(재종합이 아니므로 문구가 안 바뀜).
+    state = research_workflow.WorkflowState(
+        topic="주제",
+        hypothesis="온도가 오르면 저항이 커진다", rationale="금속의 일반적 특성",
+        testable_prediction="온도-저항 그래프가 우상향",
+        independent_variable="온도", dependent_variable="저항", controlled_variables="시료 순도",
+        equipment_needed="온도 조절 장치", procedure="1. 냉각한다\n2. 측정한다",
+        experiment_results="저항이 거의 안 변했다", analysis="예측과 어긋남",
+    )
+    result = research_workflow.compile_experiment_report(state)
+    report = result["experiment_report"]
+
+    for text in [
+        "온도가 오르면 저항이 커진다", "금속의 일반적 특성", "온도-저항 그래프가 우상향",
+        "온도", "저항", "시료 순도", "온도 조절 장치", "1. 냉각한다\n2. 측정한다",
+        "저항이 거의 안 변했다", "예측과 어긋남",
+    ]:
+        assert text in report
+
+
+def test_compile_experiment_report_makes_no_llm_call(monkeypatch):
+    def _boom(*a, **kw):
+        raise AssertionError("보고서 조립은 결정론적 재포맷이라 LLM을 부르면 안 됨")
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    research_workflow.compile_experiment_report(state)  # 예외 없이 끝나야 함
+
+
+def test_compile_experiment_report_does_not_touch_tokens_or_disabled_models():
+    # LLM을 안 부르므로 다른 노드와 달리 tokens_used/disabled_models를 반환에 안 실어야
+    # 한다 — 실었다면 안 바뀐 값을 굳이 덮어쓰는 낭비 반환이다.
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.compile_experiment_report(state)
+
+    assert "tokens_used" not in result
+    assert "disabled_models" not in result
+
+
 # --- route_by_stage() + 그래프 라우팅 통합 확인 --------------------------------
 # 단계 전환은 글루 함수(advance_to_design, 폐기됨)가 아니라 START의 조건부 엣지가
 # state.stage를 보고 담당한다(08-02, 사용자 제안 — 토이 그래프로 실제 동작 확인 후
@@ -447,9 +491,9 @@ def test_route_by_stage_returns_stage_field():
     assert research_workflow.route_by_stage(state) == "design"
 
 
-def test_graph_routes_through_all_three_stages_via_single_invoke_calls(monkeypatch):
+def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatch):
     # 단계 전환은 별도 update_state 호출 없이 stage(+새 입력)를 담은 ainvoke() 한 번으로
-    # 된다는 것까지 포함해 확인 — 가설→설계→운영을 실제 컴파일된 그래프로 쭉 따라간다.
+    # 된다는 것까지 포함해 확인 — 가설→설계→운영→보고서를 실제 컴파일된 그래프로 쭉 따라간다.
     from langgraph.checkpoint.memory import MemorySaver
 
     monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result(statement="가설X"))
@@ -484,6 +528,14 @@ def test_graph_routes_through_all_three_stages_via_single_invoke_calls(monkeypat
     assert third["needs_redesign"] is True
     assert third["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # 2단계 값도 여전히 보임
     assert third["experiment_results"] == "저항이 거의 안 변했다"
+
+    # report 단계는 LLM 호출이 없으므로 몽키패치를 안 갈아끼워도 된다 — invoke_with_fallback이
+    # 실제로 안 불린다는 것 자체가 이 전환의 검증 포인트.
+    fourth = app.invoke({"stage": "report"}, config=config)
+
+    assert "가설X" in fourth["experiment_report"]  # 1단계 값
+    assert "1. 시료를 냉각한다" in fourth["experiment_report"]  # 2단계 값
+    assert "어긋남" in fourth["experiment_report"]  # 3단계 값
 
 
 # --- check_equipment_precautions() (안전 가드레일, 08-02) ----------------------

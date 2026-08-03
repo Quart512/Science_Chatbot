@@ -6,8 +6,10 @@
 # 호출부 몫이다. 아직 main.py에 엔드포인트가 없어 지금 이 그래프를 컴파일해 쓰는 건
 # 아래 __main__ 스모크 테스트와 테스트뿐이다(UI는 ⑦까지 나온 뒤 한 번에 — RoadMap 참고).
 #
-# 가설 수립 → 실험 설계 → 실험 운영까지 연결됐고, 안전 가드레일도 붙었다
+# 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서까지 연결됐고, 안전 가드레일도 붙었다
 # (check_equipment_precautions — interrupt_before를 안 쓴 근거는 그 함수 docstring).
+# 논문 작성(⑦)은 착수 중 — 보고서까지가 지금 여기 있는 부분이고, 초안 생성 노드는
+# 다음 단위.
 #
 # 단계 전환은 START의 조건부 엣지(route_by_stage)가 state.stage를 보고 담당한다(08-02,
 # 사용자 제안 — 처음엔 aget_state로 읽어 파이썬 함수를 직접 부르고 aupdate_state로
@@ -47,7 +49,7 @@ class WorkflowState(BaseModel):
     # 지금 어느 단계인지 — START의 조건부 엣지가 이 값으로 라우팅한다. 기본값이
     # "hypothesis"라 처음 만드는 thread는 자동으로 가설 단계부터 시작하고, 사용자가
     # "다음 단계로"를 누르면 호출부가 이 필드(+필요하면 새 입력)를 담아 다시 invoke하면 된다.
-    stage: Literal["hypothesis", "design", "operation"] = "hypothesis"
+    stage: Literal["hypothesis", "design", "operation", "report"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
     hypothesis: str = ""
@@ -64,6 +66,13 @@ class WorkflowState(BaseModel):
     experiment_results: str = ""
     analysis: str = ""
     needs_redesign: bool = False
+    # 실험 보고서(⑦ 착수, 08-03) — LLM 호출 없이 위 필드들을 헤더 붙여 이어붙인 결정론적
+    # 산출물(compile_experiment_report 참고). 논문 작성 단계는 5개 필드를 따로 읽는 대신
+    # 이 하나만 읽는다 — 인터페이스가 단순해지고, 자체 검토(Evaluator-Optimizer)가 초안을
+    # 대조할 "사실 기준선"이 하나로 명확해진다. LLM 재종합을 안 쓴 이유: 이미 각 필드가
+    # 앞선 LLM 호출이 만든 완결된 문장이라, 다시 종합하면 요약 재귀 분할에서 우려한 것과
+    # 같은 위험(재종합 과정에서 사실이 조용히 바뀜)만 새로 생기고 얻는 게 적다.
+    experiment_report: str = ""
     # 워크플로우가 끌고 다니는 누적 참고문헌 목록(README "참고문헌은 워크플로우가 끌고
     # 다니는 누적 산출물" 참고) — 각 항목: {"paper_id", "title", "source": "owned"|
     # "external", "reasoning", "added_by_stage"}. 뒤에 올 실험 설계·운영·논문 작성
@@ -255,6 +264,40 @@ def analyze_results(state: WorkflowState) -> dict:
 find_operation_references = _make_reference_node(lambda s: s.analysis, "operation")
 
 
+def compile_experiment_report(state: WorkflowState) -> dict:
+    """실험 보고서 — 가설·설계·운영 단계가 이미 만들어둔 필드를 헤더 붙여 이어붙이기만
+    한다. LLM 호출 없음(판정 대신 추출 원칙과 같은 결 — 여기선 추출조차 아니라 순수
+    재포맷). 참고문헌 노드를 안 붙이는 이유: 새 텍스트를 만드는 게 아니라 있는 걸
+    재배열할 뿐이라 검색할 새 주장이 없다.
+
+    별도 stage로 둔 이유(설계·운영과 같은 결): 사람이 다음 단계(writing)로 넘어가기
+    전에 보고서 내용을 검토할 틈을 준다 — operation 체인에 자동으로 끼워 넣으면
+    그 틈이 사라진다.
+    """
+    report = f"""# 실험 보고서
+
+## 가설
+{state.hypothesis}
+근거: {state.rationale}
+예측: {state.testable_prediction}
+
+## 실험 설계
+- 독립변수: {state.independent_variable}
+- 종속변수: {state.dependent_variable}
+- 통제변수: {state.controlled_variables}
+- 필요 장비: {state.equipment_needed}
+
+### 절차
+{state.procedure}
+
+## 실험 결과
+{state.experiment_results}
+
+## 분석
+{state.analysis}"""
+    return {"experiment_report": report}
+
+
 def check_equipment_precautions(state: WorkflowState) -> dict:
     """안전 가드레일(08-02) — 설계된 장비 목록(equipment_needed)에 등록된 장비 이름이
     나오면 그 장비의 precautions를 찾아 comment 맨 앞에 붙인다. LLM 호출 없음(이름
@@ -300,10 +343,12 @@ graph.add_node("find_design_references", find_design_references)
 graph.add_node("analyze_results", analyze_results)
 graph.add_node("find_operation_references", find_operation_references)
 graph.add_node("check_equipment_precautions", check_equipment_precautions)
+graph.add_node("compile_experiment_report", compile_experiment_report)
 graph.add_conditional_edges(START, route_by_stage, {
     "hypothesis": "generate_hypothesis",
     "design": "design_experiment",
     "operation": "analyze_results",
+    "report": "compile_experiment_report",
 })
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
 graph.add_edge("find_hypothesis_references", END)
@@ -312,6 +357,7 @@ graph.add_edge("find_design_references", "check_equipment_precautions")
 graph.add_edge("analyze_results", "find_operation_references")
 graph.add_edge("find_operation_references", "check_equipment_precautions")
 graph.add_edge("check_equipment_precautions", END)
+graph.add_edge("compile_experiment_report", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -367,5 +413,9 @@ if __name__ == "__main__":
             print("재설계 필요:", final["needs_redesign"])
             print("참고문헌(전체):", [r["title"] for r in final["references"]])
             print("안내:", final["comment"])
+
+            # 4단계: 보고서 — LLM 호출 없음(compile_experiment_report는 순수 재포맷).
+            report_result = await app.ainvoke({"stage": "report"}, config=config)
+            print("보고서:\n", report_result["experiment_report"])
 
     asyncio.run(_smoke_test())
