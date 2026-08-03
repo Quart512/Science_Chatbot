@@ -91,6 +91,7 @@
 | 07-15~ | 베이스라인 완주 | gemini 쿼터 리필 대기 — bare gemini, graph(gemini-only)에서 역전 재현 확인 후 전체 비교표 완성 |
 | 08-02~ | 관심사 등록 — 챗 버튼 트리거 | 메인 챗 라우터를 대체하는 결정(설계 노트 "메인 챗 라우터 착수 보류" 08-02 후속 참고)으로 착수. **백엔드**: `orchestrator.draft_interest_from_messages()`(그래프 노드 아님, `should_suggest` 판정 없이 곧장 초안 추출 — 버튼 클릭 자체가 의도 신호) + `GET /interests/draft`(체크포인터에서 thread messages 조회 → 위 함수 호출, 저장 안 함). **프론트**: 챗 사이드바 "이 대화를 관심사로 등록" 버튼 → 관심사 탭의 기존 "새 관심사 만들기" 폼에 프리필(`key=`로 위젯 세션 상태에 심어 사용자 수정이 rerun에 안 지워지게) → 저장은 기존 `POST /interests` 재사용. **자동 제안 훅 통째로 삭제(08-02, 사용자 지시)**: 버튼이 생기자 매 턴 자동으로 도는 `suggest_interest_node`(+`should_suggest` 판정 프롬프트·`InterestSuggestion`·`DuplicateCheck`·`_find_duplicate` 중복 검사·SSE `suggestion` 청크)가 전부 불필요해져 삭제 — 재활용할 곳 없어 중복 검사 기능도 같이 없앰(필요해지면 버튼 흐름에 다시 붙임). 그래프는 `physics_qa → END`로 단순화. **disabled_models 서킷 브레이커를 draft 엔드포인트까지 공유(08-12 항목 선반영)**: `aget_state`로 이미 읽는 스냅샷에서 `disabled_models`도 같이 꺼내 쓰고, 갱신됐으면 `aupdate_state`로 다시 씀. **실제로 겪은 LangGraph 함정 2개**(둘 다 재현 후 확인): ① 체크포인트가 아예 없는(한 번도 `/query`가 안 된) thread에 `aupdate_state`를 부르면 `aget_state`가 다음 태스크를 계산하려다 `ParentState.question`(필수 필드) 누락으로 Pydantic 검증에서 터짐 — `snapshot.values`가 비어있을 때는 쓰기를 건너뛰는 가드 추가(실사용에선 messages가 비면 애초에 disabled_models도 안 바뀌어 자연히 안 걸림). ② `aupdate_state`에 `as_node`를 안 주면 "어느 노드의 쓰기인지 모호하다"며 `InvalidUpdateError`를 던짐 — `as_node="__start__"`로 해결(그래프 노드가 실제로 실행한 게 아니라 값을 직접 주입하는 것이므로). 테스트 8개(전부 몽키패치, `test_orchestrator.py`/`test_main.py`), 전체 200개 통과. **실제 API로 버튼을 눌러보는 라이브 검증은 보류 중** — 사용자 지시로 API 호출 테스트는 마무리 시점에 한 번에 하기로 함(위 🧪 라이브 검증 체크리스트 §A에 모아둠) |
 | 08-13 | 메시지 트리밍 (1단계 완료, 2단계 착수 전) | **설계 방향 재검토(사용자 지적)**: 처음 논의한 "완전 자동 트리밍"만으로는 A 얘기→B 얘기→다시 A 얘기 패턴에서 오래된 A가 자동으로 잘려나갈 위험을 사용자가 지적 — 당초 제안한 "메시지마다 초록/빨강 체크 + 필터 UI"는 범위가 너무 커서(새 UI 컴포넌트·저장 계층) **자동 트리밍(안전망) + 수동 삭제(사용자가 명시적으로 지우기) 병행**으로 축소 합의. **1단계(완료)**: `orchestrator._trim_history()` — 오래된 [Human, AI] 쌍부터 모델별 문자 예산(`models.MESSAGE_HISTORY_BUDGET_CHARS`, `CONTEXT_BUDGET_CHARS`의 절반을 대화 이력 몫으로 파생 — 나머지는 검색 문서·tool 결과용, 대략치라 나중에 조정 — 🧪 체크리스트 §B) 초과분을 잘라냄. LLM 요약이 아니라 결정론적 컷을 쓴 이유: 문제 자체가 "비용 관리"인데 요약은 LLM 호출을 하나 더 늘려 모순. 최소 마지막 한 턴은 예산 초과해도 항상 남김(직전 맥락 없인 답 불가). `physics_qa_node`가 잘라낸 옛 메시지를 `RemoveMessage`로 부모 체크포인트에서도 실제로 지움(안 그러면 이번 호출엔 안 보내도 SQLite 파일은 계속 커짐). 테스트 5개(순수 함수, 전체 205개 통과). **2단계(예정)**: 수동 삭제 — 지금 `chat.py`가 화면에 그리는 이력은 세션 로컬 상태라 백엔드 체크포인트의 실제 메시지 id가 없음 → 먼저 체크포인트의 진짜 메시지 목록(id 포함)을 조회하는 엔드포인트가 필요, 그다음 메시지별 삭제 버튼 |
+| 08-03~ | 연구 워크플로우 화면(⑥⑦ UI) — **설계만 확정, 착수 전** | 라이브러리 4탭(논문·관심사·실험도구·지식노트) 완료 후 마지막 남은 표면 작업. **화면 설계는 세션 내내 논의로 이미 확정됐고, 코드는 아직 한 줄도 없다** — 다음 세션이 바로 구현에 들어갈 수 있도록 아래 "연구 워크플로우 화면 — 확정된 설계" 설계 노트에 근거·구조·API·구현 순서를 전부 남겨둔다. 요약: ① 백엔드에 이 그래프를 컴파일해 쓰는 API가 아직 없음(main.py는 orchestrator만 컴파일) ② 화면은 화살표형 진행바가 아니라 "완료 체크 타임라인 + 다음 단계 선택 패널"(operation만 진짜 갈림길이라 시스템 추천 하나를 `[추천]` 텍스트로 표시하고 나머지도 버튼으로 다 보여줌) ③ 연구가 여러 개일 수 있어 챗 세션 사이드바와 같은 패턴으로 `research_sessions` 경량 테이블(제목·주제·단계) 신설 필요 — 상세 스키마·API·화면 구조는 설계 노트 참고 |
 
 ## 🧪 라이브 검증 체크리스트 (개발이 어느 정도 완성되면 한 번에)
 
@@ -163,6 +164,66 @@
 ---
 
 ## 설계 노트 · 열린 질문
+
+**연구 워크플로우 화면 — 확정된 설계, 착수 전 (08-03)**: 라이브러리 4탭을 끝내고 마지막 남은 표면 작업. 이 절 하나로 다음 세션이 바로 구현에 들어갈 수 있어야 한다 — 화면을 어떻게 만들지는 세션 내내 논의로 이미 다 정해졌고, **코드는 한 줄도 안 썼다.**
+
+**1. 지금 없는 것 (착수 시 제일 먼저 확인)**
+
+- `research_workflow.py`는 그래프 빌더만 있고 **`main.py`가 이 그래프를 컴파일해서 쓰는 코드가 전혀 없다.** `main.py`의 `lifespan`은 지금 `orchestrator.graph`만 `AsyncSqliteSaver`로 컴파일한다(23~34번째 줄 근처) — 연구 워크플로우용 두 번째 체크포인터(`research_workflow.CHECKPOINT_DB_PATH`, 파일이 이미 분리돼 있음)를 똑같은 패턴으로 열어 `app.state.research_graph`에 올려야 한다. `async with`를 두 개 중첩하거나 `AsyncExitStack`을 쓰면 된다.
+- `research_workflow.py` 자체의 5단계(hypothesis→design→operation→report→writing)와 `outcome` 5갈래(`analyze_results`)는 이미 완성·테스트돼 있다 — 그래프 로직은 안 건드려도 된다. 화면 작업은 **그 위에 API+프론트만 얹는 것.**
+
+**2. 화면 설계가 이렇게 된 이유(대화로 도달한 결론, 순서대로)**
+
+- **처음 제안(화살표 진행바 1→2→3→4→5)을 스스로 뒤집었다**: `route_by_stage`가 `state.stage` 값만 보고 라우팅하므로 **어디서든 어느 단계로나 다시 갈 수 있다.** 특히 `analyze_results`의 `outcome`이 `hypothesis_wrong`/`design_flawed`면 `operation`에서 `hypothesis`나 `design`으로 **되돌아가는 게 정상 경로**다(1→2→3→1처럼 튐). 화살표 진행바는 이 되돌아가는 흐름을 "퇴보"처럼 보이게 해서 부적절.
+- **사용자 지적①**: "타임라인은 필요한데(어디까지 왔는지), 다음에 어디로 갈 수 있는지 보여주는 게 있으면 퇴화가 아니라 선택지 고르는 느낌이지 않겠냐" — 이게 최종 설계의 핵심이 됨.
+- **실제로 갈림길이 있는 곳은 `operation` 하나뿐**이라는 걸 단계별로 다 짚어봄:
+  - `hypothesis` 완료 → 다음 옵션은 `[설계 진행]` 하나뿐
+  - `design` 완료 → `[실험 시작]`(주 경로) / `[설계 재생성]`(같은 stage 재호출)
+  - **`operation` 완료 → `outcome` 값에 따라 5가지 다 유효한 선택**: `[보고서 작성]`(supported) / `[가설부터 재수립]`(hypothesis_wrong) / `[재설계]`(design_flawed) / `[같은 설계로 재실험]`(execution_error) / `[결과 다시 입력해 재분석]`(analysis_error)
+  - `report` 완료 → `[논문 작성]`(주 경로) / 이전 단계로 돌아가 고치기
+  - `writing` 완료 → `[초안 재생성]` (다음 단계가 아직 없어 사실상 종점)
+- **사용자 지적②**: "파란색만이 아니라 이름 뒤에 `[추천]`이라고 달아서 직관적으로" — 색만으로 강조하면 안 되고, `outcome`이 가리키는 옵션 버튼 라벨 뒤에 **`[추천]` 텍스트를 붙이는 것**으로 확정. 나머지 옵션은 다 똑같이 버튼으로 노출하되 `[추천]` 표시만 없음 — "시스템은 신호만 주고 결정은 사람이" 원칙(이 프로젝트 전체에 깔린 원칙)과 일치.
+- **타임라인은 "완료 체크"로 단순화**: 가설→설계→실험→재설계→실험→... 같은 실제 재방문 순서를 전부 그리려면 체크포인터 히스토리(`aget_state_history`)를 따로 조회해야 해서 1차 범위를 넘는다. 지금은 **5단계 중 값이 채워진 것만 체크 표시 + 현재 단계 강조**로 충분(단순 경로부터) — 재방문 이력까지 그리는 건 나중에 필요해지면.
+
+**3. 놓치면 안 되는 위험 — 아직 미해결 (착수 시 결정 필요)**
+
+되돌아가서 이전 단계를 재생성하면(예: `report`까지 만든 뒤 `hypothesis`를 다시 트리거) 그 단계 값은 **덮어써지는데, 이미 만들어둔 뒤 단계 값(design/analysis/experiment_report/draft)은 자동으로 무효화되지 않고 낡은 채 그대로 남는다.** `WorkflowState`엔 버전 관리가 없다. 화면이 "재생성하면 이후 N개 단계가 낡아집니다" 같은 경고를 줄지는 **논의만 하고 결론을 안 냈다** — 착수 시 사용자에게 다시 물어볼 것.
+
+**4. 세션(연구 여러 개) 관리 — 챗과 같은 패턴으로 확정**
+
+- 처음엔 `research_sessions` 테이블에 `stage`까지 자동 동기화하는 무거운 안을 제안했다가, 사용자 반문("그냥 AI 세션 나뉘듯이 하면 안 되나")으로 재검토 — **챗도 지금 "세션 목록" 기능이 없다**(thread_id를 세션마다 새로 발급하고 사이드바에 캡션으로만 보여줌, `chat.py` 참고). 처음엔 그 수준(목록 없이 thread_id만 기억)으로 축소하려 했으나, 사용자가 "제목만이라도 필요할 것 같다 — AI도 왼쪽에 세션 제목 뜨고 수정·닫기가 되잖아"라고 재지적해 **가벼운 세션 목록 + 제목 수정 + 닫기**로 최종 확정.
+- 확정 스키마(새 모듈 `research_sessions.py`, `interests.py`/`equipment.py`와 완전히 같은 CRUD 패턴, `data/app.db` 공유):
+  ```sql
+  CREATE TABLE research_sessions (
+      thread_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,      -- 사이드바 표시용, 자유롭게 수정 가능(기본값=topic)
+      topic TEXT NOT NULL,      -- 가설 생성에 실제로 쓰인 원문, 불변
+      stage TEXT NOT NULL,      -- 목록에 지금 단계 표시용
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  ```
+  - `title`과 `topic`을 분리한 이유: 챗 세션 제목처럼 자유롭게 고칠 수 있는 이름과, 실제 연구 질문(안 바뀜)을 구분해야 한다는 게 사용자 지적의 핵심.
+  - **새 연구 시작** = 이 테이블에 새 행(`thread_id`는 `uuid4()`) + `research_workflow.graph`를 그 `thread_id`로 `ainvoke({"stage": "hypothesis", "topic": ...})`.
+  - **"닫기"는 이 테이블에서만 삭제** — 실제 LangGraph 체크포인트(`research_workflow_checkpoints.sqlite`)는 안 지운다(내부 스키마라 직접 삭제가 까다롭고, 개인 용도라 용량 문제도 없음). 닫은 뒤에도 `thread_id`를 알면 기술적으론 이어갈 수 있지만 목록엔 안 뜬다 — 이걸로 충분하다고 사용자 확인받음.
+  - **목록에 없던 것 — 라이브 검증 체크리스트에 추가할 것**: `stage`를 매 단계 전환마다 실제로 갱신하는지, 갱신을 깜빡해 목록의 stage가 실제 워크플로우 상태와 어긋나는 경우가 생기는지는 아직 코드가 없어 확인 불가.
+
+**5. 구현 순서 제안 (다음 세션이 그대로 따라가면 됨)**
+
+1. `research_sessions.py` — CRUD (create/list/update_title/update_stage/delete), `interests.py` 그대로 베껴서 필드만 교체
+2. `main.py`:
+   - `lifespan`에 두 번째 `AsyncSqliteSaver` 컨텍스트 추가, `app.state.research_graph` 컴파일
+   - `GET /research/sessions` — 목록
+   - `POST /research/sessions/{thread_id}/title` — 이름 수정(`{"title": str}`)
+   - `DELETE /research/sessions/{thread_id}` — 닫기(테이블에서만)
+   - 워크플로우 본체 호출 엔드포인트(이름 미정, 예: `POST /research/{thread_id}`) — body는 `stage` + 선택 필드(`topic`은 최초 hypothesis 호출에만, `experiment_results`는 operation 호출에만) → `equipment.py`의 `None=명시 안 함` 패턴처럼 선택 필드는 옵셔널로 받아 넘긴 것만 `ainvoke`에 실어 보냄. 첫 호출(신규 세션)일 때 `research_sessions`에 행도 같이 생성.
+   - 상태만 읽는 조회 엔드포인트도 필요(페이지 새로고침 시 재실행 없이 현재 값 보기) — `orchestrator`의 `GET /interests/draft`가 `aget_state()`로 조회만 하는 패턴 참고.
+3. 프론트 새 화면(`frontend/views/research.py` 등):
+   - 사이드바st 형태로 `research_sessions` 목록(제목, 클릭 시 전환, 수정, 닫기) — 없으면 "새 연구 시작" 폼(주제 입력)
+   - 메인 패널: 5단계 완료 체크 타임라인(현재 단계 강조) + 현재 단계 내용(코멘트·필드) + "다음으로 갈 수 있는 곳" 버튼 패널(추천 옵션에 `[추천]` 라벨)
+   - `writing` 단계 렌더링 시 **`draft_paper`가 만든 본문의 `[CITE:paper_id]` 마커를 실제 서지 형식으로 바꿔 보여줘야 함** — `references` 목록(`paper_id`→`title` 매핑)으로 치환. 지금은 마커 그대로 텍스트에 박혀 있어 화면이 이걸 안 풀면 그대로 노출됨.
+
+이 절이 다음 세션이 참고할 유일한 자료다 — 이 대화(현재 세션)의 전체 맥락 없이 이 절만 읽고 시작해도 되게 썼다.
 
 **⑦ 인용 검증 — 자동화 안 함 (08-03)**: README가 애초에 ⑦의 핵심 기법으로 "Evaluator-Optimizer"(자체 검토·재작성 루프)를 적어뒀고, "목록에 없는 인용은 환각 신호로 자체 검토에서 반려"라고 구상했었다. 실제 착수 중 두 단계로 재검토해 둘 다 접었다.
 

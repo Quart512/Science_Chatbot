@@ -18,6 +18,7 @@ import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+import research_sessions
 
 
 # --- GET /interests/draft (08-02, 챗 사이드바 "관심사로 등록" 버튼) ----------------
@@ -646,5 +647,188 @@ def test_delete_equipment_404_when_not_found(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.delete("/equipment/999")
+
+
+# --- 연구 워크플로우(⑥) 세션·advance 엔드포인트 ------------------------------------
+# research_workflow.graph 자체(노드 로직)는 test_research_workflow.py가 이미 검증한다.
+# 여기선 app.state.research_graph를 가짜로 바꿔치기해 배관(세션 생성·stage 갱신·
+# 에러 분기)만 본다 — 실제 그래프를 태우면 LLM 호출까지 물어와 톨게이트 원칙에 어긋난다.
+class _FakeResearchGraph:
+    def __init__(self, result):
+        self.result = result
+        self.invoked_with = None
+
+    async def ainvoke(self, inputs, config):
+        self.invoked_with = (inputs, config)
+        return self.result
+
+    async def aget_state(self, config):
+        class _Snapshot:
+            pass
+        snapshot = _Snapshot()
+        snapshot.values = self.result
+        return snapshot
+
+
+def test_advance_research_rejects_new_thread_without_topic(monkeypatch):
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: None)
+
+    with TestClient(main.app) as client:
+        resp = client.post(f"/research/{uuid.uuid4()}/advance", json={"stage": "hypothesis"})
+
+    assert resp.status_code == 400
+
+
+def test_advance_research_rejects_new_thread_with_non_hypothesis_stage(monkeypatch):
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: None)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            f"/research/{uuid.uuid4()}/advance", json={"stage": "design", "topic": "주제"}
+        )
+
+    assert resp.status_code == 400
+
+
+def test_advance_research_creates_session_on_first_call(monkeypatch):
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: None)
+    created = {}
+    monkeypatch.setattr(
+        research_sessions, "create_session",
+        lambda thread_id, title, topic, stage, **kw: created.update(
+            thread_id=thread_id, title=title, topic=topic, stage=stage
+        ),
+    )
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    fake_graph = _FakeResearchGraph({"stage": "hypothesis", "hypothesis": "테스트 가설"})
+
+    thread_id = str(uuid.uuid4())
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph  # lifespan이 컴파일한 진짜 그래프를 가짜로 교체
+        resp = client.post(
+            f"/research/{thread_id}/advance",
+            json={"stage": "hypothesis", "topic": "그래핀 전도도"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"stage": "hypothesis", "hypothesis": "테스트 가설"}
+    assert created == {
+        "thread_id": thread_id, "title": "그래핀 전도도", "topic": "그래핀 전도도", "stage": "hypothesis",
+    }
+    assert fake_graph.invoked_with[0] == {"stage": "hypothesis", "topic": "그래핀 전도도"}
+
+
+def test_advance_research_does_not_recreate_existing_session(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "hypothesis"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    create_calls = []
+    monkeypatch.setattr(research_sessions, "create_session", lambda *a, **kw: create_calls.append(1))
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    fake_graph = _FakeResearchGraph({"stage": "design"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/advance", json={"stage": "design"})
+
+    assert resp.status_code == 200
+    assert create_calls == []
+    # topic을 안 보냈으니 ainvoke 입력에도 topic 키가 없어야 함(기존 체크포인트 값 유지)
+    assert fake_graph.invoked_with[0] == {"stage": "design"}
+
+
+def test_advance_research_updates_session_stage_after_invoke(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "hypothesis"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    stage_updates = []
+    monkeypatch.setattr(
+        research_sessions, "update_stage",
+        lambda thread_id, stage, **kw: stage_updates.append((thread_id, stage)),
+    )
+    fake_graph = _FakeResearchGraph({"stage": "design"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        client.post("/research/t1/advance", json={"stage": "design"})
+
+    assert stage_updates == [("t1", "design")]
+
+
+def test_get_research_state_returns_snapshot_values(monkeypatch):
+    fake_graph = _FakeResearchGraph({"stage": "design", "hypothesis": "가설"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"stage": "design", "hypothesis": "가설"}
+
+
+def test_get_research_state_404_when_no_checkpoint(monkeypatch):
+    fake_graph = _FakeResearchGraph({})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/no-such-thread")
+
+    assert resp.status_code == 404
+
+
+def test_list_research_sessions_returns_all(monkeypatch):
+    fake_rows = [{"thread_id": "t1", "title": "연구1"}, {"thread_id": "t2", "title": "연구2"}]
+    monkeypatch.setattr(research_sessions, "list_sessions", lambda **kw: fake_rows)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/research/sessions")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"sessions": fake_rows}
+
+
+def test_rename_research_session_updates_title(monkeypatch):
+    captured = {}
+    def _fake_update(thread_id, title, **kw):
+        captured["args"] = (thread_id, title)
+        return True
+    monkeypatch.setattr(research_sessions, "update_title", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/research/sessions/t1/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 200
+    assert captured["args"] == ("t1", "새 제목")
+
+
+def test_rename_research_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(research_sessions, "update_title", lambda thread_id, title, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/research/sessions/no-such-thread/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 404
+
+
+def test_close_research_session_deletes_row(monkeypatch):
+    captured = {}
+    def _fake_delete(thread_id, **kw):
+        captured["thread_id"] = thread_id
+        return True
+    monkeypatch.setattr(research_sessions, "delete_session", _fake_delete)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/research/sessions/t1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"thread_id": "t1", "action": "deleted"}
+    assert captured["thread_id"] == "t1"
+
+
+def test_close_research_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(research_sessions, "delete_session", lambda thread_id, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/research/sessions/no-such-thread")
+
+    assert resp.status_code == 404
 
     assert resp.status_code == 404

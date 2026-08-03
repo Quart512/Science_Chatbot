@@ -20,17 +20,26 @@ import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+import research_sessions
+import research_workflow
 from models import ContextBudgetExceeded
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
 # astream() 아래서 예외가 나 비동기 버전이 필수. 컨텍스트 매니저를 요청마다 여닫을 수
 # 없어 lifespan에서 한 번만 열고 app.state에 컴파일된 그래프를 올려둔다 — orchestrator.py는
-# graph 구조만, 체크포인터 연결(컴파일)은 여기서 책임진다.
+# graph 구조만, 체크포인터 연결(컴파일)은 여기서 책임진다. 연구 워크플로우(⑥)도 State
+# 스키마가 다른 독립 그래프라 체크포인터·컴파일된 그래프를 따로 둔다(research_workflow.py
+# 모듈 docstring 참고 — 두 그래프는 애초에 State를 공유하지 않는다).
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     orchestrator.ensure_checkpoint_dir()
-    async with AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer:
+    research_workflow.ensure_checkpoint_dir()
+    async with (
+        AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer,
+        AsyncSqliteSaver.from_conn_string(research_workflow.CHECKPOINT_DB_PATH) as research_checkpointer,
+    ):
         app.state.graph = orchestrator.graph.compile(checkpointer=checkpointer)
+        app.state.research_graph = research_workflow.graph.compile(checkpointer=research_checkpointer)
         yield
     # async with 블록을 빠져나가면(서버 종료) 커넥션이 자동으로 닫힘
 
@@ -311,3 +320,84 @@ def delete_note(note_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"노트 id={note_id}를 찾을 수 없습니다")
     return {"note_id": note_id, "action": "deleted"}
+
+
+# 연구 워크플로우(⑥) 세션 목록 — 챗 사이드바와 같은 패턴(thread_id는 프론트가 새 연구를
+# 시작할 때 uuid4()로 발급, chat.py의 st.session_state.thread_id 발급 방식 그대로).
+# /research/sessions처럼 리터럴 경로를 /research/{thread_id} 계열보다 먼저 선언해야
+# 한다 — Starlette은 등록 순서대로 매칭하므로, {thread_id}가 먼저 있으면 "sessions"가
+# 그 파라미터로 먹혀버린다.
+@app.get("/research/sessions")
+def list_research_sessions():
+    return {"sessions": research_sessions.list_sessions()}
+
+
+class ResearchSessionTitleUpdate(BaseModel):
+    title: str
+
+
+@app.post("/research/sessions/{thread_id}/title")
+def rename_research_session(thread_id: str, body: ResearchSessionTitleUpdate):
+    updated = research_sessions.update_title(thread_id, body.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "updated"}
+
+
+# 세션 목록에서만 지운다 — 실제 체크포인트는 안 지운다(research_sessions.delete_session()
+# docstring, RoadMap §4 참고).
+@app.delete("/research/sessions/{thread_id}")
+def close_research_session(thread_id: str):
+    deleted = research_sessions.delete_session(thread_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "deleted"}
+
+
+# 워크플로우 본체 호출 — equipment.py의 "None=명시 안 함" 패턴처럼 topic·experiment_results는
+# 옵셔널로 받아 넘긴 것만 ainvoke에 실어 보낸다(topic은 최초 hypothesis 호출에만,
+# experiment_results는 operation 호출에만 실제로 쓰인다 — WorkflowState 필드 주석 참고).
+# 이 thread_id로 research_sessions에 행이 없으면(=신규 연구) 같이 생성한다 — RoadMap
+# "새 연구 시작 = 테이블에 새 행 + graph를 ainvoke" 설계 그대로.
+class ResearchAdvanceRequest(BaseModel):
+    stage: Literal["hypothesis", "design", "operation", "report", "writing"]
+    topic: str | None = None
+    experiment_results: str | None = None
+
+
+@app.post("/research/{thread_id}/advance")
+async def advance_research(request: Request, thread_id: str, body: ResearchAdvanceRequest):
+    session = research_sessions.get_session(thread_id)
+    if session is None:
+        # 신규 thread — WorkflowState.topic이 필수 필드라 체크포인트가 없는 첫 호출은
+        # topic 없이는 애초에 그래프가 Pydantic 검증에서 터진다. stage도 hypothesis가
+        # 아니면(예: 첫 호출인데 design) 가설 없이 설계를 뽑는 이상한 상태가 되므로 막는다.
+        if body.topic is None or body.stage != "hypothesis":
+            raise HTTPException(
+                status_code=400,
+                detail="새 연구 세션은 stage='hypothesis'와 topic이 함께 필요합니다",
+            )
+        research_sessions.create_session(thread_id, title=body.topic, topic=body.topic, stage=body.stage)
+
+    inputs = {"stage": body.stage}
+    if body.topic is not None:
+        inputs["topic"] = body.topic
+    if body.experiment_results is not None:
+        inputs["experiment_results"] = body.experiment_results
+
+    config = {"configurable": {"thread_id": thread_id}}
+    result = await request.app.state.research_graph.ainvoke(inputs, config=config)
+    research_sessions.update_stage(thread_id, body.stage)
+    return result
+
+
+# 페이지 새로고침 시 재실행 없이 현재 값만 보는 조회 — GET /interests/draft가
+# aget_state()로 조회만 하는 것과 같은 패턴. 체크포인트가 아예 없으면(닫힌 적 없는데도
+# 한 번도 advance가 안 된 thread_id) snapshot.values가 비어 404.
+@app.get("/research/{thread_id}")
+async def get_research_state(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+    return snapshot.values
