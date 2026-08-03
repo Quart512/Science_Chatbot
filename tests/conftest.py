@@ -38,7 +38,7 @@ import pytest
 os.environ.setdefault("GOOGLE_API_KEY", "test-dummy-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
-sys.modules.setdefault("retrieval", SimpleNamespace(vectorstore=None, papers_vectorstore=None))
+sys.modules.setdefault("retrieval", SimpleNamespace(vectorstore=None, papers_vectorstore=None, notes_vectorstore=None))
 
 
 @pytest.fixture

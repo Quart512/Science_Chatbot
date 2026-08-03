@@ -59,7 +59,7 @@
 | 관심사 저장소 (①) | 사용자 관심사 문서 (템플릿 기반) | **RDB(SQLite)** — 필드 단위 수정이 잦고(문서 작성기의 "기존 편집 제안"), 논문 카탈로그와 **다대다 조인**이 필요하다(관심사 카드별 보유·추천·권위 논문 목록). 중복 검사는 임베딩이 아니라 전체 목록을 프롬프트에 넣는 LLM 판정 — 수십 개 규모라 가능하고 코사인 유사도보다 정확하다 |
 | 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** ← **현재 구현**(`retrieval.py`의 `papers_vectorstore`) | VDB 컬렉션(`feynman`과 별도) — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
 | 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite). 기본 키는 **정규화된 `paper_id`**(`doi:...` → `arxiv:...` → 내용 해시 순), DOI는 별도 nullable·unique 컬럼 — arXiv preprint는 DOI가 없고 업로드 PDF는 둘 다 없을 수 있으며, 나중에 게재돼 DOI가 생겨도 `paper_id`는 불변. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
-| 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | VDB 컬렉션 — `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분** (RAG 검색은 되지만 사실 근거로는 논문·코퍼스 우선) |
+| 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | **본문은 RDB**(`knowledge_notes.py`, `data/app.db`) ← **현재 구현** — 관심사와 같은 이유(08-03, "편집이 일급 연산이면 VDB가 안 맞는다")로 VDB 대신 SQLite에 둠. **VDB(`notes_vectorstore`)는 검색용 청크만 담는 disposable 인덱스** — 수정될 때마다 그 노트 몫을 통째로 지우고 다시 만듦(부분 재인코딩 없음). `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분**할 예정(QA `retrieve()`/`verify()` 연동은 아직) |
 | 실험도구 DB (⑤) | 장비 spec + 주의사항(`precautions`) | **RDB(SQLite)** — 임베딩하지 않는다. 실험 설계가 던질 질문이 "측정 범위가 X 이상인 장비 있나?" 같은 **범위 조건 조회**라 VDB가 원리적으로 못 하는 일이다. 자연어로 장비를 찾고 싶으면 목록이 짧으니 프롬프트에 넣으면 된다. `precautions`는 안전 가드레일(⑥)이 이름 매칭으로 조회 |
 | 코퍼스 | 파인만 강의록 | ChromaDB (현재 구현) |
 | ~~안전 규칙(별도 저장소)~~ | 실험 안전 가드레일 | **08-02, 별도 저장소로 안 만듦** — 주의사항은 장비 자체에 속하는 정보라 실험도구 DB(⑤)의 `precautions` 필드에 통합. 설계·운영 양 단계가 이 필드를 공통 조회 |
@@ -124,7 +124,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택. 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(근접-오검색을 반대 방향으로 재현하므로).
 - **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림).
 
-라이브러리 UI(논문 탭·관심사 탭)와 논문 카탈로그(SQLite, `paper_catalog.py`)는 구현됨 — 아래 [API](#api) 참고. **관심사별 보유/추천 논문 필터는 백엔드 완료**(08-03, `interest_paper` 조인 테이블 + `GET /interests/{id}/papers`), 관심사 탭 화면에 연결하는 건 아직. 미구현: 실험도구 탭, 지식 노트(백엔드도 아직).
+라이브러리 UI(논문 탭·관심사 탭)와 논문 카탈로그(SQLite, `paper_catalog.py`)는 구현됨 — 아래 [API](#api) 참고. **관심사별 보유/추천 논문 필터는 백엔드 완료**(08-03, `interest_paper` 조인 테이블 + `GET /interests/{id}/papers`), **지식 노트도 백엔드 완료**(08-03, `knowledge_notes.py` + `/notes` CRUD) — 둘 다 화면 연결은 아직. 미구현: 실험도구 탭, 지식 노트 탭.
 
 ## 파일 구조
 
@@ -162,6 +162,7 @@ Science_Chatbot/
 │   ├── test_paper_screening.py      # 논문 스크리닝(②b) — 관련도만 LLM 몽키패치, peer_reviewed/인용수/연도는 계산 검증
 │   ├── test_paper_recommend.py      # 추천 검색(③) 오케스트레이션 — 검색→스크리닝→카탈로그 기록 조립 로직
 │   ├── test_equipment.py            # 실험도구 RDB CRUD + 스키마 마이그레이션(구버전 테이블에 컬럼 추가)
+│   ├── test_knowledge_notes.py      # 지식 노트 CRUD — 본문은 SQLite(:memory:), VDB는 FakeVectorstore로 재색인 시점만 확인
 │   ├── test_reference_recommender.py # 참고문헌 추천기 — 보유 VDB 우선/외부 보충 분기, 서킷 브레이커 전파
 │   ├── test_research_workflow.py    # 연구 워크플로우(⑥⑦) 노드 + stage 라우팅(MemorySaver로 5단계 통과)
 │   ├── test_orchestrator.py         # 대화 이력 트리밍(_trim_history), 관심사 초안 추출(draft_interest_from_messages)
@@ -196,6 +197,7 @@ Science_Chatbot/
 ├── paper_screening.py    # 논문 스크리닝(②b) — 관련도만 LLM 판단, peer-review/인용수/연도는 계산·전달(한 점수로 안 합침)
 ├── paper_recommend.py    # 추천 검색(③) — 검색→스크리닝→카탈로그 recommended 기록 오케스트레이션, 관심사 수정 시 재검색(refresh_for_interest)
 ├── equipment.py          # 실험도구 저장소(⑤) RDB(SQLite) — data/app.db 공유(다른 테이블). precautions는 ⑥ 안전 가드레일이 읽음
+├── knowledge_notes.py    # 지식 노트 — 본문은 RDB(SQLite, data/app.db 공유), VDB(notes_vectorstore)는 검색용 청크만 담는 disposable 인덱스(수정 시 통째로 재색인)
 ├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
 ├── research_workflow.py  # 연구 워크플로우(⑥⑦) 그래프 — 가설 수립→실험 설계→실험 운영→실험 보고서→논문 초안. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
 ├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD)
@@ -343,6 +345,12 @@ GET /papers?status=recommended|owned|dismissed   → {"papers": [...]}
 - `POST /papers`는 `register_paper()`를 그대로 호출 — 잘못된 PDF는 400. `GET /papers`는 카탈로그 전역 조회 — 관심사별로 보려면 위 `GET /interests/{id}/papers`를 쓴다.
 
 ```
+GET /papers/{paper_id}/summary   → {"paper_id", "extraction": {...}, "from_cache", "generated_by", "tokens_used"}
+```
+
+- 논문 요약기(②a, `get_paper_summary()`)를 그대로 노출(08-03에 처음 API로 연결) — 캐시 있으면 즉시 반환(`from_cache: true`), 없으면 그 자리에서 lazy 생성(LLM 호출 1회). 미등록 paper_id는 404, 논문이 길어 컨텍스트 예산을 넘으면 422. **수정 엔드포인트는 없다** — 논문은 원본(PDF)이 따로 있는 불변 소스라 잘못되면 재등록·기각이 맞다.
+
+```
 GET /equipment                       → {"equipment": [...]}
 POST /equipment
 {
@@ -360,6 +368,17 @@ DELETE /equipment/{equipment_id}     → {"equipment_id", "action": "deleted"}  
 - 실험도구 저장소(⑤, `equipment.py`) — 그래프도 LLM 호출도 없는 순수 CRUD로 `/interests`와 같은 계약이다.
 - **수정 시 안 보낸 필드는 건드리지 않는다**: `purpose`/`detail`/`precautions`는 기본값이 `""`가 아니라 `null`(= 명시 안 함)이라, 이름만 고쳐 보내도 등록해둔 주의사항이 지워지지 않는다. 값을 실제로 비우려면 `""`를 명시적으로 보내면 된다.
 - `precautions`는 연구 워크플로우(⑥)의 안전 가드레일이 읽는다 — 실험 설계에 이 장비 이름이 등장하면 주의사항을 사용자 안내(`comment`) 맨 앞에 붙인다.
+
+```
+GET /notes                           → {"notes": [{"id","title","text","created_at","updated_at"}, ...]}
+POST /notes
+{ "title": "파인만 8장 요점", "text": "확률론적 해석의 핵심은...", "update_existing_id": null }
+→ {"note_id": 1, "action": "created"}   (update_existing_id 지정 시 "updated", 없는 id면 404)
+
+DELETE /notes/{note_id}              → {"note_id", "action": "deleted"}  (없으면 404)
+```
+
+- 지식 노트(`knowledge_notes.py`) — `/equipment`와 같은 계약(`title`/`text` 기본값이 `null`이라 안 보낸 필드는 안 지워짐). **본문은 SQLite에 저장되고 조회는 거기서 그대로 읽는다** — VDB는 `text`가 바뀔 때만 그 노트의 검색용 청크를 통째로 재색인한다(`title`만 바뀌면 VDB는 안 건드림). 목록·조회에 청크 재조합이 필요 없는 이유이자 이 설계를 그렇게 정한 이유(상세: RoadMap "지식 노트" 설계 노트).
 
 ## 평가
 

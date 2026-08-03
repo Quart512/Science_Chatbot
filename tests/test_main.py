@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import equipment
 import interests
+import knowledge_notes
 import main
 import orchestrator
 import paper.paper_ingest as paper_ingest
@@ -391,6 +392,144 @@ def test_list_papers_rejects_invalid_status():
         resp = client.get("/papers", params={"status": "bogus"})
 
     assert resp.status_code == 422
+
+
+# --- GET /papers/{paper_id}/summary (08-03) -------------------------------------
+# get_paper_summary()는 6-3부터 있었지만 API로 노출된 적이 없었다(main.py 어디서도
+# 안 부름) — 여기서 처음 연결.
+
+
+def test_get_paper_summary_endpoint_returns_extraction(monkeypatch):
+    extraction = paper_ingest.PaperExtraction(
+        core_claims=["핵심 주장"], evidence=[], author_stated_limitations=[],
+        unresolved_questions=[], code_data_availability="",
+    )
+    monkeypatch.setattr(
+        paper_ingest, "get_paper_summary",
+        lambda paper_id, **kw: {
+            "paper_id": paper_id, "extraction": extraction, "from_cache": True,
+            "generated_by": None, "tokens_used": None,
+        },
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/papers/arxiv:1/summary")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["from_cache"] is True
+    assert body["extraction"]["core_claims"] == ["핵심 주장"]  # PaperExtraction이 dict로 직렬화됨
+
+
+def test_get_paper_summary_endpoint_404_when_not_registered(monkeypatch):
+    def _boom(paper_id, **kw):
+        raise ValueError(f"paper_id={paper_id!r}: 등록된 전문 청크가 없음")
+    monkeypatch.setattr(paper_ingest, "get_paper_summary", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/papers/arxiv:없음/summary")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_summary_endpoint_422_when_context_budget_exceeded(monkeypatch):
+    from models import ContextBudgetExceeded
+
+    def _boom(paper_id, **kw):
+        raise ContextBudgetExceeded("gemini", 999999, 100)
+    monkeypatch.setattr(paper_ingest, "get_paper_summary", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/papers/arxiv:1/summary")
+
+    assert resp.status_code == 422
+
+
+# --- /notes (지식 노트, 08-03) — /equipment와 완전히 같은 패턴 -------------------
+
+
+def test_list_notes_returns_all(monkeypatch):
+    fake_notes = [{"id": 1, "title": "노트1", "text": "내용"}]
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda: fake_notes)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/notes")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"notes": fake_notes}
+
+
+def test_register_note_creates_new_when_no_update_id(monkeypatch):
+    captured = {}
+    def _fake_create(**fields):
+        captured.update(fields)
+        return 42
+    monkeypatch.setattr(knowledge_notes, "create_note", _fake_create)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/notes", json={"title": "제목", "text": "본문"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"note_id": 42, "action": "created"}
+    assert captured == {"title": "제목", "text": "본문"}
+
+
+def test_register_note_updates_existing_when_update_id_given(monkeypatch):
+    captured = {}
+    def _fake_update(note_id, **fields):
+        captured["id"] = note_id
+        captured["fields"] = fields
+        return True
+    monkeypatch.setattr(knowledge_notes, "update_note", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/notes", json={"text": "고친 본문", "update_existing_id": 7})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"note_id": 7, "action": "updated"}
+    assert captured["id"] == 7
+    assert captured["fields"] == {"text": "고친 본문"}
+
+
+def test_register_note_update_omits_fields_not_sent(monkeypatch):
+    captured = {}
+    def _fake_update(note_id, **fields):
+        captured["fields"] = fields
+        return True
+    monkeypatch.setattr(knowledge_notes, "update_note", _fake_update)
+
+    with TestClient(main.app) as client:
+        client.post("/notes", json={"title": "제목만 수정", "update_existing_id": 7})
+
+    assert captured["fields"] == {"title": "제목만 수정"}  # text는 안 보냈으니 안 넘어감
+
+
+def test_register_note_404_when_update_id_not_found(monkeypatch):
+    monkeypatch.setattr(knowledge_notes, "update_note", lambda note_id, **fields: False)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/notes", json={"title": "이름", "update_existing_id": 999})
+
+    assert resp.status_code == 404
+
+
+def test_delete_note_endpoint_returns_deleted_action(monkeypatch):
+    monkeypatch.setattr(knowledge_notes, "delete_note", lambda note_id: True)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/notes/1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"note_id": 1, "action": "deleted"}
+
+
+def test_delete_note_endpoint_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(knowledge_notes, "delete_note", lambda note_id: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/notes/999")
+
+    assert resp.status_code == 404
 
 
 # --- /equipment (실험도구 DB ⑤, /interests와 완전히 같은 패턴) -----------------

@@ -15,10 +15,12 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import equipment
 import interests
+import knowledge_notes
 import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+from models import ContextBudgetExceeded
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
 # astream() 아래서 예외가 나 비동기 버전이 필수. 컨텍스트 매니저를 요청마다 여닫을 수
@@ -208,6 +210,20 @@ def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = No
     return {"papers": paper_catalog.list_papers(status=status)}
 
 
+# 논문 내용 조회(08-03) — get_paper_summary()는 이미 있었지만 지금까지 어디서도 호출을
+# 안 해서 API로 노출된 적이 없었다. 논문은 원본(PDF)이 따로 있는 불변 소스라 수정
+# 엔드포인트는 안 둔다(잘못됐으면 재등록하거나 기각 — equipment/notes와 다른 지점).
+@app.get("/papers/{paper_id}/summary")
+def get_paper_summary_endpoint(paper_id: str):
+    try:
+        result = paper_ingest.get_paper_summary(paper_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"paper_id={paper_id}가 등록돼 있지 않습니다")
+    except ContextBudgetExceeded as e:
+        raise HTTPException(status_code=422, detail=f"논문이 길어 요약을 생성할 수 없습니다: {e}")
+    return {**result, "extraction": result["extraction"].model_dump()}
+
+
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
 # update_existing_id도 InterestRegistration과 같은 계약: None이면 새로 생성, 값이 있으면
 # 그 id를 수정.
@@ -257,3 +273,41 @@ def delete_equipment(equipment_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"실험도구 id={equipment_id}를 찾을 수 없습니다")
     return {"equipment_id": equipment_id, "action": "deleted"}
+
+
+# 지식 노트(08-03) — /equipment와 같은 패턴이되, text는 편집이 일급 연산이라(RoadMap
+# "편집이 일급 연산이다" 참고) None 기본값으로 "명시 안 함"과 "빈 값" 구분 필요.
+class NoteRegistration(BaseModel):
+    title: str | None = None
+    text: str | None = None
+    update_existing_id: int | None = None
+
+
+@app.get("/notes")
+def list_notes():
+    return {"notes": knowledge_notes.list_notes()}
+
+
+@app.post("/notes")
+def register_note(body: NoteRegistration):
+    optional = {
+        k: v for k, v in (("title", body.title), ("text", body.text))
+        if v is not None
+    }
+
+    if body.update_existing_id is not None:
+        updated = knowledge_notes.update_note(body.update_existing_id, **optional)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"노트 id={body.update_existing_id}를 찾을 수 없습니다")
+        return {"note_id": body.update_existing_id, "action": "updated"}
+
+    new_id = knowledge_notes.create_note(**optional)
+    return {"note_id": new_id, "action": "created"}
+
+
+@app.delete("/notes/{note_id}")
+def delete_note(note_id: int):
+    deleted = knowledge_notes.delete_note(note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"노트 id={note_id}를 찾을 수 없습니다")
+    return {"note_id": note_id, "action": "deleted"}

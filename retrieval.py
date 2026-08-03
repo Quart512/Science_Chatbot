@@ -26,3 +26,14 @@ papers_vectorstore = Chroma(
     collection_name=papers_collection_name,
 )
 
+# 지식 노트(08-03) 전용 컬렉션 — 검색용 청크만 담는 disposable 인덱스다. 진짜 텍스트는
+# knowledge_notes.py가 SQLite(data/app.db)에 두고 편집도 거기서 한다(관심사를 VDB에서
+# RDB로 옮긴 것과 같은 이유 — "편집이 일급 연산이면 VDB가 안 맞는다", RoadMap 07-28
+# 참고). 이 컬렉션은 노트가 수정될 때마다 그 노트 몫을 통째로 지우고 다시 만든다.
+notes_collection_name = "notes"
+notes_vectorstore = Chroma(
+    persist_directory=persist_directory,
+    embedding_function=embeddings,
+    collection_name=notes_collection_name,
+)
+
