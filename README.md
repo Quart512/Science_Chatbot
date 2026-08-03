@@ -201,13 +201,14 @@ Science_Chatbot/
 ├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
 ├── research_workflow.py  # 연구 워크플로우(⑥⑦) 그래프 — 가설 수립→실험 설계→실험 운영→실험 보고서→논문 초안. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
 ├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD)
-├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사 탭)
+├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사/실험도구 탭)
 │   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
 │   ├── common.py             # BACKEND_URL 등 공용 설정
 │   └── views/
 │       ├── chat.py               # 메인 챗 화면
 │       ├── papers.py             # 논문 탭 — 등록 폼(POST /papers) + 카탈로그 조회(GET /papers)
-│       └── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
+│       ├── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
+│       └── equipment.py          # 실험도구 탭(08-03) — 카드별 생성/수정/삭제, precautions는 경고 배너로 표시
 └── .env                  # API 키 (git 제외)
 ```
 
