@@ -278,55 +278,38 @@ def test_find_design_references_appends_with_stage_tag(monkeypatch):
     assert result["references"][0]["added_by_stage"] == "design"
 
 
-# --- advance_to_design() ------------------------------------------------------
-# 그래프 자동 엣지가 아니라 사용자가 "설계 진행"을 트리거했을 때 main.py가
-# aget_state/aupdate_state로 감싸 부를 평범한 함수(08-02, 사용자 판단). 여기선 그래프
-# 없이 함수만 직접 검증 — aget_state/aupdate_state 배관은 main.py에 실제로 붙일 때 확인.
+# --- route_by_stage() + 그래프 라우팅 통합 확인 --------------------------------
+# 단계 전환은 글루 함수(advance_to_design, 폐기됨)가 아니라 START의 조건부 엣지가
+# state.stage를 보고 담당한다(08-02, 사용자 제안 — 토이 그래프로 실제 동작 확인 후
+# 채택). 여기서는 route_by_stage() 자체(순수 함수)와, 실제 컴파일된 그래프가 stage
+# 갱신 후 재호출 시 올바른 노드로 가는지(+ 이전 단계 값을 그대로 보는지)를 인메모리
+# 체크포인터(MemorySaver, 파일 I/O 없음)로 확인한다.
 
 
-def test_advance_to_design_combines_design_and_reference_updates(monkeypatch):
-    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
-    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
-    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
-
-    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
-    result = research_workflow.advance_to_design(state)
-
-    assert result["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"
-    assert result["references"][0]["paper_id"] == "p1"
-    assert result["references"][0]["added_by_stage"] == "design"
-    assert "재생성" in result["comment"]
+def test_route_by_stage_returns_stage_field():
+    state = research_workflow.WorkflowState(topic="주제", stage="design")
+    assert research_workflow.route_by_stage(state) == "design"
 
 
-def test_advance_to_design_searches_references_using_freshly_designed_procedure(monkeypatch):
-    # find_design_references가 advance_to_design 호출 시점의 낡은 state.procedure(빈 값)가
-    # 아니라 방금 design_experiment가 만든 procedure로 검색해야 한다 — 그래서 두 호출을
-    # 하나로 합칠 때 중간 state를 갱신해서 넘기는지가 이 테스트의 핵심.
-    monkeypatch.setattr(
-        research_workflow, "invoke_with_fallback",
-        lambda *a, **kw: _fake_design_result(procedure="새로 설계된 절차"),
-    )
-    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
-    captured = {}
-    def _fake_recommend(text):
-        captured["text"] = text
-        return []
-    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+def test_graph_routes_to_design_after_stage_update_and_sees_prior_hypothesis(monkeypatch):
+    from langgraph.checkpoint.memory import MemorySaver
 
-    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", procedure="")
-    research_workflow.advance_to_design(state)
-
-    assert captured["text"] == "새로 설계된 절차"
-
-
-def test_advance_to_design_does_not_mutate_original_state(monkeypatch):
-    # model_copy(update=...)는 새 객체를 만들어야 한다 — 원래 state 객체를 직접
-    # 건드리면 호출자(aget_state로 읽은 스냅샷)가 예상 못 한 부작용을 겪는다.
-    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
-    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result(statement="가설X"))
     monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [])
 
-    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
-    research_workflow.advance_to_design(state)
+    app = research_workflow.graph.compile(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "t1"}}
 
-    assert state.procedure == ""  # 원본은 그대로
+    first = app.invoke({"topic": "주제"}, config=config)
+    assert first["hypothesis"] == "가설X"  # 기본 stage="hypothesis" → generate_hypothesis로 라우팅됨
+
+    # design 단계 로직으로 갈아끼움(가설 생성 몽키패치가 그대로면 design_experiment의
+    # invoke_with_fallback 호출도 HypothesisOutput을 기대하게 되므로 별도로 갈아끼움)
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+
+    app.update_state(config, {"stage": "design"}, as_node="__start__")
+    second = app.invoke({}, config=config)
+
+    assert second["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # design_experiment로 라우팅됨
+    assert second["hypothesis"] == "가설X"  # 1단계에서 저장된 값을 그대로 봄

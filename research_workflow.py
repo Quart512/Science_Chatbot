@@ -7,6 +7,17 @@
 # 가설 수립 → 실험 설계까지 연결됐다. 실험 운영·안전 가드레일(interrupt_before HITL)은
 # 다음 단위(RoadMap "연구 워크플로우(⑥)" 참고) — 노드 하나마다 검증하고 다음으로 넘어간다.
 #
+# 단계 전환은 START의 조건부 엣지(route_by_stage)가 state.stage를 보고 담당한다(08-02,
+# 사용자 제안 — 처음엔 aget_state로 읽어 파이썬 함수를 직접 부르고 aupdate_state로
+# 쓰는 방식(advance_to_design)으로 짰다가, "그냥 START에서 라우팅하면 안 되냐"는 지적을
+# 받고 실제로 되는지 확인한 뒤(별도 토이 그래프로 재현) 이 방식으로 교체했다). 사람이
+# "다음 단계로" 트리거하면 호출부가 `aupdate_state(config, {"stage": "design"})` 후
+# `ainvoke({}, config)`(빈 입력)를 부르기만 하면 된다 — 라우터가 알아서 design_experiment로
+# 보내고, 그 노드는 체크포인트에 이미 있는 hypothesis 등을 그대로 본다. 이 방식이 더
+# 나은 이유: 모든 단계가 똑같이 그래프 엔진(스트리밍·트레이싱 포함)을 타서 1단계만
+# 특별 취급하던 비일관성이 없고, 단계가 늘어도 새 글루 함수 없이 라우팅 분기+엣지만
+# 추가하면 된다.
+#
 # 실험 설계는 README상 "Plan-and-Execute"가 핵심 기법으로 적혀 있지만(계획자가 단계를
 # 짜고 실행자가 tool 호출을 섞어가며 수행, 필요시 재계획하는 멀티스텝 에이전트 패턴),
 # 여기선 그 분리를 안 한다(08-02, 사용자 판단) — Plan-and-Execute가 원래 막으려는 건
@@ -35,6 +46,11 @@ def _add_tokens(current: dict, new: dict) -> dict:
 
 class WorkflowState(BaseModel):
     topic: str  # 사용자가 준 연구 주제·질문
+    # 지금 어느 단계인지 — START의 조건부 엣지가 이 값으로 라우팅한다. 기본값이
+    # "hypothesis"라 처음 만드는 thread는 자동으로 가설 단계부터 시작하고, 사용자가
+    # "다음 단계로"를 누르면 호출부가 이 필드만 갱신(aupdate_state)한 뒤 빈 입력으로
+    # 다시 invoke하면 된다.
+    stage: Literal["hypothesis", "design"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
     hypothesis: str = ""
@@ -172,33 +188,23 @@ def design_experiment(state: WorkflowState) -> dict:
     }
 
 
-def advance_to_design(state: WorkflowState) -> dict:
-    """가설(+참고문헌) 검토가 끝난 뒤 사용자가 명시적으로 "설계 진행"을 트리거했을 때
-    부르는 함수 — 그래프 자동 엣지가 아니다(08-02, 사용자 판단). 단계 사이 전환(가설→
-    설계, 설계→운영)은 전부 사람이 검토·재생성 여부를 판단한 뒤에만 넘어가야 하는데,
-    그래프가 자동으로 다음 노드까지 실행해버리면 검토할 틈이 없다 — `find_hypothesis_
-    references`의 comment("확인하고 재생성하세요")가 정확히 그 검토를 전제한다.
-
-    호출하는 쪽(main.py, 아직 미구현)이 `aget_state()`로 현재 WorkflowState를 읽고
-    이 함수를 부른 뒤 `aupdate_state()`로 다시 쓰는 패턴을 쓴다 — orchestrator.py의
-    disabled_models 공유(08-02)와 같은 메커니즘. 그래프를 다시 invoke하지 않는 이유:
-    그러면 START부터 다시 돌아 generate_hypothesis가 새 가설을 만들어버린다.
-
-    design_experiment()·find_design_references()는 원래도 평범한 함수라(그래프 노드로
-    등록돼 있을 뿐 특별한 게 없음) 그대로 순서대로 호출하고 결과만 합친다.
-    """
-    design_update = design_experiment(state)
-    state_after_design = state.model_copy(update=design_update)
-    refs_update = find_design_references(state_after_design)
-    return {**design_update, **refs_update}
+def route_by_stage(state: WorkflowState) -> str:
+    return state.stage
 
 
 graph = StateGraph(WorkflowState)
 graph.add_node("generate_hypothesis", generate_hypothesis)
 graph.add_node("find_hypothesis_references", find_hypothesis_references)
-graph.add_edge(START, "generate_hypothesis")
+graph.add_node("design_experiment", design_experiment)
+graph.add_node("find_design_references", find_design_references)
+graph.add_conditional_edges(START, route_by_stage, {
+    "hypothesis": "generate_hypothesis",
+    "design": "design_experiment",
+})
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
 graph.add_edge("find_hypothesis_references", END)
+graph.add_edge("design_experiment", "find_design_references")
+graph.add_edge("find_design_references", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -234,14 +240,10 @@ if __name__ == "__main__":
             print("참고문헌(가설):", [r["title"] for r in result["references"]])
             print("안내:", result["comment"])
 
-            # 2단계: "설계 진행" 트리거 — 그래프를 다시 invoke하는 게 아니라 aget_state로
-            # 읽고 advance_to_design()을 부른 뒤 aupdate_state로 씀(main.py가 실제로 쓸 패턴).
-            snapshot = await app.aget_state(config)
-            state = WorkflowState(**snapshot.values)
-            design_update = advance_to_design(state)
-            await app.aupdate_state(config, design_update, as_node="__start__")
-
-            final = (await app.aget_state(config)).values
+            # 2단계: "설계 진행" 트리거 — stage만 갱신하고 빈 입력으로 다시 invoke하면
+            # 라우터가 design_experiment로 보낸다(main.py가 실제로 쓸 패턴).
+            await app.aupdate_state(config, {"stage": "design"}, as_node="__start__")
+            final = await app.ainvoke({}, config=config)
             print("독립변수:", final["independent_variable"])
             print("종속변수:", final["dependent_variable"])
             print("통제변수:", final["controlled_variables"])
