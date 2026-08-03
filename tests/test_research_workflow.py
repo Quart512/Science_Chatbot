@@ -276,3 +276,57 @@ def test_find_design_references_appends_with_stage_tag(monkeypatch):
     result = research_workflow.find_design_references(state)
 
     assert result["references"][0]["added_by_stage"] == "design"
+
+
+# --- advance_to_design() ------------------------------------------------------
+# 그래프 자동 엣지가 아니라 사용자가 "설계 진행"을 트리거했을 때 main.py가
+# aget_state/aupdate_state로 감싸 부를 평범한 함수(08-02, 사용자 판단). 여기선 그래프
+# 없이 함수만 직접 검증 — aget_state/aupdate_state 배관은 main.py에 실제로 붙일 때 확인.
+
+
+def test_advance_to_design_combines_design_and_reference_updates(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.advance_to_design(state)
+
+    assert result["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"
+    assert result["references"][0]["paper_id"] == "p1"
+    assert result["references"][0]["added_by_stage"] == "design"
+    assert "재생성" in result["comment"]
+
+
+def test_advance_to_design_searches_references_using_freshly_designed_procedure(monkeypatch):
+    # find_design_references가 advance_to_design 호출 시점의 낡은 state.procedure(빈 값)가
+    # 아니라 방금 design_experiment가 만든 procedure로 검색해야 한다 — 그래서 두 호출을
+    # 하나로 합칠 때 중간 state를 갱신해서 넘기는지가 이 테스트의 핵심.
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_design_result(procedure="새로 설계된 절차"),
+    )
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_recommend(text):
+        captured["text"] = text
+        return []
+    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", procedure="")
+    research_workflow.advance_to_design(state)
+
+    assert captured["text"] == "새로 설계된 절차"
+
+
+def test_advance_to_design_does_not_mutate_original_state(monkeypatch):
+    # model_copy(update=...)는 새 객체를 만들어야 한다 — 원래 state 객체를 직접
+    # 건드리면 호출자(aget_state로 읽은 스냅샷)가 예상 못 한 부작용을 겪는다.
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [])
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    research_workflow.advance_to_design(state)
+
+    assert state.procedure == ""  # 원본은 그대로

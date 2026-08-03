@@ -172,16 +172,33 @@ def design_experiment(state: WorkflowState) -> dict:
     }
 
 
+def advance_to_design(state: WorkflowState) -> dict:
+    """가설(+참고문헌) 검토가 끝난 뒤 사용자가 명시적으로 "설계 진행"을 트리거했을 때
+    부르는 함수 — 그래프 자동 엣지가 아니다(08-02, 사용자 판단). 단계 사이 전환(가설→
+    설계, 설계→운영)은 전부 사람이 검토·재생성 여부를 판단한 뒤에만 넘어가야 하는데,
+    그래프가 자동으로 다음 노드까지 실행해버리면 검토할 틈이 없다 — `find_hypothesis_
+    references`의 comment("확인하고 재생성하세요")가 정확히 그 검토를 전제한다.
+
+    호출하는 쪽(main.py, 아직 미구현)이 `aget_state()`로 현재 WorkflowState를 읽고
+    이 함수를 부른 뒤 `aupdate_state()`로 다시 쓰는 패턴을 쓴다 — orchestrator.py의
+    disabled_models 공유(08-02)와 같은 메커니즘. 그래프를 다시 invoke하지 않는 이유:
+    그러면 START부터 다시 돌아 generate_hypothesis가 새 가설을 만들어버린다.
+
+    design_experiment()·find_design_references()는 원래도 평범한 함수라(그래프 노드로
+    등록돼 있을 뿐 특별한 게 없음) 그대로 순서대로 호출하고 결과만 합친다.
+    """
+    design_update = design_experiment(state)
+    state_after_design = state.model_copy(update=design_update)
+    refs_update = find_design_references(state_after_design)
+    return {**design_update, **refs_update}
+
+
 graph = StateGraph(WorkflowState)
 graph.add_node("generate_hypothesis", generate_hypothesis)
 graph.add_node("find_hypothesis_references", find_hypothesis_references)
-graph.add_node("design_experiment", design_experiment)
-graph.add_node("find_design_references", find_design_references)
 graph.add_edge(START, "generate_hypothesis")
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
-graph.add_edge("find_hypothesis_references", "design_experiment")
-graph.add_edge("design_experiment", "find_design_references")
-graph.add_edge("find_design_references", END)
+graph.add_edge("find_hypothesis_references", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -205,19 +222,32 @@ if __name__ == "__main__":
         ensure_checkpoint_dir()
         async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB_PATH) as checkpointer:
             app = graph.compile(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": "test"}}
+
+            # 1단계: 가설 생성 — 그래프 정식 invoke(fresh thread라 START부터)
             result = await app.ainvoke(
-                {"topic": "그래핀의 전기전도도는 온도에 어떻게 의존하는가"},
-                config={"configurable": {"thread_id": "test"}},
+                {"topic": "그래핀의 전기전도도는 온도에 어떻게 의존하는가"}, config=config,
             )
             print("가설:", result["hypothesis"])
             print("근거:", result["rationale"])
             print("예측:", result["testable_prediction"])
-            print("독립변수:", result["independent_variable"])
-            print("종속변수:", result["dependent_variable"])
-            print("통제변수:", result["controlled_variables"])
-            print("필요 장비:", result["equipment_needed"])
-            print("절차:", result["procedure"])
-            print("참고문헌:", [r["title"] for r in result["references"]])
+            print("참고문헌(가설):", [r["title"] for r in result["references"]])
             print("안내:", result["comment"])
+
+            # 2단계: "설계 진행" 트리거 — 그래프를 다시 invoke하는 게 아니라 aget_state로
+            # 읽고 advance_to_design()을 부른 뒤 aupdate_state로 씀(main.py가 실제로 쓸 패턴).
+            snapshot = await app.aget_state(config)
+            state = WorkflowState(**snapshot.values)
+            design_update = advance_to_design(state)
+            await app.aupdate_state(config, design_update, as_node="__start__")
+
+            final = (await app.aget_state(config)).values
+            print("독립변수:", final["independent_variable"])
+            print("종속변수:", final["dependent_variable"])
+            print("통제변수:", final["controlled_variables"])
+            print("필요 장비:", final["equipment_needed"])
+            print("절차:", final["procedure"])
+            print("참고문헌(전체):", [r["title"] for r in final["references"]])
+            print("안내:", final["comment"])
 
     asyncio.run(_smoke_test())
