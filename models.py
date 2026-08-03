@@ -20,6 +20,19 @@ import traceback
 #api key 가져오기
 load_dotenv()
 
+# tokens_used 누적 헬퍼. new(provider의 usage_metadata)는 통제 밖 값이라 .get(..., 0)으로
+# 방어하고, 이 세 스칼라 키만 더한다 — provider별 중첩 세부 항목(dict)까지 합치면 타입 에러.
+# 원래 graph.py에 있었는데 연구 워크플로우·참고문헌 추천기까지 세 곳이 같은 코드를 갖게 돼
+# 여기로 올렸다(토큰은 모델 호출의 부산물이라 "모델 정책은 models.py 단일 지점" 규칙에 맞음).
+TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
+
+EMPTY_TOKENS = {k: 0 for k in TOKEN_KEYS}
+
+
+def add_tokens(current: dict, new: dict) -> dict:
+    return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
+
+
 model_map = {
     # flash-lite가 무료 티어 일일 한도가 훨씬 높음(구글 공식 문서 확인, 2026-07)
     "gemini": ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite"),

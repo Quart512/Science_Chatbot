@@ -10,7 +10,7 @@ from langgraph.graph.message import add_messages
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage, RemoveMessage
 
-from models import invoke_with_fallback, model_map
+from models import add_tokens, invoke_with_fallback, model_map
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
 from paper import paper_ingest
@@ -23,12 +23,9 @@ from paper import paper_ingest
 # len(messages)로 명시 전달(이번 호출에서 새로 쌓인 메시지 경계).
 
 
-# tokens_used 누적 헬퍼. new(provider의 usage_metadata)는 통제 밖 값이라 .get(...,0)으로
-# 방어. 이 세 스칼라 키만 더함 — provider별 중첩 세부 항목(dict)까지 합치면 타입 에러.
-TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
-
-def _add_tokens(current: dict, new: dict) -> dict:
-    return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
+# tokens_used 누적 헬퍼(_add_tokens)는 models.py의 add_tokens로 옮겼다 — 연구 워크플로우·
+# 참고문헌 추천기까지 쓰게 되면서 같은 코드가 세 벌이 됐고, 토큰은 모델 호출의 부산물이라
+# "모델 정책은 models.py 단일 지점" 규칙에 속한다.
 
 
 # effort → 실제 top_k/limit 매핑. 숫자 자체는 이 능력만의 내부 지식이라 여기 둔다 —
@@ -236,7 +233,7 @@ def generate(state: State) -> dict:
             "fix_needed": False, 
             "generated_by": generated_by,
             "disabled_models": disabled_models,
-            "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+            "tokens_used": add_tokens(state.tokens_used, tokens_used),
             "trace" : state.trace+
             f"""------\n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}"""
             }
@@ -379,7 +376,7 @@ def verify(state: State) ->dict:
             "needs_more_context" : answer.needs_more_context,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : disabled_models,
-            "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+            "tokens_used": add_tokens(state.tokens_used, tokens_used),
             "trace" : state.trace+
             f"""------\n {state.try_count+1}번째 verify 결과: {fix_needed}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}\n {verified_by} 모델로 verify됨\n {answer.comment} """,
             # verify가 structured output으로 직접 뽑아준 사용자용 코멘트 — 트레이스에 파묻지 않고 그대로.
@@ -458,7 +455,7 @@ def final_answer(state: State) ->dict:
 
     result = {"answer": final_text, "comment": comment_text, "messages": prune + clean_msgs}
     if tokens_used is not None:
-        result["tokens_used"] = _add_tokens(state.tokens_used, tokens_used)
+        result["tokens_used"] = add_tokens(state.tokens_used, tokens_used)
     return result
       
 # === 그래프 빌더 생성 === <-langchain의 chain과 동격

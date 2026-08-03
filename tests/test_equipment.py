@@ -19,6 +19,35 @@ def conn():
     c.close()
 
 
+def test_init_schema_adds_missing_column_to_existing_table():
+    # precautions가 없던 시절(3필드)에 만들어진 DB — 실제로 배포 환경에 남아있을 수 있는
+    # 상태다. `CREATE TABLE IF NOT EXISTS`만으로는 컬럼이 안 생기므로, init_schema()가
+    # ALTER TABLE로 채워주지 않으면 아래 INSERT가 "no such column"으로 터진다.
+    old = sqlite3.connect(":memory:")
+    old.row_factory = sqlite3.Row
+    old.executescript("""
+        CREATE TABLE equipment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    old.execute(
+        "INSERT INTO equipment (name, created_at, updated_at) VALUES ('구형 장비', 'x', 'x')"
+    )
+    old.commit()
+
+    equipment.init_schema(old)
+
+    equipment_id = equipment.create_equipment("새 장비", precautions="주의", conn=old)
+    assert equipment.get_equipment(equipment_id, conn=old)["precautions"] == "주의"
+    assert equipment.get_equipment(1, conn=old)["precautions"] == ""  # 기존 행은 DEFAULT로 채워짐
+    old.close()
+
+
 def test_create_equipment_returns_new_id(conn):
     equipment_id = equipment.create_equipment("오실로스코프", conn=conn)
     assert equipment_id == 1
@@ -29,12 +58,14 @@ def test_create_equipment_stores_all_fields(conn):
         "오실로스코프",
         purpose="전기 신호 파형 관찰",
         detail="대역폭 100MHz, 2채널",
+        precautions="입력 전압 정격 초과 금지",
         conn=conn,
     )
     row = equipment.get_equipment(equipment_id, conn=conn)
     assert row["name"] == "오실로스코프"
     assert row["purpose"] == "전기 신호 파형 관찰"
     assert row["detail"] == "대역폭 100MHz, 2채널"
+    assert row["precautions"] == "입력 전압 정격 초과 금지"
     assert row["created_at"] == row["updated_at"]  # 생성 직후엔 두 값이 같아야 함
 
 
@@ -43,6 +74,7 @@ def test_create_equipment_defaults_purpose_and_detail_to_empty_string(conn):
     row = equipment.get_equipment(equipment_id, conn=conn)
     assert row["purpose"] == ""
     assert row["detail"] == ""
+    assert row["precautions"] == ""
 
 
 def test_get_equipment_returns_none_when_not_found(conn):
@@ -80,6 +112,15 @@ def test_update_equipment_bumps_updated_at_but_not_created_at(conn):
     after = equipment.get_equipment(equipment_id, conn=conn)
     assert after["created_at"] == before["created_at"]
     assert after["updated_at"] >= before["updated_at"]
+
+
+def test_update_equipment_can_set_precautions(conn):
+    equipment_id = equipment.create_equipment("이름", conn=conn)
+    updated = equipment.update_equipment(equipment_id, precautions="주의사항 추가", conn=conn)
+
+    row = equipment.get_equipment(equipment_id, conn=conn)
+    assert updated is True
+    assert row["precautions"] == "주의사항 추가"
 
 
 def test_update_equipment_returns_false_when_id_not_found(conn):

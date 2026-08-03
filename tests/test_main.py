@@ -370,17 +370,22 @@ def test_list_equipment_returns_all(monkeypatch):
 
 def test_register_equipment_creates_new_when_no_update_id(monkeypatch):
     captured = {}
-    def _fake_create(name, purpose="", detail="", **kw):
-        captured.update(name=name, purpose=purpose)
+    def _fake_create(name, **fields):
+        captured.update(name=name, fields=fields)
         return 42
     monkeypatch.setattr(equipment, "create_equipment", _fake_create)
 
     with TestClient(main.app) as client:
-        resp = client.post("/equipment", json={"name": "오실로스코프", "purpose": "파형 관찰"})
+        resp = client.post(
+            "/equipment",
+            json={"name": "오실로스코프", "purpose": "파형 관찰", "precautions": "정격 초과 금지"},
+        )
 
     assert resp.status_code == 200
     assert resp.json() == {"equipment_id": 42, "action": "created"}
-    assert captured == {"name": "오실로스코프", "purpose": "파형 관찰"}
+    assert captured["name"] == "오실로스코프"
+    assert captured["fields"]["purpose"] == "파형 관찰"
+    assert captured["fields"]["precautions"] == "정격 초과 금지"  # 안전 정보가 실제로 전달되는지
 
 
 def test_register_equipment_updates_existing_when_update_id_given(monkeypatch):
@@ -401,6 +406,37 @@ def test_register_equipment_updates_existing_when_update_id_given(monkeypatch):
     assert resp.json() == {"equipment_id": 7, "action": "updated"}
     assert captured["id"] == 7
     assert captured["fields"]["name"] == "고친 이름"
+
+
+def test_register_equipment_update_omits_fields_not_sent(monkeypatch):
+    # 이름만 고쳐 보낸 요청이 등록해둔 precautions(안전 주의사항)를 ""로 덮어쓰면 안 된다 —
+    # 보내지 않은 필드는 update_equipment()에 아예 안 넘어가야 기존 값이 유지된다.
+    captured = {}
+    def _fake_update(equipment_id, **fields):
+        captured["fields"] = fields
+        return True
+    monkeypatch.setattr(equipment, "update_equipment", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/equipment", json={"name": "고친 이름", "update_existing_id": 7})
+
+    assert resp.status_code == 200
+    assert captured["fields"] == {"name": "고친 이름"}  # purpose/detail/precautions는 없음
+
+
+def test_register_equipment_update_can_clear_field_when_explicitly_empty(monkeypatch):
+    # "명시 안 함"(None)과 "빈 값으로 설정"(""))의 구분 — 빈 문자열을 실제로 보내면
+    # 지우는 게 맞다(위 테스트가 막는 건 안 보낸 필드가 지워지는 것뿐).
+    captured = {}
+    def _fake_update(equipment_id, **fields):
+        captured["fields"] = fields
+        return True
+    monkeypatch.setattr(equipment, "update_equipment", _fake_update)
+
+    with TestClient(main.app) as client:
+        client.post("/equipment", json={"name": "이름", "precautions": "", "update_existing_id": 7})
+
+    assert captured["fields"]["precautions"] == ""
 
 
 def test_register_equipment_404_when_update_id_not_found(monkeypatch):

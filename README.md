@@ -1,6 +1,6 @@
 # Science Chatbot — 물리 연구 어시스턴트
 
-실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**이며, 현재는 그 핵심 능력인 **Self-RAG 스타일 물리 QA 에이전트**가 동작한다.
+실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**다. 현재는 **Self-RAG 물리 QA**(메인 챗) · **논문 파이프라인**(요약기·스크리닝·추천 검색·카탈로그, 라이브러리 화면 포함) · **연구 워크플로우**(가설 수립→실험 설계→실험 운영, 백엔드만)가 동작한다.
 
 ## 문서 안내
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
-| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다 |
+| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·**🧪 라이브 검증 체크리스트**·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다. **pytest로 못 잡아 미뤄둔 확인이 생기면 체크리스트에 추가** |
 | **To Do List** (Obsidian 칸반) | 실행 순서만 (한 줄 요약 — **세부 내용의 정본은 RoadMap**) | 상시 — RoadMap과 짝으로 동기화 |
 | **docs/README_08~13.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
@@ -29,7 +29,7 @@
 | 표면 | 형태 | 내용 |
 |---|---|---|
 | 메인 챗 | 상시 대화형 | 물리 QA(④)만 수행. 당초 얇은 라우터로 QA/문서 작성기 호출/추천 조회를 분기하려 했으나(08-10) 재검토 결과 등록·조회는 라우터가 아니라 각 표면의 버튼·폼이 직접 트리거하는 쪽으로 정리됨(07-24 "등록·조회는 폼+어시스트" 원칙과 일치) — 상세: [docs/RoadMap.md](docs/RoadMap.md) 설계 노트 "메인 챗 라우터 착수 보류" |
-| 연구 워크플로우 | 단계형·HITL | 가설 수립 → 실험 설계 → 실험 운영 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면 |
+| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면. **백엔드 그래프는 구현**(`research_workflow.py`, 체크포인트 영속화), 화면은 ⑦까지 나온 뒤 라이브러리와 함께 |
 | 라이브러리 | 관리 UI (탭) | 관심사·논문·실험도구·지식 노트를 등록·조회·관리하는 통합 화면. 관심사 탭: 관심사 카드별 보유/추천/권위 논문 목록 + "지금 검색" 트리거(③). 논문 탭: PDF·DOI·arxiv id 등록 → 전문 인코딩, 요약은 요청 시 생성(②a) (등록의 주 경로 — 메인 챗 붙여넣기는 보조). 편집은 폼 + AI 어시스트(문서 작성기) |
 
 > **후순위 아이디어 — 피드 표면**: 관심사와 무관하게 hype 소식을 cron 크롤링 → 키워드 태깅 → 관심사와 일치하는 키워드를 강조·상단 정렬하는 화면. 방향은 유효하지만 지금 규모(혼자 사용)에 크롤링 인프라와 cron 스케줄러까지 얹는 건 과하다고 판단해 **후순위로 내렸다.** 착수한다면 라이브러리 표면·프론트 스택 전환과 묶어서 UI 작업으로 함께 진행한다. `docs/architecture.png`에는 아직 표면 4개로 그려져 있다 — 다음 아키텍처 변경 때 함께 갱신.
@@ -43,11 +43,11 @@
 | 논문 스크리닝 (②b) | **abstract만** 보고 관련도 판정(유일한 LLM 판단) + 확인 가능한 축 병기: peer-review 여부(arXiv `journal_ref`), 연간 인용수, 출판 연도. 전문을 읽지 않는다(유료 저널은 읽을 수도 없음). **단일 점수로 합치지 않는다** | 경량 판정 (LLM은 관련도만, 나머지는 계산·조회) | 추천 검색(③) · 참고문헌 추천기 |
 | 논문 검색 (어댑터) | 쿼리 → 후보 목록(abstract + 서지 + 지표). arxiv·웹 검색 → 나중에 Crossref/OpenAlex로 교체 | 검색 함수 (LLM 거의 불필요) | 추천 검색(③) · 참고문헌 추천기 |
 | 문서 작성기 (①⑤ 공용) | 대화 → 템플릿 초안(구조화 출력) → 폼에서 확인·수정 후 저장. **`interrupt` 기반 HITL은 07-31에 폐기**(초안 확인·수정은 이미 정상적인 멀티턴 대화·평범한 폼 제출이라 실행 중단·재개가 애초에 불필요했음). **매 턴 자동으로 도는 제안 훅도 08-02에 폐기** — 표면의 명시적 버튼(사용자가 누른 것 자체가 의도 신호)이 생기자 "반복해서 언급됐는가"를 매 턴 LLM에게 묻던 자동 훅이 불필요해져 통째로 삭제(중복 검사 기능도 재활용할 곳이 없어 같이 없앰) — 지금은 버튼 트리거 하나로만 존재 | 구조화 출력 초안 생성 + 폼 확인 (HITL 아님) | 라이브러리(버튼) — 템플릿만 갈아끼움(관심사/실험도구) |
-| 가설 수립 | 검증 가능한 가설 생성 | - | 연구 워크플로우 |
-| 실험 설계 | 가설 → 실험 프로토콜 (변수·통제조건·장비) | Plan-and-Execute | 연구 워크플로우 |
-| 실험 운영 | 도구·자원 점검, 진행 추적, 결과 분석 → 재설계 요청 | - | 연구 워크플로우 |
+| 가설 수립 | 주제 → 검증 가능한 가설 + 근거 + 검증 가능한 예측(구조화 출력) ← **현재 구현**(`research_workflow.generate_hypothesis`) | LLM 호출 1회 | 연구 워크플로우 |
+| 실험 설계 | 가설·예측 + 보유 장비 목록 → 실험 프로토콜(독립/종속/통제변수·필요 장비·절차) ← **현재 구현**(`research_workflow.design_experiment`) | LLM 호출 1회(08-02, 사용자 판단 — Plan-and-Execute는 분리 안 함: 산출물 자체가 설계 문서라 계획과 별개인 "실행"이 없어서) | 연구 워크플로우 |
+| 실험 운영 | **사람이 실제로 실험하고 입력한 결과**를 가설·예측·절차와 비교해 분석 → 재설계 필요 여부 판정 ← **현재 구현**(`research_workflow.analyze_results`). LLM이 실험을 대신 하지 않는다 | LLM 호출 1회 + 장비 주의사항 조회(결정론적) | 연구 워크플로우 |
 | 논문 작성 | 실험 결과·사용자 문서 기반 초안 → 보유 논문 요약(②a)으로 자체 검토·재작성. 워크플로우가 누적한 references 목록 소비 + 인용-근거 일치 검증 | Evaluator-Optimizer | 연구 워크플로우 |
-| 참고문헌 추천기 | 텍스트(초안 문단·답변)에서 주장·키워드 추출 → 보유 논문 VDB 우선 검색 → 부족하면 논문 검색 → ②b 스크리닝 → 랭킹·서지 리스트 | 온디맨드 (③과 검색·스크리닝 공용) | 연구 워크플로우 각 단계 · 논문 작성(⑦) · 메인 챗(④) 온디맨드 |
+| 참고문헌 추천기 | 텍스트(초안 문단·답변)에서 주장·키워드 추출 → 보유 논문 VDB 우선 검색 → 부족하면 논문 검색 → ②b 스크리닝 → 랭킹·서지 리스트 ← **현재 구현**(`reference_recommender.py`) | 온디맨드 (③과 검색·스크리닝 공용) | 연구 워크플로우 각 단계(연동됨) · 논문 작성(⑦, 미구현) · 메인 챗(④, 미구현) |
 | 추천 검색 (③) | 관심사 기준 논문 검색 → **②b 스크리닝**(abstract + 지표) → 랭킹 → 카탈로그에 recommended 기록. 권위 논문 목록(지표 기반)도 조회·캐시 | **관심사에서 트리거할 때만** 실행 (cron 아님) | 라이브러리 관심사 탭 · 메인 챗 |
 | ~~피드 수집~~ | hype 소식 크롤링 → 키워드 태깅 → 관심사 키워드 매칭 | cron 배치 | **후순위** — 피드 표면과 함께 보류 (위 참고) |
 | 번역 레이어 | 응답 직전 한국어 후처리 (원문 병기) | 후처리 노드 | 표면 공용 |
@@ -60,9 +60,9 @@
 | 논문 VDB (②) | **보유 논문의 전문 청크(등록 시 인코딩) + 요약(lazy 생성·캐시)** ← **현재 구현**(`retrieval.py`의 `papers_vectorstore`) | VDB 컬렉션(`feynman`과 별도) — `doc_type: fulltext_chunk / summary`로 구분(호출자에 따라 필터 — 안 하면 같은 논문의 전문과 요약이 중복 근거로 검색됨) + 서지정보(제목·저자·연도, 인용 포맷의 전제) |
 | 논문 카탈로그 | 논문 상태·서지·지표 관리 (논문 VDB는 내용 검색용, 카탈로그는 상태 관리용 — 역할 분리) | 구조화 레코드(SQLite). 기본 키는 **정규화된 `paper_id`**(`doi:...` → `arxiv:...` → 내용 해시 순), DOI는 별도 nullable·unique 컬럼 — arXiv preprint는 DOI가 없고 업로드 PDF는 둘 다 없을 수 있으며, 나중에 게재돼 DOI가 생겨도 `paper_id`는 불변. `status: recommended / owned / dismissed` — 등록 시 DOI 매칭으로 recommended → owned 자동 전환(추천 목록에서 내려감). **지표 필드(저널·인용수)는 스키마에 미리 두고 비워둔다** — arxiv만 쓰는 초기엔 값이 없고, API 어댑터를 붙일 때 채우면 코드 변경 없음 |
 | 지식 노트 | 사용자의 지식체계 (노트·정리 문서) | VDB 컬렉션 — `source_type: user_note`로 논문·코퍼스와 **신뢰도 구분** (RAG 검색은 되지만 사실 근거로는 논문·코퍼스 우선) |
-| 실험도구 DB (⑤) | 장비 spec | **RDB(SQLite)** — 임베딩하지 않는다. 실험 설계가 던질 질문이 "측정 범위가 X 이상인 장비 있나?" 같은 **범위 조건 조회**라 VDB가 원리적으로 못 하는 일이다. 자연어로 장비를 찾고 싶으면 목록이 짧으니 프롬프트에 넣으면 된다 |
+| 실험도구 DB (⑤) | 장비 spec + 주의사항(`precautions`) | **RDB(SQLite)** — 임베딩하지 않는다. 실험 설계가 던질 질문이 "측정 범위가 X 이상인 장비 있나?" 같은 **범위 조건 조회**라 VDB가 원리적으로 못 하는 일이다. 자연어로 장비를 찾고 싶으면 목록이 짧으니 프롬프트에 넣으면 된다. `precautions`는 안전 가드레일(⑥)이 이름 매칭으로 조회 |
 | 코퍼스 | 파인만 강의록 | ChromaDB (현재 구현) |
-| 안전 규칙 | 실험 안전 가드레일 | 규칙 기반 — 설계·운영 양 단계 공통 조회 |
+| ~~안전 규칙(별도 저장소)~~ | 실험 안전 가드레일 | **08-02, 별도 저장소로 안 만듦** — 주의사항은 장비 자체에 속하는 정보라 실험도구 DB(⑤)의 `precautions` 필드에 통합. 설계·운영 양 단계가 이 필드를 공통 조회 |
 
 ### 설계 포인트
 
@@ -81,7 +81,7 @@
 - **관심사 등록은 명시적 버튼 하나로 트리거**: 라이브러리의 "관심사로 등록" 버튼 — 사용자가 명시적으로 누른 것 자체가 의도 신호라 "반복해서 언급됐는가" 같은 판정 없이 대화 이력에서 곧장 초안을 뽑는다. 당초 있던 매 턴 자동 제안 훅(`should_suggest` 게이트)은 버튼이 생기며 08-02에 폐기 — 판정이 틀리면 명시적 요청도 조용히 무시될 위험이 있었고(반복 안 됐다고 판정되면 초안이 빈 채로 나옴), 매 턴 LLM 호출이 느는 비용 대비 얻는 게 적었다.
 - **가설 수립과 실험 설계 분리**: 가설을 세우는 일(귀추적 추론)과 검증 가능한 실험으로 번역하는 일(방법론·장비·통제조건)은 성격이 다른 작업. 재실험·대체실험 루프는 실험 운영이 **실험 설계만 재호출** — 가설은 고정한 채 프로토콜만 다시 짜는 게 흔한 경로라 매번 가설부터 재추론하면 낭비.
 - **참고문헌은 워크플로우가 끌고 다니는 누적 산출물**: 가설 수립(배경 문헌) → 실험 설계(방법론) → 실험 운영(결과 비교) → 논문 작성(고찰) 각 단계가 참고문헌 추천기를 호출해 공유 references 목록에 append(서지정보 + 인용 이유 + 추가된 단계 기록), ⑦이 최종 소비자. 목록에 없는 인용이 초안에 등장하면 그 자체가 환각 신호 — 자체 검토에서 걸러낸다. QA(④)에서는 기본은 retrieve가 이미 가져온 문서의 메타데이터를 "참고"로 붙이고(추가 호출 0), 사용자가 요청할 때만 추천기 풀 호출(QA 내부 조건부 분기 — 메인 챗의 "라우터"와는 다른 개념, 그쪽은 착수 근거가 없어 무기한 보류됨).
-- **안전 가드레일 (Human-in-the-loop)**: 실험 안전은 각 능력이 자체 판단하지 않고 공유 규칙을 설계·운영 양 단계에서 공통 조회. 임계치 초과 시 사람 승인 전까지 진행 불가 — `interrupt_before` 기반 진짜 HITL이 필요한 지점은 여기(와 문서 작성기의 등록 확인)뿐이다. interrupt로 멈춘 상태가 서버 재시작에 살아남아야 하므로 **SqliteSaver 영속화가 선행**된다.
+- **안전 가드레일은 `interrupt_before` 없이 comment 안내로**(08-02, 재검토): 처음엔 "임계치 초과 시 사람 승인 전까지 진행 불가"를 진짜 `interrupt_before` HITL로 구상했으나(문서 작성기의 등록 확인과 함께 유이한 후보로 지목돼 있었음), 재검토 결과 이 그래프는 물리적 행동을 하지 않고(사람이 실험실에서 직접 함) 단계 전환 자체가 이미 사람 트리거라 자연스러운 승인 지점이 있어 불필요하다고 결론 — 문서 작성기 쪽도 이미 07-31에 같은 이유로 폐기됐으니, **이 프로젝트에 실행을 막는 진짜 interrupt가 필요한 지점은 결국 없었다.** 대신 장비(`equipment.py`)에 `precautions` 필드를 두고, 설계·운영 단계가 그 장비를 언급하면 주의사항을 `comment`에 눈에 띄게 붙이는 결정론적 이름-매칭(LLM 판정 아님)으로 처리한다.
 - **긴 작업·진행상황은 스트리밍 전제**: 연구 워크플로우와 실시간 진행상황 안내는 동기 요청-응답으로는 불가능 — `astream` + SSE 엔드포인트를 워크플로우 구축 전에 도입한다.
 - **멀티 에이전트 전환은 재작성이 아니라 포장**: 현 그래프를 물리 QA 능력으로 감싼다. 단 컴파일된 그래프를 부모 노드로 직접 꽂지 않고 **래퍼 함수 노드에서 `invoke()`로 입출력을 명시 매핑** — 부모와 State 스키마(특히 `messages` reducer)를 공유하지 않아 내부 상태가 밖으로 새지 않는다. checkpointer와 턴 경계(reset_turn)는 부모 소속으로 이동.
 
@@ -139,12 +139,12 @@ Science_Chatbot/
 │   ├── README_10.md         # 개발 회고 (10주차: 서버 관찰·패킷 캡처)
 │   ├── README_11.md         # 개발 회고 (11주차: Docker·EC2·CI/CD)
 │   ├── README_12.md         # 개발 회고 (CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성)
-│   ├── README_13.md         # 개발 회고 (라이브러리 표면 1차·모델 fallback 버그 수정)
+│   ├── README_13.md         # 개발 회고 (라이브러리 표면 1차·관심사 재검색·실험도구 DB(⑤)·연구 워크플로우(⑥))
 │   └── train_qa.json        # 파인튜닝 학습 데이터 45문항 (파인만 강의록 기반)
 ├── tests/
 │   ├── conftest.py                  # 공용 설정 — retrieval import-time 로딩 차단, API 키 더미값, make_state fixture
 │   ├── test_routing.py              # route_by_fix (순수 라우팅 함수)
-│   ├── test_tokens.py               # _add_tokens (토큰 누적 헬퍼)
+│   ├── test_tokens.py               # add_tokens (models.py의 토큰 누적 헬퍼 — 물리 QA·연구 워크플로우 공용)
 │   ├── test_invoke_with_fallback.py # invoke_with_fallback (모델 fallback, model_map 모킹)
 │   ├── test_arxiv_api.py            # arxiv Atom XML 파싱(journal_ref/doi 포함) + fetch_by_id (네트워크 없이)
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
@@ -160,8 +160,11 @@ Science_Chatbot/
 │   ├── test_paper_search.py         # 논문 검색 어댑터 (arxiv_search 몽키패치, paper_id 조립)
 │   ├── test_paper_screening.py      # 논문 스크리닝(②b) — 관련도만 LLM 몽키패치, peer_reviewed/인용수/연도는 계산 검증
 │   ├── test_paper_recommend.py      # 추천 검색(③) 오케스트레이션 — 검색→스크리닝→카탈로그 기록 조립 로직
-│   ├── test_orchestrator.py         # 관심사 제안+초안 훅(suggest_interest_node), 중복 검사(_find_duplicate)
-│   └── test_main.py                 # POST /interests, /interests/{id}/search (TestClient, 몽키패치)
+│   ├── test_equipment.py            # 실험도구 RDB CRUD + 스키마 마이그레이션(구버전 테이블에 컬럼 추가)
+│   ├── test_reference_recommender.py # 참고문헌 추천기 — 보유 VDB 우선/외부 보충 분기, 서킷 브레이커 전파
+│   ├── test_research_workflow.py    # 연구 워크플로우(⑥) 노드 + stage 라우팅(MemorySaver로 3단계 통과)
+│   ├── test_orchestrator.py         # 대화 이력 트리밍(_trim_history), 관심사 초안 추출(draft_interest_from_messages)
+│   └── test_main.py                 # POST /interests, /interests/{id}/search, /equipment (TestClient, 몽키패치)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -171,10 +174,10 @@ Science_Chatbot/
 │   └── results/               # evaluate.py 실행 결과 (모델별 JSON)
 ├── models/               # GGUF 모델 가중치 (git 제외)
 ├── chroma_db/            # ChromaDB 영구 저장소
-├── data/                 # SQLite 파일들 (git 제외) — checkpoints.sqlite(대화 이력) + app.db(관심사 등 앱 데이터), 파일은 분리하되 디렉터리는 공유
+├── data/                 # SQLite 파일들 (git 제외) — checkpoints.sqlite(대화 이력) + research_workflow_checkpoints.sqlite(연구 워크플로우) + app.db(관심사·논문 카탈로그·실험도구), 파일은 분리하되 디렉터리는 공유
 ├── orchestrator.py       # 부모 그래프 — 단기기억·checkpointer 소유, 능력(물리 QA 등) 호출·라우팅
 ├── graph.py              # 물리 QA 능력 (Self-RAG 서브그래프) — checkpointer 없음, orchestrator가 fresh invoke
-├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget
+├── models.py             # model_map + invoke_with_fallback + CONTEXT_BUDGET_CHARS/check_context_budget + add_tokens(토큰 누적 공용 헬퍼)
 ├── tool.py               # tool 레지스트리 (검색 tool 팩토리, tools_list, tool_map)
 ├── arxiv_api.py          # arxiv 공식 API 직접 호출 (구조화된 서지정보 — 논문 요약기·arxiv 검색 tool이 공유)
 ├── paper/                # 논문 파이프라인(파싱→분할→식별→추출→저장, 07-28 디렉토리로 묶음)
@@ -191,7 +194,10 @@ Science_Chatbot/
 ├── paper_search.py       # 논문 검색 어댑터 — arxiv_search()를 감싸 paper_id·지표 자리까지 채운 후보 목록 반환(나중에 Crossref/OpenAlex로 교체 대비)
 ├── paper_screening.py    # 논문 스크리닝(②b) — 관련도만 LLM 판단, peer-review/인용수/연도는 계산·전달(한 점수로 안 합침)
 ├── paper_recommend.py    # 추천 검색(③) — 검색→스크리닝→카탈로그 recommended 기록 오케스트레이션, 관심사 수정 시 재검색(refresh_for_interest)
-├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers
+├── equipment.py          # 실험도구 저장소(⑤) RDB(SQLite) — data/app.db 공유(다른 테이블). precautions는 ⑥ 안전 가드레일이 읽음
+├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
+├── research_workflow.py  # 연구 워크플로우(⑥) 그래프 — 가설 수립→실험 설계→실험 운영. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
+├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD)
 ├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사 탭)
 │   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
 │   ├── common.py             # BACKEND_URL 등 공용 설정
@@ -270,15 +276,14 @@ POST /query
 }
 
 → text/event-stream (SSE) — 진행 중엔 {"trace": "...", "final": false},
-  답변 도착 시 {"trace": "...", "answer": "...", "comment": "...", "final": true},
-  이어서(관심사로 등록해볼 만하면) {"suggestion": {"note": "...", "draft": {...}, "duplicate": null|{"id","title"}}}
+  답변 도착 시 {"trace": "...", "answer": "...", "comment": "...", "final": true}
 ```
 
 - `model`: `"gemini"` (기본값) / `"claude"` / `"Qwen-tuned"` (로컬 llama-server 필요)
 - `effort`: `"low"`/`"medium"`(기본값)/`"high"` — top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에서 빠지고 이 프로필 이름만 노출(실제 숫자 매핑은 `graph.py`의 `EFFORT_PROFILES`)
 - `thread_id`: 대화 세션 식별자 — 같은 값으로 요청하면 이전 대화 맥락이 이어짐(단기기억, `data/checkpoints.sqlite`에 영속화 — 6-4). 생략 시 uuid 자동 발급(맥락 없는 단발 요청)
-- 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지, 관심사 등록 제안 등. 정상 처리 시 comment는 비어 있을 수 있음
-- `suggestion`(있을 때만): 대화 내용이 관심사로 등록해볼 만하면 물리 QA가 채워서 보내는 초안 — `draft`(title/looking_for/already_known/excluded_topics)를 그대로(또는 사용자가 고친 값으로) `POST /interests`에 넘기면 등록됨. `duplicate`가 있으면 비슷한 기존 관심사가 있다는 뜻 — 그 `id`를 `update_existing_id`로 넘기면 새로 만드는 대신 그걸 수정
+- 응답의 `answer`는 답변 본문(평가 대상), `comment`는 부가 정보 — 모델의 주의점, limit 도달·fallback 발생 고지 등. 정상 처리 시 comment는 비어 있을 수 있음
+- 관심사 등록 초안은 이 스트림에 안 실린다 — 매 턴 자동으로 판정하던 `suggestion` 청크는 08-02에 폐기되고, 사용자가 버튼을 눌렀을 때만 도는 `GET /interests/draft`로 대체됐다(아래)
 
 ```
 POST /interests
@@ -293,7 +298,14 @@ POST /interests
 → {"interest_id": 1, "action": "created"}   (update_existing_id 지정 시 "updated", 없는 id면 404)
 ```
 
-- 관심사 저장소(`interests.py`, `data/app.db`)에 저장. 화면에 보이는 템플릿 값을 그대로 보내는 평범한 단발 요청 — 중복 검사는 `/query`의 `suggestion` 단계에서 이미 끝났으므로 여기선 다시 하지 않음
+- 관심사 저장소(`interests.py`, `data/app.db`)에 저장. 화면에 보이는 템플릿 값을 그대로 보내는 평범한 단발 요청 — 중복 검사는 자동 제안 훅과 함께 08-02에 없앴다(재활용할 곳이 없어짐)
+
+```
+GET /interests/draft?thread_id=user-123
+→ {"draft": {"title", "looking_for", "already_known", "excluded_topics"}}
+```
+
+- 챗 사이드바의 "이 대화를 관심사로 등록" 버튼이 부른다 — 체크포인터에서 그 thread의 대화 이력을 읽어 초안만 뽑고 저장은 안 한다(저장은 사용자가 폼에서 확인한 뒤 `POST /interests`). 버튼을 누른 것 자체가 의도 신호라 "등록할 만한가" 판정은 하지 않는다
 
 ```
 POST /interests/{interest_id}/search
@@ -322,6 +334,25 @@ GET /papers?status=recommended|owned|dismissed   → {"papers": [...]}
 ```
 
 - `POST /papers`는 `register_paper()`를 그대로 호출 — 잘못된 PDF는 400. `GET /papers`는 카탈로그 전역 조회(관심사별 필터는 아직 없음).
+
+```
+GET /equipment                       → {"equipment": [...]}
+POST /equipment
+{
+  "name": "오실로스코프",
+  "purpose": "전기 신호의 시간에 따른 파형 관찰",
+  "detail": "대역폭 100MHz, 2채널",
+  "precautions": "입력 전압이 채널 최대 정격을 넘지 않게 프로브 감쇠 설정을 확인할 것",
+  "update_existing_id": null
+}
+→ {"equipment_id": 1, "action": "created"}   (update_existing_id 지정 시 "updated", 없는 id면 404)
+
+DELETE /equipment/{equipment_id}     → {"equipment_id", "action": "deleted"}  (없으면 404)
+```
+
+- 실험도구 저장소(⑤, `equipment.py`) — 그래프도 LLM 호출도 없는 순수 CRUD로 `/interests`와 같은 계약이다.
+- **수정 시 안 보낸 필드는 건드리지 않는다**: `purpose`/`detail`/`precautions`는 기본값이 `""`가 아니라 `null`(= 명시 안 함)이라, 이름만 고쳐 보내도 등록해둔 주의사항이 지워지지 않는다. 값을 실제로 비우려면 `""`를 명시적으로 보내면 된다.
+- `precautions`는 연구 워크플로우(⑥)의 안전 가드레일이 읽는다 — 실험 설계에 이 장비 이름이 등장하면 주의사항을 사용자 안내(`comment`) 맨 앞에 붙인다.
 
 ## 평가
 

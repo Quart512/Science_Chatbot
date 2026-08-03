@@ -7,8 +7,8 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, RemoveMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
-from graph import app as physics_qa_app, _add_tokens
-from models import MESSAGE_HISTORY_BUDGET_CHARS, invoke_with_fallback
+from graph import app as physics_qa_app
+from models import MESSAGE_HISTORY_BUDGET_CHARS, add_tokens, invoke_with_fallback
 
 # 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다. 능력이
 # 물리 QA 하나뿐이라 라우팅 없이 곧장 물리 QA로 간다(추후 라우터 추가 예정).
@@ -94,7 +94,7 @@ def physics_qa_node(state: ParentState) -> dict:
     return {
         "answer": result["answer"],
         "comment": result["comment"],
-        "tokens_used": _add_tokens(state.tokens_used, result["tokens_used"]),
+        "tokens_used": add_tokens(state.tokens_used, result["tokens_used"]),
         "disabled_models": result["disabled_models"],
         "messages": prune + new_msgs,
     }

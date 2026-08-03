@@ -10,6 +10,17 @@ import paper_screening
 import paper_search
 
 
+def _interest_topic_text(interest: dict) -> str:
+    # screen_candidate()가 관심사 dict를 몰라도 되는 순수 텍스트 비교 함수라(08-02
+    # 리팩터, 참고문헌 추천기와 공유하기 위함) 4필드를 여기서 텍스트로 조립해 넘긴다.
+    return (
+        f"제목: {interest.get('title', '')}\n"
+        f"찾는 것: {interest.get('looking_for', '')}\n"
+        f"이미 아는 것: {interest.get('already_known', '')}\n"
+        f"제외할 주제: {interest.get('excluded_topics', '')}"
+    )
+
+
 def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int = 0, conn=None) -> list[dict]:
     """관심사 하나를 기준으로 논문을 검색·스크리닝한다. 검색 쿼리는 looking_for(비어
     있으면 title 폴백). start는 페이지네이션 오프셋("추가 검색"이 다음 순위부터 이어받게).
@@ -30,10 +41,12 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
     query = interest["looking_for"] or interest["title"]
     candidates = paper_search.search_papers(query, max_results=max_results, start=start)
 
+    topic = _interest_topic_text(interest)
+
     results = []
     for candidate in candidates:
         try:
-            screened = paper_screening.screen_candidate(candidate, interest)
+            screened = paper_screening.screen_candidate(candidate, topic)
         except RuntimeError as e:
             print(f"스크리닝 실패, 이 후보는 건너뜀(paper_id={candidate['paper_id']}): {type(e).__name__}: {e}")
             continue
@@ -72,6 +85,7 @@ def refresh_for_interest(
     interest = interests.get_interest(interest_id, conn=conn)
     if interest is None:
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
+    topic = _interest_topic_text(interest)
 
     kept_old = []
     for c in existing_candidates:
@@ -83,7 +97,7 @@ def refresh_for_interest(
             "year": c.get("year"),
         }
         try:
-            screened = paper_screening.screen_candidate(pseudo_candidate, interest)
+            screened = paper_screening.screen_candidate(pseudo_candidate, topic)
         except RuntimeError as e:
             print(f"재스크리닝 실패, 이 후보는 건너뜀(paper_id={c.get('paper_id')}): {type(e).__name__}: {e}")
             continue
