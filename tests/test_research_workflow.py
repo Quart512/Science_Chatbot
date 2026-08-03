@@ -545,6 +545,120 @@ def test_compile_experiment_report_does_not_touch_tokens_or_disabled_models():
     assert "disabled_models" not in result
 
 
+# --- draft_paper() (⑦ 착수, 08-03) -----------------------------------------------
+
+
+def _fake_draft_result(disabled_models=None, citations=None, **fields):
+    defaults = dict(
+        title="제목", abstract="초록", introduction="서론", methods="방법",
+        results="결과", discussion="고찰",
+    )
+    return (
+        research_workflow.PaperDraft(**{**defaults, **fields}, citations=citations or []),
+        "gemini", disabled_models or [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    )
+
+
+def test_draft_paper_returns_structured_fields(monkeypatch):
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_draft_result(
+            title="온도-저항 관계 연구", abstract="요약문", introduction="배경 설명",
+            methods="실험 방법", results="측정 결과", discussion="고찰 내용",
+        ),
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", experiment_report="보고서 내용")
+    result = research_workflow.draft_paper(state)
+
+    assert result["title"] == "온도-저항 관계 연구"
+    assert result["abstract"] == "요약문"
+    assert result["introduction"] == "배경 설명"
+    assert result["methods"] == "실험 방법"
+    assert result["results"] == "측정 결과"
+    assert result["discussion"] == "고찰 내용"
+
+
+def test_draft_paper_converts_citations_to_dicts(monkeypatch):
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_draft_result(
+            citations=[research_workflow.CitationNote(paper_id="arxiv:1", reasoning="온도 의존성 언급")],
+        ),
+    )
+
+    state = research_workflow.WorkflowState(topic="주제")
+    result = research_workflow.draft_paper(state)
+
+    assert result["citations"] == [{"paper_id": "arxiv:1", "reasoning": "온도 의존성 언급"}]
+
+
+def test_draft_paper_includes_report_and_references_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_draft_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(
+        topic="주제", experiment_report="# 실험 보고서\n온도가 오르면...",
+        references=[{"paper_id": "arxiv:1", "title": "논문 하나", "source": "owned", "reasoning": ""}],
+    )
+    research_workflow.draft_paper(state)
+
+    assert "# 실험 보고서" in captured["human"]
+    assert "arxiv:1" in captured["human"]
+    assert "논문 하나" in captured["human"]
+
+
+def test_draft_paper_notes_when_no_references(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_draft_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제")
+    research_workflow.draft_paper(state)
+
+    assert "참고문헌 없음" in captured["human"]
+
+
+def test_draft_paper_passes_disabled_models_through(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["disabled_models"] = disabled_models
+        return _fake_draft_result(disabled_models=disabled_models + ["gemini"])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", disabled_models=["claude"])
+    result = research_workflow.draft_paper(state)
+
+    assert captured["disabled_models"] == ["claude"]
+    assert result["disabled_models"] == ["claude", "gemini"]
+
+
+def test_draft_paper_accumulates_tokens(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_draft_result())
+
+    state = research_workflow.WorkflowState(
+        topic="주제", tokens_used={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    )
+    result = research_workflow.draft_paper(state)
+
+    assert result["tokens_used"] == {"input_tokens": 11, "output_tokens": 6, "total_tokens": 17}
+
+
+def test_draft_paper_propagates_model_failure(monkeypatch):
+    def _boom(*a, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제")
+    with pytest.raises(RuntimeError):
+        research_workflow.draft_paper(state)
+
+
 # --- route_by_stage() + 그래프 라우팅 통합 확인 --------------------------------
 # 단계 전환은 글루 함수(advance_to_design, 폐기됨)가 아니라 START의 조건부 엣지가
 # state.stage를 보고 담당한다(08-02, 사용자 제안 — 토이 그래프로 실제 동작 확인 후
@@ -558,9 +672,10 @@ def test_route_by_stage_returns_stage_field():
     assert research_workflow.route_by_stage(state) == "design"
 
 
-def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatch):
+def test_graph_routes_through_all_five_stages_via_single_invoke_calls(monkeypatch):
     # 단계 전환은 별도 update_state 호출 없이 stage(+새 입력)를 담은 ainvoke() 한 번으로
-    # 된다는 것까지 포함해 확인 — 가설→설계→운영→보고서를 실제 컴파일된 그래프로 쭉 따라간다.
+    # 된다는 것까지 포함해 확인 — 가설→설계→운영→보고서→논문 초안을 실제 컴파일된
+    # 그래프로 쭉 따라간다.
     from langgraph.checkpoint.memory import MemorySaver
 
     monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result(statement="가설X"))
@@ -607,6 +722,16 @@ def test_graph_routes_through_all_four_stages_via_single_invoke_calls(monkeypatc
     assert "1. 시료를 냉각한다" in fourth["experiment_report"]  # 2단계 값
     assert "어긋남" in fourth["experiment_report"]  # 3단계 값
     assert "설계 결함으로 추정" in fourth["experiment_report"]  # outcome 라벨
+
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_draft_result(title="논문 제목"),
+    )
+
+    fifth = app.invoke({"stage": "writing"}, config=config)
+
+    assert fifth["title"] == "논문 제목"
+    assert fifth["experiment_report"] == fourth["experiment_report"]  # 4단계 값 그대로 봄
 
 
 # --- check_equipment_precautions() (안전 가드레일, 08-02) ----------------------

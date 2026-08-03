@@ -6,10 +6,9 @@
 # 호출부 몫이다. 아직 main.py에 엔드포인트가 없어 지금 이 그래프를 컴파일해 쓰는 건
 # 아래 __main__ 스모크 테스트와 테스트뿐이다(UI는 ⑦까지 나온 뒤 한 번에 — RoadMap 참고).
 #
-# 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서까지 연결됐고, 안전 가드레일도 붙었다
-# (check_equipment_precautions — interrupt_before를 안 쓴 근거는 그 함수 docstring).
-# 논문 작성(⑦)은 착수 중 — 보고서까지가 지금 여기 있는 부분이고, 초안 생성 노드는
-# 다음 단위.
+# 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안까지 연결됐고, 안전
+# 가드레일도 붙었다(check_equipment_precautions — interrupt_before를 안 쓴 근거는 그
+# 함수 docstring). 인용-근거 일치 검증(마커 기반 정규식 체크)은 다음 단위.
 #
 # 단계 전환은 START의 조건부 엣지(route_by_stage)가 state.stage를 보고 담당한다(08-02,
 # 사용자 제안 — 처음엔 aget_state로 읽어 파이썬 함수를 직접 부르고 aupdate_state로
@@ -49,7 +48,7 @@ class WorkflowState(BaseModel):
     # 지금 어느 단계인지 — START의 조건부 엣지가 이 값으로 라우팅한다. 기본값이
     # "hypothesis"라 처음 만드는 thread는 자동으로 가설 단계부터 시작하고, 사용자가
     # "다음 단계로"를 누르면 호출부가 이 필드(+필요하면 새 입력)를 담아 다시 invoke하면 된다.
-    stage: Literal["hypothesis", "design", "operation", "report"] = "hypothesis"
+    stage: Literal["hypothesis", "design", "operation", "report", "writing"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
     hypothesis: str = ""
@@ -81,6 +80,21 @@ class WorkflowState(BaseModel):
     # 앞선 LLM 호출이 만든 완결된 문장이라, 다시 종합하면 요약 재귀 분할에서 우려한 것과
     # 같은 위험(재종합 과정에서 사실이 조용히 바뀜)만 새로 생기고 얻는 게 적다.
     experiment_report: str = ""
+    # 논문 초안(⑦, 08-03) — draft_paper()가 experiment_report+references만 보고 채운다.
+    # results는 사실만, discussion에서 해석 — 표준 논문 절 구성과 같은 구분.
+    title: str = ""
+    abstract: str = ""
+    introduction: str = ""
+    methods: str = ""
+    results: str = ""
+    discussion: str = ""
+    # 본문의 [CITE:paper_id] 마커와 별개 채널 — 마커는 "어디에 인용이 붙는지"(렌더링·구조
+    # 검증용), 이 목록은 "왜 인용했는지"(사람이 인용의 타당성을 검토할 근거). 각 항목:
+    # {"paper_id", "reasoning"}. 인용-근거 일치를 LLM으로 재검증하지 않기로 한 이유
+    # (08-03, 사용자 판단): 검증 LLM도 결국 ②a가 LLM으로 뽑아둔 요약을 보고 판단하므로
+    # "LLM이 LLM을 검사"하는 구조라 새 근거가 안 생긴다 — 초안 쓴 LLM이 왜 인용했는지
+    # 남기고 최종 판단은 사람이 한다("판정 대신 추출/신호" 원칙과 같은 결).
+    citations: list[dict] = Field(default_factory=list)
     # 워크플로우가 끌고 다니는 누적 참고문헌 목록(README "참고문헌은 워크플로우가 끌고
     # 다니는 누적 산출물" 참고) — 각 항목: {"paper_id", "title", "source": "owned"|
     # "external", "reasoning", "added_by_stage"}. 뒤에 올 실험 설계·운영·논문 작성
@@ -351,6 +365,65 @@ def compile_experiment_report(state: WorkflowState) -> dict:
     return {"experiment_report": report}
 
 
+WRITING_SYSTEM_PROMPT = """주어진 실험 보고서를 바탕으로 논문 초안을 작성해라. 보고서에
+없는 내용을 지어내지 마라 — 논문은 보고서에 기록된 사실만 다뤄야 한다.
+
+인용은 아래 "참고문헌 목록"에 있는 논문만 할 수 있다. 본문에서 인용할 때는 문장 끝에
+[CITE:paper_id] 마커를 그대로 붙여라(예: "...것으로 알려져 있다[CITE:arxiv:2401.01234]."). 목록에
+없는 논문을 인용하거나 마커 없이 참고문헌을 언급하지 마라. 인용을 하나 쓸 때마다
+citations 목록에 그 paper_id와 왜 인용했는지(논문의 어떤 부분 때문인지)를 짧게 적어라 —
+사람이 인용이 적절한지 검토할 때 참고할 근거다.
+
+results는 측정된 사실만 서술하고(해석 없이), discussion에서 그 결과가 예측을 지지·
+반박·불충분하게 하는지와 그 이유(보고서의 "판정"을 참고), 필요하면 참고문헌과의
+비교를 다뤄라."""
+
+
+class CitationNote(BaseModel):
+    paper_id: str = Field(description="인용한 논문의 paper_id — 참고문헌 목록에 있는 값 중 하나")
+    reasoning: str = Field(description="이 논문을 왜 인용했는지, 논문의 어떤 부분 때문인지")
+
+
+class PaperDraft(BaseModel):
+    title: str = Field(description="논문 제목")
+    abstract: str = Field(description="초록 — 배경·방법·결과·결론을 한 문단으로 요약")
+    introduction: str = Field(description="서론 — 배경과 가설, 필요하면 참고문헌 인용")
+    methods: str = Field(description="방법 — 실험 설계와 절차")
+    results: str = Field(description="결과 — 측정된 사실만 서술(해석 없이)")
+    discussion: str = Field(description="고찰 — 결과가 예측을 지지/반박/불충분하게 하는지와 그 이유")
+    citations: list[CitationNote] = Field(
+        default_factory=list, description="본문에서 [CITE:paper_id]로 인용한 논문마다 하나씩"
+    )
+
+
+def draft_paper(state: WorkflowState) -> dict:
+    """논문 초안(⑦) — experiment_report(사실 기준선)와 references(인용 가능 목록)만
+    보고 구조화된 초안을 뽑는다. 인용-근거 일치는 LLM으로 재검증하지 않는다(citations
+    필드 주석 참고) — 다음 단위(정규식 기반 구조 검증: 마커의 paper_id가 실제로
+    references에 있는지)만 결정론적으로 확인한다.
+    """
+    references_text = "\n".join(f"- {r['paper_id']}: {r['title']}" for r in state.references) or "(참고문헌 없음)"
+
+    messages = [
+        SystemMessage(content=WRITING_SYSTEM_PROMPT),
+        HumanMessage(content=f"실험 보고서:\n{state.experiment_report}\n\n참고문헌 목록:\n{references_text}"),
+    ]
+    result, _, disabled_models, tokens_used = invoke_with_fallback(
+        state.model, messages, structured=PaperDraft, disabled_models=state.disabled_models
+    )
+    return {
+        "title": result.title,
+        "abstract": result.abstract,
+        "introduction": result.introduction,
+        "methods": result.methods,
+        "results": result.results,
+        "discussion": result.discussion,
+        "citations": [c.model_dump() for c in result.citations],
+        "disabled_models": disabled_models,
+        "tokens_used": add_tokens(state.tokens_used, tokens_used),
+    }
+
+
 def check_equipment_precautions(state: WorkflowState) -> dict:
     """안전 가드레일(08-02) — 설계된 장비 목록(equipment_needed)에 등록된 장비 이름이
     나오면 그 장비의 precautions를 찾아 comment 맨 앞에 붙인다. LLM 호출 없음(이름
@@ -397,11 +470,13 @@ graph.add_node("analyze_results", analyze_results)
 graph.add_node("find_operation_references", find_operation_references)
 graph.add_node("check_equipment_precautions", check_equipment_precautions)
 graph.add_node("compile_experiment_report", compile_experiment_report)
+graph.add_node("draft_paper", draft_paper)
 graph.add_conditional_edges(START, route_by_stage, {
     "hypothesis": "generate_hypothesis",
     "design": "design_experiment",
     "operation": "analyze_results",
     "report": "compile_experiment_report",
+    "writing": "draft_paper",
 })
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
 graph.add_edge("find_hypothesis_references", END)
@@ -411,6 +486,7 @@ graph.add_edge("analyze_results", "find_operation_references")
 graph.add_edge("find_operation_references", "check_equipment_precautions")
 graph.add_edge("check_equipment_precautions", END)
 graph.add_edge("compile_experiment_report", END)
+graph.add_edge("draft_paper", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -470,5 +546,15 @@ if __name__ == "__main__":
             # 4단계: 보고서 — LLM 호출 없음(compile_experiment_report는 순수 재포맷).
             report_result = await app.ainvoke({"stage": "report"}, config=config)
             print("보고서:\n", report_result["experiment_report"])
+
+            # 5단계: 논문 초안.
+            draft = await app.ainvoke({"stage": "writing"}, config=config)
+            print("제목:", draft["title"])
+            print("초록:", draft["abstract"])
+            print("서론:", draft["introduction"])
+            print("방법:", draft["methods"])
+            print("결과:", draft["results"])
+            print("고찰:", draft["discussion"])
+            print("인용 근거:", draft["citations"])
 
     asyncio.run(_smoke_test())
