@@ -127,7 +127,43 @@ def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
     result = research_workflow.find_hypothesis_references(state)
 
-    assert result == {}  # 워크플로우를 안 막음 — references 안 건드림
+    assert "references" not in result  # 워크플로우를 안 막음 — references 안 건드림
+    assert "검토" in result["comment"]  # 실패했다는 사실은 사용자에게 안내
+
+
+def test_find_hypothesis_references_comment_guides_review_when_found(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "선행 연구" in result["comment"]
+    assert "재생성" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_suggests_regenerate_when_none_found(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [])
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert result["references"] == []
+    assert "재생성" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_suggests_regenerate_when_all_duplicates(monkeypatch):
+    # recommend_references가 뭔가 찾았어도 전부 이미 있는 paper_id면 "새로 찾은 것"은
+    # 없으므로 "못 찾음" 안내와 같은 취급이어야 한다.
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "이미 있음")])
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설",
+        references=[{**_ref("p1", "이미 있음"), "added_by_stage": "design"}],
+    )
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "재생성" in result["comment"]
+    assert "선행 연구" not in result["comment"]
 
 
 # --- design_experiment() ------------------------------------------------------

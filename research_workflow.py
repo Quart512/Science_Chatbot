@@ -50,6 +50,12 @@ class WorkflowState(BaseModel):
     # "external", "reasoning", "added_by_stage"}. 뒤에 올 실험 설계·운영·논문 작성
     # 단계도 각자 이 목록에 이어붙인다(paper_id로 중복 방지, 처음 추가한 단계만 표시).
     references: list[dict] = Field(default_factory=list)
+    # 사람에게 보여줄 결정론적 안내 문구(graph.py의 comment와 같은 채널 — LLM이 아니라
+    # 코드가 채움, 매번 덮어씀). "이미 증명된 이론·이미 한 실험인지"를 LLM이 판정하는
+    # 대신, 사람이 직접 참고문헌(이미 스크리닝 근거·연관성이 붙어 있음)을 보고 템플릿을
+    # 고치거나 재생성하도록 안내만 한다(08-02, 사용자 판단 — "판정 대신 추출/신호"
+    # 원칙과 같은 결).
+    comment: str = ""
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
 
@@ -91,19 +97,32 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
     실패(모델 소진 등)는 이 단계만 건너뛴다 — 앞 단계 산출물은 이미 나왔으므로
     참고문헌 하나 못 찾았다고 워크플로우 전체를 실패시킬 이유가 없다(삭제된 관심사
     자동 제안 훅이 쓰던 것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다).
+
+    "이미 증명된 이론·이미 한 실험인지"는 LLM이 판정하지 않는다 — 찾은 참고문헌(이미
+    screen_candidate의 연관성 근거가 붙어 있음)을 사람이 직접 읽고 템플릿을 고치거나
+    재생성할지 판단하도록 comment로 안내만 한다.
     """
     def node(state: WorkflowState) -> dict:
         try:
             found = reference_recommender.recommend_references(get_text(state))
         except RuntimeError as e:
             print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
-            return {}
+            return {"comment": "참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요."}
 
         existing_ids = {r["paper_id"] for r in state.references}
         new_entries = [
             {**r, "added_by_stage": stage_name} for r in found if r["paper_id"] not in existing_ids
         ]
-        return {"references": state.references + new_entries}
+
+        if new_entries:
+            comment = (
+                "참고논문을 확인해서 선행 연구된 내용이 있는지 확인하고 템플릿을 채우거나 "
+                "수정해주세요. 참고문헌이 부족하다면 재생성을 눌러주세요."
+            )
+        else:
+            comment = "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요."
+
+        return {"references": state.references + new_entries, "comment": comment}
 
     return node
 
@@ -199,5 +218,6 @@ if __name__ == "__main__":
             print("필요 장비:", result["equipment_needed"])
             print("절차:", result["procedure"])
             print("참고문헌:", [r["title"] for r in result["references"]])
+            print("안내:", result["comment"])
 
     asyncio.run(_smoke_test())
