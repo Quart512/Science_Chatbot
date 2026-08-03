@@ -1,10 +1,12 @@
 """
-research_workflow.py — 연구 워크플로우(⑥) 1번째 노드 generate_hypothesis(). 그래프
-노드를 맨 함수로 직접 부르는 이 저장소 관례(orchestrator.py 테스트와 동일) 그대로
-invoke_with_fallback을 몽키패치해 순수 조립 로직만 검증 — 실제 LLM 호출 없음.
+research_workflow.py — 연구 워크플로우(⑥) 노드 generate_hypothesis()/
+find_hypothesis_references(). 그래프 노드를 맨 함수로 직접 부르는 이 저장소 관례
+(orchestrator.py 테스트와 동일) 그대로 invoke_with_fallback/reference_recommender를
+몽키패치해 순수 조립 로직만 검증 — 실제 LLM·벡터DB 호출 없음.
 """
 import pytest
 
+import reference_recommender
 import research_workflow
 
 
@@ -65,3 +67,63 @@ def test_generate_hypothesis_propagates_model_failure(monkeypatch):
     state = research_workflow.WorkflowState(topic="주제")
     with pytest.raises(RuntimeError):
         research_workflow.generate_hypothesis(state)
+
+
+# --- find_hypothesis_references() -------------------------------------------
+
+
+def _ref(paper_id, title="", source="owned", reasoning=""):
+    return {"paper_id": paper_id, "title": title, "source": source, "reasoning": reasoning}
+
+
+def test_find_hypothesis_references_appends_with_stage_tag(monkeypatch):
+    monkeypatch.setattr(
+        reference_recommender, "recommend_references",
+        lambda text: [_ref("p1", "논문1"), _ref("p2", "논문2", source="external", reasoning="관련 있음")],
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설 문장")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert [r["paper_id"] for r in result["references"]] == ["p1", "p2"]
+    assert all(r["added_by_stage"] == "hypothesis" for r in result["references"])
+
+
+def test_find_hypothesis_references_searches_using_hypothesis_text(monkeypatch):
+    captured = {}
+    def _fake_recommend(text):
+        captured["text"] = text
+        return []
+    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="온도가 오르면 저항이 커진다")
+    research_workflow.find_hypothesis_references(state)
+
+    assert captured["text"] == "온도가 오르면 저항이 커진다"
+
+
+def test_find_hypothesis_references_dedupes_against_existing(monkeypatch):
+    monkeypatch.setattr(
+        reference_recommender, "recommend_references",
+        lambda text: [_ref("p1", "이미 있음"), _ref("p2", "새 논문")],
+    )
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설",
+        references=[{**_ref("p1", "이미 있음"), "added_by_stage": "design"}],
+    )
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert [r["paper_id"] for r in result["references"]] == ["p1", "p2"]
+    assert result["references"][0]["added_by_stage"] == "design"  # 원래 태그 유지(안 덮어씀)
+
+
+def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
+    def _boom(text):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert result == {}  # 워크플로우를 안 막음 — references 안 건드림
