@@ -9,6 +9,7 @@ import paper_catalog
 import paper_recommend
 import paper_screening
 import paper_search
+import reference_recommender
 
 INTEREST = {"id": 1, "title": "위상 물질", "looking_for": "새로운 상전이", "already_known": "", "excluded_topics": ""}
 
@@ -20,6 +21,18 @@ def _stub_record_screening(monkeypatch):
     # mark_owned 스텁 fixture와 같은 이유). 인자 검증이 필요한 테스트는 개별적으로
     # 다시 monkeypatch해서 이 기본값을 덮어쓴다.
     monkeypatch.setattr(paper_catalog, "record_screening", lambda *a, **kw: None)
+
+
+@pytest.fixture(autouse=True)
+def _stub_extract_search_query(monkeypatch):
+    # INTEREST의 looking_for/title이 한글이라 _english_query()(08-03)가 그대로 두면
+    # reference_recommender.extract_search_query()를 실제로 호출하려 한다 — 몽키패치
+    # 안 하면 이 파일 대부분의 테스트가 실제 LLM 호출을 시도한다(record_screening과
+    # 같은 이유). 기본은 입력 그대로 돌려주는 항등 스텁 — 번역 자체를 검증하는 테스트만
+    # 개별적으로 다시 몽키패치한다.
+    monkeypatch.setattr(
+        reference_recommender, "extract_search_query", lambda text, **kw: (text, [], {}),
+    )
 
 
 def _candidate(paper_id="arxiv:1", title="논문", **overrides):
@@ -59,6 +72,56 @@ def test_uses_looking_for_as_search_query(monkeypatch):
     paper_recommend.recommend_for_interest(1)
 
     assert captured["query"] == "새로운 상전이"
+
+
+# --- _english_query() (08-03, 한국어 검색어 문제) -------------------------------
+
+
+def test_english_query_translates_korean_text(monkeypatch):
+    monkeypatch.setattr(
+        reference_recommender, "extract_search_query",
+        lambda text, **kw: ("topological phase transition", [], {}),
+    )
+    assert paper_recommend._english_query("새로운 상전이") == "topological phase transition"
+
+
+def test_english_query_skips_llm_call_when_already_english(monkeypatch):
+    def _boom(*a, **kw):
+        raise AssertionError("이미 영어인 텍스트는 LLM을 부르면 안 됨(불필요한 호출)")
+    monkeypatch.setattr(reference_recommender, "extract_search_query", _boom)
+
+    assert paper_recommend._english_query("topological phase transition") == "topological phase transition"
+
+
+def test_english_query_calls_llm_when_mixed_korean_and_english(monkeypatch):
+    # 한글이 조금이라도 섞여 있으면 안전하게 번역 경로를 탄다(완전 영어일 때만 스킵).
+    captured = {}
+    def _fake_extract(text, **kw):
+        captured["text"] = text
+        return ("phase transition", [], {})
+    monkeypatch.setattr(reference_recommender, "extract_search_query", _fake_extract)
+
+    result = paper_recommend._english_query("새로운 phase transition")
+
+    assert captured["text"] == "새로운 phase transition"
+    assert result == "phase transition"
+
+
+def test_recommend_for_interest_translates_query_before_search(monkeypatch):
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    monkeypatch.setattr(
+        reference_recommender, "extract_search_query",
+        lambda text, **kw: ("topological phase transition", [], {}),
+    )
+    captured = {}
+    def _fake_search(query, max_results=5, start=0):
+        captured["query"] = query
+        return []
+    monkeypatch.setattr(paper_search, "search_papers", _fake_search)
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert captured["query"] == "topological phase transition"
 
 
 def test_falls_back_to_title_when_looking_for_empty(monkeypatch):
