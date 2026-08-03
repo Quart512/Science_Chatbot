@@ -4,18 +4,26 @@
 # 있는 작업이라 체크포인터 영속화가 전제(main.py가 컴파일 시 연결, orchestrator.py와
 # 같은 패턴 — 컴파일 전 graph 빌더만 여기서 export).
 #
-# 가설 수립 다음 노드로 참고문헌 추천기(reference_recommender)를 연동했다 — 실험
-# 설계(Plan-and-Execute)·실험 운영·안전 가드레일(interrupt_before HITL)은 다음 단위
-# (RoadMap "연구 워크플로우(⑥)" 참고) — 노드 하나마다 검증하고 다음으로 넘어간다.
+# 가설 수립 → 실험 설계까지 연결됐다. 실험 운영·안전 가드레일(interrupt_before HITL)은
+# 다음 단위(RoadMap "연구 워크플로우(⑥)" 참고) — 노드 하나마다 검증하고 다음으로 넘어간다.
+#
+# 실험 설계는 README상 "Plan-and-Execute"가 핵심 기법으로 적혀 있지만(계획자가 단계를
+# 짜고 실행자가 tool 호출을 섞어가며 수행, 필요시 재계획하는 멀티스텝 에이전트 패턴),
+# 여기선 그 분리를 안 한다(08-02, 사용자 판단) — Plan-and-Execute가 원래 막으려는 건
+# "설계 없이 바로 행동"인데, 이 단계의 산출물 자체가 설계 문서라 "실행"이 따로 없다
+# (행동은 다음 단계인 실험 운영에서 일어남). 그래서 LLM 호출 한 번으로 가설+보유
+# 장비 목록(equipment.py, 목록이 짧아 프롬프트에 통째로 넣는 게 RoadMap이 이미 정한
+# 방식)을 보고 구조화된 설계를 바로 뽑는다.
 
 import os
 
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Callable, Literal
 
 from models import invoke_with_fallback
+import equipment
 import reference_recommender
 
 TOKEN_KEYS = ("input_tokens", "output_tokens", "total_tokens")
@@ -32,6 +40,11 @@ class WorkflowState(BaseModel):
     hypothesis: str = ""
     rationale: str = ""
     testable_prediction: str = ""
+    independent_variable: str = ""
+    dependent_variable: str = ""
+    controlled_variables: str = ""
+    equipment_needed: str = ""
+    procedure: str = ""
     # 워크플로우가 끌고 다니는 누적 참고문헌 목록(README "참고문헌은 워크플로우가 끌고
     # 다니는 누적 산출물" 참고) — 각 항목: {"paper_id", "title", "source": "owned"|
     # "external", "reasoning", "added_by_stage"}. 뒤에 올 실험 설계·운영·논문 작성
@@ -68,35 +81,88 @@ def generate_hypothesis(state: WorkflowState) -> dict:
     }
 
 
-def find_hypothesis_references(state: WorkflowState) -> dict:
-    """방금 나온 가설 문장으로 참고문헌 추천기를 호출해 워크플로우 공유 references에
-    누적한다. 이미 목록에 있는 paper_id는 건너뛴다(다른 단계가 먼저 찾았을 수 있음 —
-    처음 추가한 단계 표시를 그대로 둔다).
+def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name: str):
+    """참고문헌 추천 노드를 찍어내는 클로저 팩토리 — tool.py의 make_search_tool과 같은
+    패턴(그쪽은 site별 검색 tool, 여긴 단계별 참고문헌 노드). 스테이지마다 하는 일은
+    "자기 산출물 텍스트로 검색해서 공유 references에 누적"으로 완전히 같고, 다른 건
+    어느 필드(들)를 검색어로 쓰는지와 added_by_stage 값뿐이라 그때그때 복붙하는 대신
+    get_text(state)로 위임한다.
 
-    실패(모델 소진 등)는 이 단계만 건너뛴다 — 가설 자체는 이미 만들어졌으므로 참고문헌
-    하나 못 찾았다고 워크플로우 전체를 실패시킬 이유가 없다(관심사 자동 제안 훅이
-    쓰던 것과 같은 논리, 08-02에 삭제됐지만 "부가 기능 실패가 핵심 결과를 막지 않는다"
-    원칙은 유효).
+    실패(모델 소진 등)는 이 단계만 건너뛴다 — 앞 단계 산출물은 이미 나왔으므로
+    참고문헌 하나 못 찾았다고 워크플로우 전체를 실패시킬 이유가 없다(삭제된 관심사
+    자동 제안 훅이 쓰던 것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다).
     """
-    try:
-        found = reference_recommender.recommend_references(state.hypothesis)
-    except RuntimeError as e:
-        print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
-        return {}
+    def node(state: WorkflowState) -> dict:
+        try:
+            found = reference_recommender.recommend_references(get_text(state))
+        except RuntimeError as e:
+            print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
+            return {}
 
-    existing_ids = {r["paper_id"] for r in state.references}
-    new_entries = [
-        {**r, "added_by_stage": "hypothesis"} for r in found if r["paper_id"] not in existing_ids
+        existing_ids = {r["paper_id"] for r in state.references}
+        new_entries = [
+            {**r, "added_by_stage": stage_name} for r in found if r["paper_id"] not in existing_ids
+        ]
+        return {"references": state.references + new_entries}
+
+    return node
+
+
+find_hypothesis_references = _make_reference_node(lambda s: s.hypothesis, "hypothesis")
+find_design_references = _make_reference_node(lambda s: s.procedure, "design")
+
+
+EXPERIMENT_DESIGN_SYSTEM_PROMPT = """주어진 가설을 검증할 실험을 설계해라. 독립변수·
+종속변수·통제변수를 명확히 구분하고, 실험 절차를 구체적인 순서로 적어라. 필요한
+장비는 아래 "보유 장비 목록"에 있는 것을 최우선으로 활용하고, 목록에 없는 장비가
+꼭 필요하면 그것도 적되 목록에 없다는 걸 명시해라."""
+
+
+class ExperimentDesign(BaseModel):
+    independent_variable: str = Field(description="조작하는 변수 — 무엇을 바꿔가며 관찰하는지")
+    dependent_variable: str = Field(description="측정하는 변수 — 무엇을 재는지")
+    controlled_variables: str = Field(description="일정하게 유지할 변수들")
+    equipment_needed: str = Field(description="필요한 장비 — 보유 장비 목록 활용, 없으면 명시")
+    procedure: str = Field(description="실험 절차를 순서대로 구체적으로")
+
+
+def design_experiment(state: WorkflowState) -> dict:
+    # equipment.py(⑤)가 짧은 목록이라는 전제로 조회 없이(SQL 조건 없이) 그대로
+    # 프롬프트에 넣는다 — RoadMap "실험도구는 RDB, 자연어 탐색은 목록이 짧으니
+    # 프롬프트에 넣으면 된다"는 결정을 여기서 실제로 쓴다.
+    equipment_list = equipment.list_equipment()
+    equipment_text = "\n".join(f"- {e['name']}: {e['purpose']}" for e in equipment_list) or "(등록된 장비 없음)"
+
+    messages = [
+        SystemMessage(content=EXPERIMENT_DESIGN_SYSTEM_PROMPT),
+        HumanMessage(content=(
+            f"가설: {state.hypothesis}\n근거: {state.rationale}\n\n보유 장비 목록:\n{equipment_text}"
+        )),
     ]
-    return {"references": state.references + new_entries}
+    result, _, disabled_models, tokens_used = invoke_with_fallback(
+        state.model, messages, structured=ExperimentDesign, disabled_models=state.disabled_models
+    )
+    return {
+        "independent_variable": result.independent_variable,
+        "dependent_variable": result.dependent_variable,
+        "controlled_variables": result.controlled_variables,
+        "equipment_needed": result.equipment_needed,
+        "procedure": result.procedure,
+        "disabled_models": disabled_models,
+        "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+    }
 
 
 graph = StateGraph(WorkflowState)
 graph.add_node("generate_hypothesis", generate_hypothesis)
 graph.add_node("find_hypothesis_references", find_hypothesis_references)
+graph.add_node("design_experiment", design_experiment)
+graph.add_node("find_design_references", find_design_references)
 graph.add_edge(START, "generate_hypothesis")
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
-graph.add_edge("find_hypothesis_references", END)
+graph.add_edge("find_hypothesis_references", "design_experiment")
+graph.add_edge("design_experiment", "find_design_references")
+graph.add_edge("find_design_references", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -127,6 +193,11 @@ if __name__ == "__main__":
             print("가설:", result["hypothesis"])
             print("근거:", result["rationale"])
             print("예측:", result["testable_prediction"])
+            print("독립변수:", result["independent_variable"])
+            print("종속변수:", result["dependent_variable"])
+            print("통제변수:", result["controlled_variables"])
+            print("필요 장비:", result["equipment_needed"])
+            print("절차:", result["procedure"])
             print("참고문헌:", [r["title"] for r in result["references"]])
 
     asyncio.run(_smoke_test())

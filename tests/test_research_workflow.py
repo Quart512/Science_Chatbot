@@ -1,11 +1,12 @@
 """
-research_workflow.py — 연구 워크플로우(⑥) 노드 generate_hypothesis()/
-find_hypothesis_references(). 그래프 노드를 맨 함수로 직접 부르는 이 저장소 관례
-(orchestrator.py 테스트와 동일) 그대로 invoke_with_fallback/reference_recommender를
-몽키패치해 순수 조립 로직만 검증 — 실제 LLM·벡터DB 호출 없음.
+research_workflow.py — 연구 워크플로우(⑥) 노드들. 그래프 노드를 맨 함수로 직접 부르는
+이 저장소 관례(orchestrator.py 테스트와 동일) 그대로 invoke_with_fallback/
+reference_recommender/equipment를 몽키패치해 순수 조립 로직만 검증 — 실제 LLM·벡터DB
+호출 없음.
 """
 import pytest
 
+import equipment
 import reference_recommender
 import research_workflow
 
@@ -127,3 +128,115 @@ def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
     result = research_workflow.find_hypothesis_references(state)
 
     assert result == {}  # 워크플로우를 안 막음 — references 안 건드림
+
+
+# --- design_experiment() ------------------------------------------------------
+
+
+def _fake_design_result(disabled_models=None, **fields):
+    defaults = dict(
+        independent_variable="온도", dependent_variable="저항",
+        controlled_variables="시료 순도", equipment_needed="온도 조절 장치",
+        procedure="1. 시료를 냉각한다\n2. 저항을 측정한다",
+    )
+    return (
+        research_workflow.ExperimentDesign(**{**defaults, **fields}),
+        "gemini", disabled_models or [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    )
+
+
+def test_design_experiment_returns_structured_fields(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="온도가 오르면 저항이 커진다")
+    result = research_workflow.design_experiment(state)
+
+    assert result["independent_variable"] == "온도"
+    assert result["dependent_variable"] == "저항"
+    assert result["controlled_variables"] == "시료 순도"
+    assert result["equipment_needed"] == "온도 조절 장치"
+    assert "저항을 측정한다" in result["procedure"]
+
+
+def test_design_experiment_includes_equipment_list_in_prompt(monkeypatch):
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "오실로스코프", "purpose": "파형 관찰", "detail": ""}],
+    )
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_design_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    research_workflow.design_experiment(state)
+
+    assert "오실로스코프" in captured["human"]
+    assert "파형 관찰" in captured["human"]
+
+
+def test_design_experiment_notes_when_no_equipment_registered(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_design_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    research_workflow.design_experiment(state)
+
+    assert "등록된 장비 없음" in captured["human"]
+
+
+def test_design_experiment_passes_disabled_models_through(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["disabled_models"] = disabled_models
+        return _fake_design_result(disabled_models=disabled_models + ["gemini"])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", disabled_models=["claude"])
+    result = research_workflow.design_experiment(state)
+
+    assert captured["disabled_models"] == ["claude"]
+    assert result["disabled_models"] == ["claude", "gemini"]
+
+
+def test_design_experiment_propagates_model_failure(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    def _boom(*a, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    with pytest.raises(RuntimeError):
+        research_workflow.design_experiment(state)
+
+
+# --- find_design_references() --------------------------------------------------
+
+
+def test_find_design_references_searches_using_procedure_text(monkeypatch):
+    captured = {}
+    def _fake_recommend(text):
+        captured["text"] = text
+        return []
+    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+
+    state = research_workflow.WorkflowState(topic="주제", procedure="1. 시료를 냉각한다\n2. 저항을 측정한다")
+    research_workflow.find_design_references(state)
+
+    assert captured["text"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"
+
+
+def test_find_design_references_appends_with_stage_tag(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+
+    state = research_workflow.WorkflowState(topic="주제", procedure="절차")
+    result = research_workflow.find_design_references(state)
+
+    assert result["references"][0]["added_by_stage"] == "design"
