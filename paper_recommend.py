@@ -51,6 +51,13 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
             print(f"스크리닝 실패, 이 후보는 건너뜀(paper_id={candidate['paper_id']}): {type(e).__name__}: {e}")
             continue
 
+        # 관련 있음/없음 둘 다 기록 — interest_paper가 "이 관심사에 무엇이 스크리닝됐나"의
+        # 전체 기록이라, 카탈로그 upsert(관련 있는 것만)와는 기록 범위가 다르다.
+        paper_catalog.record_screening(
+            interest_id, candidate["paper_id"],
+            is_relevant=screened["is_relevant"], reasoning=screened["reasoning"], conn=conn,
+        )
+
         if screened["is_relevant"]:
             paper_catalog.upsert_recommended(
                 candidate["paper_id"],
@@ -101,6 +108,12 @@ def refresh_for_interest(
         except RuntimeError as e:
             print(f"재스크리닝 실패, 이 후보는 건너뜀(paper_id={c.get('paper_id')}): {type(e).__name__}: {e}")
             continue
+        # 재스크리닝도 최신 판정으로 덮어쓴다 — record_screening()이 upsert라 관심사가
+        # 수정돼 관련도가 바뀌었으면(예: 관련 있었다가 없어짐) 그 변화가 그대로 반영된다.
+        paper_catalog.record_screening(
+            interest_id, c.get("paper_id"),
+            is_relevant=screened["is_relevant"], reasoning=screened["reasoning"], conn=conn,
+        )
         if screened["is_relevant"]:
             kept_old.append({**screened, "title": c.get("title", ""), "abstract": c.get("abstract", "")})
 

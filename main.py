@@ -173,6 +173,16 @@ def refresh_recommend_search(interest_id: int, body: RefreshRequest):
     return {"recommended": results}
 
 
+# interest_paper 조인 조회 — /search·/refresh는 그 순간의 스크리닝 결과만 응답으로
+# 돌려주고 저장은 안 했었다(08-03 전까지). 이제 record_screening()이 매 스크리닝을
+# 남기므로, 세션이 끊긴 뒤에도 "이 관심사에 무엇이 추천됐는지"를 다시 조회할 수 있다.
+@app.get("/interests/{interest_id}/papers")
+def list_interest_papers(interest_id: int, only_relevant: bool = False):
+    if interests.get_interest(interest_id) is None:
+        raise HTTPException(status_code=404, detail=f"관심사 id={interest_id}를 찾을 수 없습니다")
+    return {"papers": paper_catalog.list_papers_for_interest(interest_id, only_relevant=only_relevant)}
+
+
 # register_paper()가 pdf_path(디스크 경로)를 받으므로 업로드 바이트를 임시 파일에
 # 써서 넘긴다. fitz.FileDataError(유효하지 않은 PDF)는 사용자 입력 검증 경계라 400으로.
 @app.post("/papers")

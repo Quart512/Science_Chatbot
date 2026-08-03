@@ -13,6 +13,15 @@ import paper_search
 INTEREST = {"id": 1, "title": "위상 물질", "looking_for": "새로운 상전이", "already_known": "", "excluded_topics": ""}
 
 
+@pytest.fixture(autouse=True)
+def _stub_record_screening(monkeypatch):
+    # record_screening()은 08-03에 추가된 실제 sqlite3 쓰기 호출 — 몽키패치 안 하면
+    # 이 파일의 기존 테스트가 전부 실제 data/app.db를 건드린다(paper_ingest.py의
+    # mark_owned 스텁 fixture와 같은 이유). 인자 검증이 필요한 테스트는 개별적으로
+    # 다시 monkeypatch해서 이 기본값을 덮어쓴다.
+    monkeypatch.setattr(paper_catalog, "record_screening", lambda *a, **kw: None)
+
+
 def _candidate(paper_id="arxiv:1", title="논문", **overrides):
     base = {
         "paper_id": paper_id, "doi": None, "arxiv_id": "1", "title": title,
@@ -166,6 +175,77 @@ def test_passes_candidate_metadata_to_catalog(monkeypatch):
     assert captured["authors"] == "김, 이"
     assert captured["year"] == "2020"
     assert captured["doi"] == "10.1/x"
+
+
+def test_records_screening_for_both_relevant_and_irrelevant_candidates(monkeypatch):
+    # 카탈로그(upsert_recommended, 관련 있는 것만)와 달리 interest_paper 기록은
+    # 관련 없다고 판정된 것도 남겨야 한다 — "이 관심사에 무엇이 스크리닝됐나"의
+    # 전체 기록이 목적(paper_catalog.py 상단 주석 참고).
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    monkeypatch.setattr(
+        paper_search, "search_papers",
+        lambda query, max_results=5, start=0: [_candidate("arxiv:1", "관련됨"), _candidate("arxiv:2", "무관함")],
+    )
+    monkeypatch.setattr(
+        paper_screening, "screen_candidate",
+        lambda candidate, interest, **kw: _screened(candidate["paper_id"], candidate["paper_id"] == "arxiv:1", reasoning=f"{candidate['paper_id']} 근거"),
+    )
+    monkeypatch.setattr(paper_catalog, "upsert_recommended", lambda paper_id, **kw: True)
+
+    recorded = []
+    monkeypatch.setattr(
+        paper_catalog, "record_screening",
+        lambda interest_id, paper_id, *, is_relevant, reasoning, **kw: recorded.append((interest_id, paper_id, is_relevant, reasoning)),
+    )
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert (1, "arxiv:1", True, "arxiv:1 근거") in recorded
+    assert (1, "arxiv:2", False, "arxiv:2 근거") in recorded  # 무관해도 기록됨
+
+
+def test_screening_failure_does_not_record(monkeypatch):
+    # 스크리닝 자체가 실패(RuntimeError)한 후보는 판정값이 없으니 당연히 기록하지 않는다.
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    monkeypatch.setattr(
+        paper_search, "search_papers",
+        lambda query, max_results=5, start=0: [_candidate("arxiv:fail")],
+    )
+    def _boom(candidate, interest, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(paper_screening, "screen_candidate", _boom)
+
+    recorded = []
+    monkeypatch.setattr(
+        paper_catalog, "record_screening",
+        lambda *a, **kw: recorded.append((a, kw)),
+    )
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert recorded == []
+
+
+def test_refresh_records_rescreening_result(monkeypatch):
+    # refresh_for_interest의 재스크리닝 루프도 최신 판정을 기록해야 한다 — 관심사가
+    # 수정돼 관련도가 바뀐 경우가 바로 이 경로에서 갱신된다.
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    monkeypatch.setattr(paper_search, "search_papers", lambda query, max_results=5, start=0: [])
+    monkeypatch.setattr(paper_catalog, "upsert_recommended", lambda paper_id, **kw: True)
+    monkeypatch.setattr(
+        paper_screening, "screen_candidate",
+        lambda candidate, interest, **kw: _screened(candidate["paper_id"], False, reasoning="더는 관련 없음"),
+    )
+
+    recorded = []
+    monkeypatch.setattr(
+        paper_catalog, "record_screening",
+        lambda interest_id, paper_id, *, is_relevant, reasoning, **kw: recorded.append((interest_id, paper_id, is_relevant, reasoning)),
+    )
+
+    paper_recommend.refresh_for_interest(1, [_existing("arxiv:1", is_relevant=True)])
+
+    assert (1, "arxiv:1", False, "더는 관련 없음") in recorded
 
 
 def test_no_candidates_returns_empty_list(monkeypatch):

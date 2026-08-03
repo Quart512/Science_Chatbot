@@ -97,6 +97,80 @@ def test_list_papers_filters_by_status(conn):
     assert len(all_papers) == 2
 
 
+# --- interest_paper (08-03) ----------------------------------------------------
+
+
+def test_record_screening_inserts_new_row(conn):
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="관련 있음", conn=conn)
+    paper_catalog.upsert_recommended("arxiv:1", title="논문1", conn=conn)
+
+    rows = paper_catalog.list_papers_for_interest(1, conn=conn)
+
+    assert len(rows) == 1
+    assert rows[0]["paper_id"] == "arxiv:1"
+    assert rows[0]["is_relevant"] is True
+    assert rows[0]["reasoning"] == "관련 있음"
+    assert rows[0]["title"] == "논문1"  # papers와 조인돼 서지정보도 같이 나옴
+
+
+def test_record_screening_includes_irrelevant_candidates(conn):
+    # 카탈로그(upsert_recommended)와 달리 관련 없다고 판정된 것도 기록해야 한다 —
+    # "이 관심사에 무엇이 스크리닝됐나"의 전체 기록이 목적이라서다. 실제 호출부
+    # (paper_recommend.py)는 관련 없으면 upsert_recommended를 안 부르므로 papers에
+    # 행이 없는 채로 조회돼야 한다(LEFT JOIN 확인 겸함).
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=False, reasoning="무관함", conn=conn)
+
+    rows = paper_catalog.list_papers_for_interest(1, conn=conn)
+    assert len(rows) == 1
+    assert rows[0]["paper_id"] == "arxiv:1"
+    assert rows[0]["is_relevant"] is False
+    assert rows[0]["title"] is None  # papers 테이블에 행 자체가 없음
+
+
+def test_record_screening_overwrites_on_rescreen(conn):
+    # 재스크리닝(refresh_for_interest)이 같은 쌍을 다시 채점하면 최신 판정으로
+    # 덮어써야 한다 — upsert_recommended와 달리 이 값은 사용자 결정이 아니다.
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=False, reasoning="처음엔 무관", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="다시 보니 관련 있음", conn=conn)
+
+    rows = paper_catalog.list_papers_for_interest(1, conn=conn)
+    assert len(rows) == 1  # 새 행이 생기지 않고 덮어씀
+    assert rows[0]["is_relevant"] is True
+    assert rows[0]["reasoning"] == "다시 보니 관련 있음"
+
+
+def test_list_papers_for_interest_scoped_to_that_interest(conn):
+    # 다대다 확인 — 같은 논문이 여러 관심사에 걸릴 수 있고, 조회는 그 관심사 것만 봐야 함
+    paper_catalog.upsert_recommended("arxiv:1", title="논문1", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="관심사1 근거", conn=conn)
+    paper_catalog.record_screening(2, "arxiv:1", is_relevant=True, reasoning="관심사2 근거", conn=conn)
+
+    interest1_papers = paper_catalog.list_papers_for_interest(1, conn=conn)
+    interest2_papers = paper_catalog.list_papers_for_interest(2, conn=conn)
+
+    assert len(interest1_papers) == 1
+    assert interest1_papers[0]["reasoning"] == "관심사1 근거"
+    assert len(interest2_papers) == 1
+    assert interest2_papers[0]["reasoning"] == "관심사2 근거"
+
+
+def test_list_papers_for_interest_only_relevant_filters(conn):
+    paper_catalog.upsert_recommended("arxiv:1", title="관련", conn=conn)
+    paper_catalog.upsert_recommended("arxiv:2", title="무관", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:2", is_relevant=False, reasoning="", conn=conn)
+
+    all_papers = paper_catalog.list_papers_for_interest(1, conn=conn)
+    relevant_only = paper_catalog.list_papers_for_interest(1, only_relevant=True, conn=conn)
+
+    assert len(all_papers) == 2
+    assert [p["paper_id"] for p in relevant_only] == ["arxiv:1"]
+
+
+def test_list_papers_for_interest_returns_empty_when_none_screened(conn):
+    assert paper_catalog.list_papers_for_interest(999, conn=conn) == []
+
+
 def test_doi_and_arxiv_id_uniqueness_allows_multiple_nulls(conn):
     # doi가 둘 다 없는(NULL) 논문 두 개를 등록해도 UNIQUE 제약에 안 걸려야 한다
     # (SQLite는 NULL끼리는 서로 다른 값으로 취급 — 표준 SQL 동작)

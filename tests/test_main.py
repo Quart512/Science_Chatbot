@@ -269,6 +269,45 @@ def test_refresh_recommend_search_404_when_interest_not_found(monkeypatch):
     assert resp.status_code == 404
 
 
+# --- GET /interests/{id}/papers (08-03, interest_paper 조인 조회) -----------------
+
+
+def test_list_interest_papers_returns_results(monkeypatch):
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: {"id": 1, "title": "관심사"})
+    fake_papers = [{"paper_id": "arxiv:1", "is_relevant": True, "title": "논문"}]
+    monkeypatch.setattr(paper_catalog, "list_papers_for_interest", lambda interest_id, **kw: fake_papers)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/interests/1/papers")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"papers": fake_papers}
+
+
+def test_list_interest_papers_forwards_only_relevant_query_param(monkeypatch):
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: {"id": 1, "title": "관심사"})
+    captured = {}
+    def _fake_list(interest_id, **kw):
+        captured.update(kw)
+        return []
+    monkeypatch.setattr(paper_catalog, "list_papers_for_interest", _fake_list)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/interests/1/papers", params={"only_relevant": True})
+
+    assert resp.status_code == 200
+    assert captured["only_relevant"] is True
+
+
+def test_list_interest_papers_404_when_interest_not_found(monkeypatch):
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: None)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/interests/999/papers")
+
+    assert resp.status_code == 404
+
+
 # --- POST /papers (08-11① 호출 경로) -----------------------------------------
 
 
