@@ -278,6 +278,97 @@ def test_find_design_references_appends_with_stage_tag(monkeypatch):
     assert result["references"][0]["added_by_stage"] == "design"
 
 
+# --- analyze_results() ---------------------------------------------------------
+
+
+def _fake_analysis_result(disabled_models=None, analysis="예측을 지지함", needs_redesign=False):
+    return (
+        research_workflow.ExperimentAnalysis(analysis=analysis, needs_redesign=needs_redesign),
+        "gemini", disabled_models or [], {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    )
+
+
+def test_analyze_results_returns_structured_fields(monkeypatch):
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_analysis_result(analysis="예측과 일치", needs_redesign=False),
+    )
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", testable_prediction="예측", procedure="절차",
+        experiment_results="측정값이 예측과 같았다",
+    )
+    result = research_workflow.analyze_results(state)
+
+    assert result["analysis"] == "예측과 일치"
+    assert result["needs_redesign"] is False
+
+
+def test_analyze_results_uses_experiment_results_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_analysis_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", testable_prediction="예측", procedure="절차",
+        experiment_results="저항이 거의 안 변했다",
+    )
+    research_workflow.analyze_results(state)
+
+    assert "저항이 거의 안 변했다" in captured["human"]
+
+
+def test_analyze_results_passes_disabled_models_through(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["disabled_models"] = disabled_models
+        return _fake_analysis_result(disabled_models=disabled_models + ["gemini"])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", disabled_models=["claude"])
+    result = research_workflow.analyze_results(state)
+
+    assert captured["disabled_models"] == ["claude"]
+    assert result["disabled_models"] == ["claude", "gemini"]
+
+
+def test_analyze_results_propagates_model_failure(monkeypatch):
+    def _boom(*a, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제")
+    with pytest.raises(RuntimeError):
+        research_workflow.analyze_results(state)
+
+
+# --- find_operation_references() ------------------------------------------------
+
+
+def test_find_operation_references_searches_using_analysis_text(monkeypatch):
+    captured = {}
+    def _fake_recommend(text):
+        captured["text"] = text
+        return []
+    monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
+
+    state = research_workflow.WorkflowState(topic="주제", analysis="결과가 예측과 어긋났다")
+    research_workflow.find_operation_references(state)
+
+    assert captured["text"] == "결과가 예측과 어긋났다"
+
+
+def test_find_operation_references_appends_with_stage_tag(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "recommend_references", lambda text: [_ref("p1", "논문1")])
+
+    state = research_workflow.WorkflowState(topic="주제", analysis="분석")
+    result = research_workflow.find_operation_references(state)
+
+    assert result["references"][0]["added_by_stage"] == "operation"
+
+
 # --- route_by_stage() + 그래프 라우팅 통합 확인 --------------------------------
 # 단계 전환은 글루 함수(advance_to_design, 폐기됨)가 아니라 START의 조건부 엣지가
 # state.stage를 보고 담당한다(08-02, 사용자 제안 — 토이 그래프로 실제 동작 확인 후
@@ -291,7 +382,9 @@ def test_route_by_stage_returns_stage_field():
     assert research_workflow.route_by_stage(state) == "design"
 
 
-def test_graph_routes_to_design_after_stage_update_and_sees_prior_hypothesis(monkeypatch):
+def test_graph_routes_through_all_three_stages_via_single_invoke_calls(monkeypatch):
+    # 단계 전환은 별도 update_state 호출 없이 stage(+새 입력)를 담은 ainvoke() 한 번으로
+    # 된다는 것까지 포함해 확인 — 가설→설계→운영을 실제 컴파일된 그래프로 쭉 따라간다.
     from langgraph.checkpoint.memory import MemorySaver
 
     monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result(statement="가설X"))
@@ -308,8 +401,21 @@ def test_graph_routes_to_design_after_stage_update_and_sees_prior_hypothesis(mon
     monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
     monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
 
-    app.update_state(config, {"stage": "design"}, as_node="__start__")
-    second = app.invoke({}, config=config)
+    second = app.invoke({"stage": "design"}, config=config)  # update_state 없이 한 번의 호출로 전환
 
     assert second["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # design_experiment로 라우팅됨
     assert second["hypothesis"] == "가설X"  # 1단계에서 저장된 값을 그대로 봄
+
+    monkeypatch.setattr(
+        research_workflow, "invoke_with_fallback",
+        lambda *a, **kw: _fake_analysis_result(analysis="어긋남", needs_redesign=True),
+    )
+
+    third = app.invoke(
+        {"stage": "operation", "experiment_results": "저항이 거의 안 변했다"}, config=config,
+    )
+
+    assert third["analysis"] == "어긋남"
+    assert third["needs_redesign"] is True
+    assert third["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # 2단계 값도 여전히 보임
+    assert third["experiment_results"] == "저항이 거의 안 변했다"

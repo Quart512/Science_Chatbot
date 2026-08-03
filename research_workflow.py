@@ -4,19 +4,21 @@
 # 있는 작업이라 체크포인터 영속화가 전제(main.py가 컴파일 시 연결, orchestrator.py와
 # 같은 패턴 — 컴파일 전 graph 빌더만 여기서 export).
 #
-# 가설 수립 → 실험 설계까지 연결됐다. 실험 운영·안전 가드레일(interrupt_before HITL)은
+# 가설 수립 → 실험 설계 → 실험 운영까지 연결됐다. 안전 가드레일(interrupt_before HITL)은
 # 다음 단위(RoadMap "연구 워크플로우(⑥)" 참고) — 노드 하나마다 검증하고 다음으로 넘어간다.
 #
 # 단계 전환은 START의 조건부 엣지(route_by_stage)가 state.stage를 보고 담당한다(08-02,
 # 사용자 제안 — 처음엔 aget_state로 읽어 파이썬 함수를 직접 부르고 aupdate_state로
 # 쓰는 방식(advance_to_design)으로 짰다가, "그냥 START에서 라우팅하면 안 되냐"는 지적을
 # 받고 실제로 되는지 확인한 뒤(별도 토이 그래프로 재현) 이 방식으로 교체했다). 사람이
-# "다음 단계로" 트리거하면 호출부가 `aupdate_state(config, {"stage": "design"})` 후
-# `ainvoke({}, config)`(빈 입력)를 부르기만 하면 된다 — 라우터가 알아서 design_experiment로
-# 보내고, 그 노드는 체크포인트에 이미 있는 hypothesis 등을 그대로 본다. 이 방식이 더
-# 나은 이유: 모든 단계가 똑같이 그래프 엔진(스트리밍·트레이싱 포함)을 타서 1단계만
-# 특별 취급하던 비일관성이 없고, 단계가 늘어도 새 글루 함수 없이 라우팅 분기+엣지만
-# 추가하면 된다.
+# "다음 단계로" 트리거하면 호출부가 `ainvoke({"stage": "design", ...새 입력}, config)`
+# **한 번만** 부르면 된다 — stage 갱신과 새 입력(예: 실험 결과)이 같은 invoke 호출
+# 안에서 함께 반영되는 것도 실제로 확인했다(별도 aupdate_state 호출 불필요). 라우터가
+# 알아서 해당 단계 노드로 보내고, 그 노드는 체크포인트에 이미 있는 이전 단계 값을
+# 그대로 본다. 이 방식이 더 나은 이유: 모든 단계가 똑같이 그래프 엔진(스트리밍·트레이싱
+# 포함)을 타서 1단계만 특별 취급하던 비일관성이 없고, 단계가 늘어도 새 글루 함수 없이
+# 라우팅 분기+엣지만 추가하면 된다 — "재설계 필요" 판정이 나와도 사람이 stage를 다시
+# "design"으로 돌리기만 하면 되므로 별도 되돌아가는 엣지도 필요 없다.
 #
 # 실험 설계는 README상 "Plan-and-Execute"가 핵심 기법으로 적혀 있지만(계획자가 단계를
 # 짜고 실행자가 tool 호출을 섞어가며 수행, 필요시 재계획하는 멀티스텝 에이전트 패턴),
@@ -48,9 +50,8 @@ class WorkflowState(BaseModel):
     topic: str  # 사용자가 준 연구 주제·질문
     # 지금 어느 단계인지 — START의 조건부 엣지가 이 값으로 라우팅한다. 기본값이
     # "hypothesis"라 처음 만드는 thread는 자동으로 가설 단계부터 시작하고, 사용자가
-    # "다음 단계로"를 누르면 호출부가 이 필드만 갱신(aupdate_state)한 뒤 빈 입력으로
-    # 다시 invoke하면 된다.
-    stage: Literal["hypothesis", "design"] = "hypothesis"
+    # "다음 단계로"를 누르면 호출부가 이 필드(+필요하면 새 입력)를 담아 다시 invoke하면 된다.
+    stage: Literal["hypothesis", "design", "operation"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
     hypothesis: str = ""
@@ -61,6 +62,12 @@ class WorkflowState(BaseModel):
     controlled_variables: str = ""
     equipment_needed: str = ""
     procedure: str = ""
+    # 실험 운영 단계 — experiment_results는 사용자가 실제로 실험을 하고 와서 입력하는
+    # 값이라 LLM이 만들지 않는다(가설/설계와 성격이 다름). analysis/needs_redesign은
+    # 그 결과를 testable_prediction과 비교해 LLM이 뽑는다.
+    experiment_results: str = ""
+    analysis: str = ""
+    needs_redesign: bool = False
     # 워크플로우가 끌고 다니는 누적 참고문헌 목록(README "참고문헌은 워크플로우가 끌고
     # 다니는 누적 산출물" 참고) — 각 항목: {"paper_id", "title", "source": "owned"|
     # "external", "reasoning", "added_by_stage"}. 뒤에 올 실험 설계·운영·논문 작성
@@ -188,6 +195,43 @@ def design_experiment(state: WorkflowState) -> dict:
     }
 
 
+EXPERIMENT_ANALYSIS_SYSTEM_PROMPT = """가설·예측·실험 절차와 사용자가 보고한 실제
+실험 결과를 비교해서 분석해라. 결과가 예측(testable_prediction)을 지지하는지,
+반박하는지, 판단하기엔 불충분한지 이유와 함께 적어라. 결과가 예측과 어긋나거나
+결론을 내리기에 불충분하면(측정 오류·통제 미흡 등) 재설계가 필요하다고 판단해라 —
+애매하면 재설계 권장 쪽으로(잘못된 결론을 그대로 받아들이는 것보다 안전하다)."""
+
+
+class ExperimentAnalysis(BaseModel):
+    analysis: str = Field(description="결과가 예측을 지지/반박/불충분한지와 그 이유")
+    needs_redesign: bool = Field(description="실험을 다시 설계해야 하면 True")
+
+
+def analyze_results(state: WorkflowState) -> dict:
+    # experiment_results는 사용자가 입력한 값 그대로 쓴다 — LLM이 실험을 "했다고
+    # 치는" 게 아니라 실제로 사람이 하고 온 결과를 분석만 한다(가설/설계 노드와
+    # 성격이 다른 지점).
+    messages = [
+        SystemMessage(content=EXPERIMENT_ANALYSIS_SYSTEM_PROMPT),
+        HumanMessage(content=(
+            f"가설: {state.hypothesis}\n예측: {state.testable_prediction}\n"
+            f"실험 절차: {state.procedure}\n\n실제 실험 결과: {state.experiment_results}"
+        )),
+    ]
+    result, _, disabled_models, tokens_used = invoke_with_fallback(
+        state.model, messages, structured=ExperimentAnalysis, disabled_models=state.disabled_models
+    )
+    return {
+        "analysis": result.analysis,
+        "needs_redesign": result.needs_redesign,
+        "disabled_models": disabled_models,
+        "tokens_used": _add_tokens(state.tokens_used, tokens_used),
+    }
+
+
+find_operation_references = _make_reference_node(lambda s: s.analysis, "operation")
+
+
 def route_by_stage(state: WorkflowState) -> str:
     return state.stage
 
@@ -197,14 +241,19 @@ graph.add_node("generate_hypothesis", generate_hypothesis)
 graph.add_node("find_hypothesis_references", find_hypothesis_references)
 graph.add_node("design_experiment", design_experiment)
 graph.add_node("find_design_references", find_design_references)
+graph.add_node("analyze_results", analyze_results)
+graph.add_node("find_operation_references", find_operation_references)
 graph.add_conditional_edges(START, route_by_stage, {
     "hypothesis": "generate_hypothesis",
     "design": "design_experiment",
+    "operation": "analyze_results",
 })
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
 graph.add_edge("find_hypothesis_references", END)
 graph.add_edge("design_experiment", "find_design_references")
 graph.add_edge("find_design_references", END)
+graph.add_edge("analyze_results", "find_operation_references")
+graph.add_edge("find_operation_references", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
@@ -240,15 +289,24 @@ if __name__ == "__main__":
             print("참고문헌(가설):", [r["title"] for r in result["references"]])
             print("안내:", result["comment"])
 
-            # 2단계: "설계 진행" 트리거 — stage만 갱신하고 빈 입력으로 다시 invoke하면
+            # 2단계: "설계 진행" 트리거 — stage 갱신을 새 invoke 호출 하나에 담으면
             # 라우터가 design_experiment로 보낸다(main.py가 실제로 쓸 패턴).
-            await app.aupdate_state(config, {"stage": "design"}, as_node="__start__")
-            final = await app.ainvoke({}, config=config)
-            print("독립변수:", final["independent_variable"])
-            print("종속변수:", final["dependent_variable"])
-            print("통제변수:", final["controlled_variables"])
-            print("필요 장비:", final["equipment_needed"])
-            print("절차:", final["procedure"])
+            design_result = await app.ainvoke({"stage": "design"}, config=config)
+            print("독립변수:", design_result["independent_variable"])
+            print("종속변수:", design_result["dependent_variable"])
+            print("통제변수:", design_result["controlled_variables"])
+            print("필요 장비:", design_result["equipment_needed"])
+            print("절차:", design_result["procedure"])
+            print("참고문헌(설계까지):", [r["title"] for r in design_result["references"]])
+            print("안내:", design_result["comment"])
+
+            # 3단계: 실험 운영 — 사람이 실제로 실험하고 온 결과를 입력하며 트리거.
+            final = await app.ainvoke(
+                {"stage": "operation", "experiment_results": "온도를 낮췄더니 저항이 예측과 달리 거의 변하지 않았다"},
+                config=config,
+            )
+            print("분석:", final["analysis"])
+            print("재설계 필요:", final["needs_redesign"])
             print("참고문헌(전체):", [r["title"] for r in final["references"]])
             print("안내:", final["comment"])
 
