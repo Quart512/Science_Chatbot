@@ -10,6 +10,7 @@ import uuid
 import fitz
 from fastapi.testclient import TestClient
 
+import equipment
 import interests
 import main
 import orchestrator
@@ -351,3 +352,85 @@ def test_list_papers_rejects_invalid_status():
         resp = client.get("/papers", params={"status": "bogus"})
 
     assert resp.status_code == 422
+
+
+# --- /equipment (실험도구 DB ⑤, /interests와 완전히 같은 패턴) -----------------
+
+
+def test_list_equipment_returns_all(monkeypatch):
+    fake_rows = [{"id": 1, "name": "오실로스코프"}, {"id": 2, "name": "레이저"}]
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: fake_rows)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/equipment")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"equipment": fake_rows}
+
+
+def test_register_equipment_creates_new_when_no_update_id(monkeypatch):
+    captured = {}
+    def _fake_create(name, purpose="", detail="", **kw):
+        captured.update(name=name, purpose=purpose)
+        return 42
+    monkeypatch.setattr(equipment, "create_equipment", _fake_create)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/equipment", json={"name": "오실로스코프", "purpose": "파형 관찰"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"equipment_id": 42, "action": "created"}
+    assert captured == {"name": "오실로스코프", "purpose": "파형 관찰"}
+
+
+def test_register_equipment_updates_existing_when_update_id_given(monkeypatch):
+    captured = {}
+    def _fake_update(equipment_id, **fields):
+        captured["id"] = equipment_id
+        captured["fields"] = fields
+        return True
+    monkeypatch.setattr(equipment, "update_equipment", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/equipment",
+            json={"name": "고친 이름", "purpose": "", "update_existing_id": 7},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"equipment_id": 7, "action": "updated"}
+    assert captured["id"] == 7
+    assert captured["fields"]["name"] == "고친 이름"
+
+
+def test_register_equipment_404_when_update_id_not_found(monkeypatch):
+    monkeypatch.setattr(equipment, "update_equipment", lambda equipment_id, **fields: False)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/equipment", json={"name": "이름", "update_existing_id": 999})
+
+    assert resp.status_code == 404
+
+
+def test_delete_equipment_returns_deleted_action(monkeypatch):
+    captured = {}
+    def _fake_delete(equipment_id, **kw):
+        captured["id"] = equipment_id
+        return True
+    monkeypatch.setattr(equipment, "delete_equipment", _fake_delete)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/equipment/7")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"equipment_id": 7, "action": "deleted"}
+    assert captured["id"] == 7
+
+
+def test_delete_equipment_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(equipment, "delete_equipment", lambda equipment_id, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/equipment/999")
+
+    assert resp.status_code == 404

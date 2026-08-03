@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+import equipment
 import interests
 import orchestrator
 import paper.paper_ingest as paper_ingest
@@ -195,3 +196,40 @@ def register_paper_endpoint(
 @app.get("/papers")
 def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = None):
     return {"papers": paper_catalog.list_papers(status=status)}
+
+
+# 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
+# update_existing_id도 InterestRegistration과 같은 계약: None이면 새로 생성, 값이 있으면
+# 그 id를 수정.
+class EquipmentRegistration(BaseModel):
+    name: str
+    purpose: str = ""
+    detail: str = ""
+    update_existing_id: int | None = None
+
+
+@app.get("/equipment")
+def list_equipment():
+    return {"equipment": equipment.list_equipment()}
+
+
+@app.post("/equipment")
+def register_equipment(body: EquipmentRegistration):
+    if body.update_existing_id is not None:
+        updated = equipment.update_equipment(
+            body.update_existing_id, name=body.name, purpose=body.purpose, detail=body.detail,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"실험도구 id={body.update_existing_id}를 찾을 수 없습니다")
+        return {"equipment_id": body.update_existing_id, "action": "updated"}
+
+    new_id = equipment.create_equipment(body.name, body.purpose, body.detail)
+    return {"equipment_id": new_id, "action": "created"}
+
+
+@app.delete("/equipment/{equipment_id}")
+def delete_equipment(equipment_id: int):
+    deleted = equipment.delete_equipment(equipment_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"실험도구 id={equipment_id}를 찾을 수 없습니다")
+    return {"equipment_id": equipment_id, "action": "deleted"}
