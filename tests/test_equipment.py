@@ -29,12 +29,14 @@ def test_create_equipment_stores_all_fields(conn):
         "오실로스코프",
         purpose="전기 신호 파형 관찰",
         detail="대역폭 100MHz, 2채널",
+        precautions="입력 전압 정격 초과 금지",
         conn=conn,
     )
     row = equipment.get_equipment(equipment_id, conn=conn)
     assert row["name"] == "오실로스코프"
     assert row["purpose"] == "전기 신호 파형 관찰"
     assert row["detail"] == "대역폭 100MHz, 2채널"
+    assert row["precautions"] == "입력 전압 정격 초과 금지"
     assert row["created_at"] == row["updated_at"]  # 생성 직후엔 두 값이 같아야 함
 
 
@@ -43,6 +45,7 @@ def test_create_equipment_defaults_purpose_and_detail_to_empty_string(conn):
     row = equipment.get_equipment(equipment_id, conn=conn)
     assert row["purpose"] == ""
     assert row["detail"] == ""
+    assert row["precautions"] == ""
 
 
 def test_get_equipment_returns_none_when_not_found(conn):
@@ -80,6 +83,15 @@ def test_update_equipment_bumps_updated_at_but_not_created_at(conn):
     after = equipment.get_equipment(equipment_id, conn=conn)
     assert after["created_at"] == before["created_at"]
     assert after["updated_at"] >= before["updated_at"]
+
+
+def test_update_equipment_can_set_precautions(conn):
+    equipment_id = equipment.create_equipment("이름", conn=conn)
+    updated = equipment.update_equipment(equipment_id, precautions="주의사항 추가", conn=conn)
+
+    row = equipment.get_equipment(equipment_id, conn=conn)
+    assert updated is True
+    assert row["precautions"] == "주의사항 추가"
 
 
 def test_update_equipment_returns_false_when_id_not_found(conn):

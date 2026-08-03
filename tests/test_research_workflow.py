@@ -419,3 +419,55 @@ def test_graph_routes_through_all_three_stages_via_single_invoke_calls(monkeypat
     assert third["needs_redesign"] is True
     assert third["procedure"] == "1. 시료를 냉각한다\n2. 저항을 측정한다"  # 2단계 값도 여전히 보임
     assert third["experiment_results"] == "저항이 거의 안 변했다"
+
+
+# --- check_equipment_precautions() (안전 가드레일, 08-02) ----------------------
+
+
+def test_check_equipment_precautions_prepends_matching_equipment_warning(monkeypatch):
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "오실로스코프", "purpose": "", "detail": "", "precautions": "전압 정격 초과 금지"}],
+    )
+
+    state = research_workflow.WorkflowState(
+        topic="주제", equipment_needed="오실로스코프, 온도 조절 장치", comment="기존 안내",
+    )
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert "오실로스코프" in result["comment"]
+    assert "전압 정격 초과 금지" in result["comment"]
+    assert result["comment"].endswith("기존 안내")  # 기존 comment는 안 지우고 뒤에 유지
+
+
+def test_check_equipment_precautions_ignores_equipment_not_mentioned(monkeypatch):
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "레이저", "purpose": "", "detail": "", "precautions": "눈에 직접 노출 금지"}],
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", equipment_needed="오실로스코프만 사용")
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert result == {}  # 언급 안 된 장비의 주의사항은 안 붙음
+
+
+def test_check_equipment_precautions_ignores_equipment_without_precautions(monkeypatch):
+    monkeypatch.setattr(
+        equipment, "list_equipment",
+        lambda **kw: [{"id": 1, "name": "오실로스코프", "purpose": "", "detail": "", "precautions": ""}],
+    )
+
+    state = research_workflow.WorkflowState(topic="주제", equipment_needed="오실로스코프 사용")
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert result == {}  # 주의사항이 비어있으면 붙일 게 없음
+
+
+def test_check_equipment_precautions_returns_empty_when_no_equipment_registered(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+
+    state = research_workflow.WorkflowState(topic="주제", equipment_needed="아무거나")
+    result = research_workflow.check_equipment_precautions(state)
+
+    assert result == {}

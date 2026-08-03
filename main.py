@@ -205,6 +205,9 @@ class EquipmentRegistration(BaseModel):
     name: str
     purpose: str = ""
     detail: str = ""
+    # 연구 워크플로우의 안전 가드레일(check_equipment_precautions)이 읽는다 — 이 장비가
+    # 실험 설계에 등장하면 이 문구를 그대로 사용자에게 보여준다.
+    precautions: str = ""
     update_existing_id: int | None = None
 
 
@@ -217,13 +220,14 @@ def list_equipment():
 def register_equipment(body: EquipmentRegistration):
     if body.update_existing_id is not None:
         updated = equipment.update_equipment(
-            body.update_existing_id, name=body.name, purpose=body.purpose, detail=body.detail,
+            body.update_existing_id, name=body.name, purpose=body.purpose,
+            detail=body.detail, precautions=body.precautions,
         )
         if not updated:
             raise HTTPException(status_code=404, detail=f"실험도구 id={body.update_existing_id}를 찾을 수 없습니다")
         return {"equipment_id": body.update_existing_id, "action": "updated"}
 
-    new_id = equipment.create_equipment(body.name, body.purpose, body.detail)
+    new_id = equipment.create_equipment(body.name, body.purpose, body.detail, body.precautions)
     return {"equipment_id": new_id, "action": "created"}
 
 

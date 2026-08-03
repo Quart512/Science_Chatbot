@@ -370,7 +370,7 @@ def test_list_equipment_returns_all(monkeypatch):
 
 def test_register_equipment_creates_new_when_no_update_id(monkeypatch):
     captured = {}
-    def _fake_create(name, purpose="", detail="", **kw):
+    def _fake_create(name, purpose="", detail="", precautions="", **kw):
         captured.update(name=name, purpose=purpose)
         return 42
     monkeypatch.setattr(equipment, "create_equipment", _fake_create)

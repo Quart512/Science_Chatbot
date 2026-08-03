@@ -232,6 +232,33 @@ def analyze_results(state: WorkflowState) -> dict:
 find_operation_references = _make_reference_node(lambda s: s.analysis, "operation")
 
 
+def check_equipment_precautions(state: WorkflowState) -> dict:
+    """안전 가드레일(08-02) — 설계된 장비 목록(equipment_needed)에 등록된 장비 이름이
+    나오면 그 장비의 precautions를 찾아 comment 맨 앞에 붙인다. LLM 호출 없음(이름
+    일치로 결정론적으로 찾음) — "안전한지 LLM이 판단"하는 게 아니라 "사람이 미리
+    등록해둔 주의사항을 찾아서 보여주는" 것뿐이다(판정 대신 추출/신호 원칙과 같은 결).
+
+    진짜 interrupt_before HITL은 안 쓴다 — 이 그래프는 물리적 행동을 하지 않고(사람이
+    실험실에서 직접 함), 단계 전환 자체가 이미 사람 트리거라 자연스러운 승인 지점이
+    있다. 그래서 여기서 할 일은 실행을 막는 게 아니라 그 판단 전에 경고를 놓치지
+    않게 보여주는 것뿐 — comment 안내 패턴을 그대로 확장.
+
+    설계·운영 두 단계 모두 이 노드를 거친다(README "설계·운영 양 단계 공통 조회") —
+    equipment_needed는 설계 때 한 번 정해져 운영 때까지 state에 그대로 남아있으므로
+    같은 노드를 두 체인 끝에 공유해서 붙인다.
+    """
+    notes = [
+        f"[{item['name']}] {item['precautions']}"
+        for item in equipment.list_equipment()
+        if item["precautions"] and item["name"] in state.equipment_needed
+    ]
+    if not notes:
+        return {}
+
+    warning = "⚠️ 장비 주의사항:\n" + "\n".join(notes)
+    return {"comment": f"{warning}\n\n{state.comment}" if state.comment else warning}
+
+
 def route_by_stage(state: WorkflowState) -> str:
     return state.stage
 
@@ -243,6 +270,7 @@ graph.add_node("design_experiment", design_experiment)
 graph.add_node("find_design_references", find_design_references)
 graph.add_node("analyze_results", analyze_results)
 graph.add_node("find_operation_references", find_operation_references)
+graph.add_node("check_equipment_precautions", check_equipment_precautions)
 graph.add_conditional_edges(START, route_by_stage, {
     "hypothesis": "generate_hypothesis",
     "design": "design_experiment",
@@ -251,9 +279,10 @@ graph.add_conditional_edges(START, route_by_stage, {
 graph.add_edge("generate_hypothesis", "find_hypothesis_references")
 graph.add_edge("find_hypothesis_references", END)
 graph.add_edge("design_experiment", "find_design_references")
-graph.add_edge("find_design_references", END)
+graph.add_edge("find_design_references", "check_equipment_precautions")
 graph.add_edge("analyze_results", "find_operation_references")
-graph.add_edge("find_operation_references", END)
+graph.add_edge("find_operation_references", "check_equipment_precautions")
+graph.add_edge("check_equipment_precautions", END)
 
 # 오케스트레이터의 checkpoints.sqlite와 별개 파일 — 두 그래프가 독립이라 State 스키마도
 # 다르고, 체크포인트 보관 정책(연구 워크플로우는 며칠짜리 장기 상태)이 달라질 수 있어
