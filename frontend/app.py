@@ -12,6 +12,7 @@ pages = {
         st.Page("views/papers.py", title="논문", icon="📄"),
         st.Page("views/interests.py", title="관심사", icon="🔬"),
         st.Page("views/equipment.py", title="실험도구", icon="🧪"),
+        st.Page("views/notes.py", title="지식 노트", icon="📝"),
     ],
 }
 
