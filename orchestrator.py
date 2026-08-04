@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage
 from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app
@@ -145,7 +145,21 @@ def draft_interest_from_messages(
     if not messages:
         return empty_draft, zero_tokens, disabled_models
 
-    llm_messages = [SystemMessage(content=EXPLICIT_INTEREST_DRAFT_PROMPT)] + messages
+    # messages는 체크포인트의 실제 대화 이력이라 마지막 턴이 거의 항상 AI 답변이다 —
+    # 그 뒤에 아무것도 안 붙이면 메시지 목록이 model(AI) 턴으로 끝나는데, gemini API가
+    # 이걸 거부한다("Requests ending with a model turn are not supported", 400
+    # INVALID_ARGUMENT — 08-05 라이브 검증 중 실제로 재현). Claude는 받아주지만 gemini가
+    # 매번 이 이유로 죽어 fallback으로 새는 데다, invoke_with_fallback이 예외 종류를
+    # 구분 안 하고 disabled_models에 추가해버려 이 호출 한 번으로 gemini가 그 스레드의
+    # 이후 물리 QA 턴까지 전부 disabled 처리되는 부작용이 있었다(disabled_models가
+    # physics_qa_node와 공유되므로). 대화 끝에 사용자 턴을 하나 더 붙여 항상 사용자
+    # 턴으로 끝나게 한다 — 새 정보를 추가하는 게 아니라 시스템 프롬프트의 지시를
+    # 반복하는 것뿐이라 추출 결과에는 영향이 없다.
+    llm_messages = (
+        [SystemMessage(content=EXPLICIT_INTEREST_DRAFT_PROMPT)]
+        + messages
+        + [HumanMessage(content="위 대화를 보고 관심사 초안을 만들어줘.")]
+    )
     try:
         result, _, disabled_models, tokens_used = invoke_with_fallback(
             INTEREST_DRAFT_MODEL, llm_messages, structured=InterestDraft, disabled_models=disabled_models

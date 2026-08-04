@@ -63,6 +63,25 @@ def test_draft_interest_continues_when_model_fails(monkeypatch):
     assert disabled_models == []
 
 
+def test_draft_interest_ends_message_list_on_human_turn(monkeypatch):
+    # 08-05 라이브 검증에서 실제로 재현한 버그: messages(체크포인트 이력)의 마지막이
+    # 거의 항상 AI 답변이라, 뒤에 아무것도 안 붙이면 gemini API가 "Requests ending
+    # with a model turn are not supported"(400)로 거부한다. invoke_with_fallback이
+    # 예외 종류를 안 가리고 disabled_models에 추가하는 바람에, 이 호출 한 번으로
+    # gemini가 그 스레드의 이후 물리 QA 턴까지 disabled 처리되는 부작용까지 있었다.
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["messages"] = messages
+        return _fake_draft_result(**DRAFT_FIELDS)
+    monkeypatch.setattr(orchestrator, "invoke_with_fallback", _fake_invoke)
+
+    orchestrator.draft_interest_from_messages(
+        [HumanMessage(content="질문"), AIMessage(content="답변")]
+    )
+
+    assert isinstance(captured["messages"][-1], HumanMessage)
+
+
 def test_draft_interest_passes_disabled_models_through(monkeypatch):
     # physics_qa_node와 같은 서킷 브레이커 — 호출자가 넘긴 disabled_models를 invoke_with_fallback에
     # 그대로 전달하고, 갱신된 값을 돌려받아 반환값에 실어야 한다(main.py가 체크포인트에 다시 씀).
