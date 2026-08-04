@@ -27,17 +27,43 @@ def _looks_scanned(doc: fitz.Document) -> bool:
 
 def _extract_pdf_title(doc: fitz.Document, markdown: str) -> str | None:
     """제목 후보를 뽑는다(title_check.py용) — PDF 메타데이터(`doc.metadata["title"]`)를
-    우선 쓰고(헤더 오탐지보다 안정적), 없으면 마크다운 첫 줄로 폴백(완벽하지 않아
-    title_check.py가 "추출 실패"를 불일치와 다르게 취급함). 메타데이터는 텍스트 레이어와
-    무관하게 항상 읽을 수 있어 스캔본에도 시도할 가치가 있다."""
+    우선 쓰고(헤더 오탐지보다 안정적), 제목처럼 안 보이거나 없으면 마크다운으로 폴백한다.
+    메타데이터는 텍스트 레이어와 무관하게 항상 읽을 수 있어 스캔본에도 시도할 가치가 있다.
+
+    "제목처럼 안 보임" 판정은 공백 유무 하나만 본다 — 실제로 겪은 사례(08-05 라이브
+    검증): 논문 유통 플랫폼이 심어놓은 슬러그성 값('DBPIA-NURIMEDIA', 공백 없는 한
+    단어)이 메타데이터에 들어있어 폴백이 전혀 안 걸리고, 정확한 제목을 줘도
+    classify_title_match()가 최악 등급을 냈다. 학술 논문 제목은 거의 항상 여러 단어라
+    공백이 있으면 진짜 제목일 가능성이 높다 — 그 이상의 정교한 판별(블록리스트 등)은
+    다른 사례가 실제로 나오기 전엔 안 만든다("단순 경로부터").
+
+    마크다운 폴백은 첫 줄이 아니라 최상위(h1, '# ') 헤딩을 우선 찾는다 —
+    pymupdf4llm은 폰트 크기로 헤딩 레벨을 매기므로 h1이 보통 실제 제목이고, 그 앞에
+    저널명·발행 정보가 h3 등 더 얕은 레벨로 먼저 나오는 경우가 실제로 있었다(같은
+    라이브 검증에서 재현: 첫 줄이 "### New Physics: Sae Mulli, Vol. 76..."라는 저널
+    정보였고 진짜 제목은 그 뒤의 "# A performance comparison..."였음). h1을 못 찾으면
+    기존처럼 첫 비어있지 않은 줄로 폴백한다(h1 탐지 자체가 실패하는 PDF도 있을 수
+    있으므로 — RoadMap "헤더 탐지 폴백 2단" 참고). 그래도 없으면 공백 없는 메타데이터
+    라도 최후 수단으로 쓴다(스캔본처럼 마크다운이 아예 없는 경우 아무것도 안 주는 것보다
+    낫다)."""
     meta_title = (doc.metadata.get("title") or "").strip()
-    if meta_title:
+    if meta_title and " " in meta_title:
         return meta_title
+
+    h1_title = None
+    first_line = None
     for line in markdown.splitlines():
-        line = line.strip().lstrip("#").strip("* ").strip()
-        if line:
-            return line
-    return None
+        stripped = line.strip()
+        candidate = stripped.lstrip("#").strip("* ").strip()
+        if not candidate:
+            continue
+        if first_line is None:
+            first_line = candidate
+        if h1_title is None and stripped.startswith("#") and not stripped.startswith("##"):
+            h1_title = candidate
+            break  # h1을 찾으면 더 볼 필요 없음
+
+    return h1_title or first_line or meta_title or None
 
 
 def parse_pdf(file_bytes: bytes) -> dict:
