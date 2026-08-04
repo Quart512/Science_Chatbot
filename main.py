@@ -24,6 +24,7 @@ import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
 import research_branches
+import research_notes
 import research_sessions
 import research_workflow
 from models import ContextBudgetExceeded
@@ -510,10 +511,31 @@ async def get_research_history(request: Request, thread_id: str):
     # 일어날 때 main.py가 따로 남겨둔 기록을 여기서 붙여준다. 분기 없이 만들어진
     # 체크포인트는 매핑에 없으니 None.
     sources = research_branches.get_sources([e["checkpoint_id"] for e in entries])
+    # 단계별 메모(08-04 후속, RoadMap "타임라인·체크 결합(브랜치형)" 설계 노트 §단계별
+    # 메모, 방식 B) — 체크포인트를 안 건드리는 별도 사이드테이블이라 여기서 같은
+    # 방식(N+1 쿼리 없이 한 번에)으로 붙여준다. 메모 없으면 빈 문자열.
+    notes = research_notes.get_notes_for_checkpoints([e["checkpoint_id"] for e in entries])
     for entry in entries:
         entry["branched_from_checkpoint_id"] = sources.get(entry["checkpoint_id"])
+        entry["note"] = notes.get(entry["checkpoint_id"], "")
 
     return {"history": entries}
+
+
+# 단계별 메모(08-04 후속, RoadMap "타임라인·체크 결합(브랜치형)" 설계 노트 §단계별
+# 메모, 방식 B로 결정) — 체크포인트를 안 건드리는 별도 사이드테이블(research_notes.py)
+# 이라 tip뿐 아니라 과거 체크포인트에도 자유롭게 필기·수정할 수 있다. 그래프를 전혀
+# 안 태우고 순수 CRUD라 aget_state/aupdate_state도 필요 없다 — thread_id는 저장할 때
+# 같이 남겨두기만 하고(조회는 checkpoint_id 기준), checkpoint_id가 실제로 이 thread의
+# 것인지는 검증하지 않는다(프론트가 /history에서 받은 checkpoint_id만 넘기므로).
+class ResearchNoteUpdate(BaseModel):
+    note: str
+
+
+@app.post("/research/{thread_id}/notes/{checkpoint_id}")
+async def save_research_note(thread_id: str, checkpoint_id: str, body: ResearchNoteUpdate):
+    research_notes.set_note(checkpoint_id, thread_id, body.note)
+    return {"checkpoint_id": checkpoint_id, "note": body.note}
 
 
 # 논문 초안 인앱 편집(08-04 후속) — draft_paper()가 채우는 텍스트 필드만 대상. PDF가

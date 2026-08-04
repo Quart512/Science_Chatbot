@@ -19,6 +19,7 @@ import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
 import research_branches
+import research_notes
 import research_sessions
 import research_workflow
 
@@ -986,6 +987,7 @@ def test_advance_research_404_when_from_checkpoint_not_found(monkeypatch):
 
 def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monkeypatch):
     monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
+    monkeypatch.setattr(research_notes, "get_notes_for_checkpoints", lambda ids, **kw: {})
     history = [  # aget_state_history는 최신순으로 내놓음
         _FakeSnapshot("c3", {"stage": "design"}, next=(), created_at="t3"),
         _FakeSnapshot("c2b", {"stage": "hypothesis"}, next=("find_hypothesis_references",), created_at="t2b"),
@@ -1007,6 +1009,7 @@ def test_get_research_history_includes_latest_pure_edit_checkpoint(monkeypatch):
     # /draft로 값만 주입한 체크포인트는 next가 안 비어있지만(toy 그래프로 실제 확인),
     # 그게 최신(index 0)이면 사용자가 방금 저장한 편집본이라 탭에 보여야 한다.
     monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
+    monkeypatch.setattr(research_notes, "get_notes_for_checkpoints", lambda ids, **kw: {})
     history = [
         _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
         _FakeSnapshot("c1", {"stage": "writing"}, next=(), created_at="t1", source="loop"),
@@ -1028,6 +1031,7 @@ def test_get_research_history_attaches_branch_source(monkeypatch):
     monkeypatch.setattr(
         research_branches, "get_sources", lambda ids, **kw: {"c2": "c1"} if "c2" in ids else {}
     )
+    monkeypatch.setattr(research_notes, "get_notes_for_checkpoints", lambda ids, **kw: {})
     history = [
         _FakeSnapshot("c2", {"stage": "hypothesis"}, next=(), created_at="t2"),
         _FakeSnapshot("c1", {"stage": "design"}, next=(), created_at="t1"),
@@ -1042,10 +1046,30 @@ def test_get_research_history_attaches_branch_source(monkeypatch):
     assert entries == {"c1": None, "c2": "c1"}
 
 
+def test_get_research_history_attaches_notes(monkeypatch):
+    monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
+    monkeypatch.setattr(
+        research_notes, "get_notes_for_checkpoints", lambda ids, **kw: {"c1": "장비 다시 확인"} if "c1" in ids else {}
+    )
+    history = [
+        _FakeSnapshot("c2", {"stage": "design"}, next=(), created_at="t2"),
+        _FakeSnapshot("c1", {"stage": "hypothesis"}, next=(), created_at="t1"),
+    ]
+    fake_graph = _FakeResearchGraph({}, history=history)
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1/history")
+
+    notes = {e["checkpoint_id"]: e["note"] for e in resp.json()["history"]}
+    assert notes == {"c1": "장비 다시 확인", "c2": ""}  # 메모 없으면 빈 문자열
+
+
 def test_get_research_history_excludes_stale_edit_checkpoint(monkeypatch):
     # 편집(update) 체크포인트가 최신이 아니면(그 뒤에 진짜 advance가 또 일어났으면)
     # 이미 그 advance의 최종 결과가 next==()로 잡히니 굳이 또 보여줄 필요가 없다.
     monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
+    monkeypatch.setattr(research_notes, "get_notes_for_checkpoints", lambda ids, **kw: {})
     history = [
         _FakeSnapshot("c3", {"stage": "writing"}, next=(), created_at="t3", source="loop"),
         _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
@@ -1167,3 +1191,38 @@ def test_retry_research_references_calls_matching_node_and_persists(monkeypatch)
     assert body["comment"] == "새로 찾음"
     assert body["references"][0]["paper_id"] == "p1"
     assert body["procedure"] == "1. 실험한다"  # 설계 산출물 자체는 안 건드림
+
+
+# --- 단계별 메모 (08-04 후속, "타임라인·체크 결합(브랜치형)" 설계 노트 §단계별 메모) --------
+
+def test_save_research_note_calls_set_note(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        research_notes, "set_note",
+        lambda checkpoint_id, thread_id, note, **kw: captured.update(
+            checkpoint_id=checkpoint_id, thread_id=thread_id, note=note
+        ),
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.post("/research/t1/notes/c1", json={"note": "장비 다시 확인"})
+
+    assert resp.status_code == 200
+    assert captured == {"checkpoint_id": "c1", "thread_id": "t1", "note": "장비 다시 확인"}
+    assert resp.json() == {"checkpoint_id": "c1", "note": "장비 다시 확인"}
+
+
+def test_save_research_note_with_empty_string_clears_it(monkeypatch):
+    # research_notes.set_note 자체가 빈 문자열=삭제를 처리한다(test_research_notes.py에서
+    # 이미 검증) — 여기선 엔드포인트가 그 값을 그대로 전달만 하는지만 본다.
+    captured = {}
+    monkeypatch.setattr(
+        research_notes, "set_note",
+        lambda checkpoint_id, thread_id, note, **kw: captured.update(note=note),
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.post("/research/t1/notes/c1", json={"note": ""})
+
+    assert resp.status_code == 200
+    assert captured["note"] == ""

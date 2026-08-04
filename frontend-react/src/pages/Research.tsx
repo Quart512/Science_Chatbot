@@ -7,6 +7,7 @@ import { NextOptions } from './research/NextOptions'
 import { DraftEditor } from './research/DraftEditor'
 import { BranchTimeline } from './research/BranchTimeline'
 import { RetryReferencesButton } from './research/RetryReferencesButton'
+import { NoteEditor } from './research/NoteEditor'
 import { nextOptions, STAGES_WITH_REFERENCES } from './research/constants'
 import './Research.css'
 
@@ -121,6 +122,8 @@ function ResearchThreadView({
         onSelect={setViewCheckpointId}
         nextOpts={nextOptions(tip.values)}
       />
+
+      <NoteEditor key={selected.checkpoint_id} threadId={threadId} checkpointId={selected.checkpoint_id} initialNote={selected.note} />
 
       {!isTip && <p className="research-caption">과거 시점입니다 — 여기서 진행하면 이 시점을 기준으로 새로 이어집니다.</p>}
       {values.comment && <p className="research-comment">{values.comment}</p>}

@@ -219,6 +219,36 @@
   cursor: not-allowed;
 }
 
+.research-note-editor {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #2e313d;
+  border-radius: 4px;
+}
+
+.research-note-editor label {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.research-note-editor textarea {
+  min-height: 60px;
+}
+
+.research-note-editor button {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.research-note-editor button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .research-comment {
   background: rgba(59, 91, 219, 0.15);
   color: #8ab4ff;
