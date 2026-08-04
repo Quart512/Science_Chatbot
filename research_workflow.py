@@ -109,6 +109,34 @@ class WorkflowState(BaseModel):
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
 
+# 각 단계의 산출물 필드 — 08-04 실사용 중 발견한 버그(RoadMap 참고) 수정에 쓴다: 어느
+# 단계의 진입 노드든 자기 필드만 반환하고 뒤 단계 필드는 손을 안 대서, "report까지 만든
+# 뒤 design으로 되돌아가 고치기"를 해도 operation/report 필드가 그대로 남아 화면
+# 타임라인 체크가 안 꺼졌다. references는 예외(누적이 원래 설계, 체크포인트 복원
+# 설계 노트와 같은 결)라 여기 안 넣는다.
+_STAGE_ORDER = ("hypothesis", "design", "operation", "report", "writing")
+_STAGE_FIELDS = {
+    "hypothesis": ("hypothesis", "rationale", "testable_prediction"),
+    "design": ("independent_variable", "dependent_variable", "controlled_variables", "equipment_needed", "procedure"),
+    "operation": ("experiment_results", "analysis", "outcome"),
+    "report": ("experiment_report",),
+    "writing": ("title", "abstract", "introduction", "methods", "results", "discussion", "citations"),
+}
+
+
+def _reset_downstream_fields(stage: str) -> dict:
+    """stage보다 뒤에 있는 단계들의 산출물 필드를 전부 기본값으로 돌리는 dict를 만든다.
+    각 단계의 진입 노드(generate_hypothesis 등)가 자기 반환값에 그대로 얹으면, 그 노드가
+    어느 경로(과거 체크포인트 복원이든 tip에서 바로 이전 단계로 진행이든)로 실행되든
+    상관없이 낡은 하위 단계 값이 저절로 지워진다."""
+    idx = _STAGE_ORDER.index(stage)
+    reset = {}
+    for later_stage in _STAGE_ORDER[idx + 1:]:
+        for field in _STAGE_FIELDS[later_stage]:
+            reset[field] = [] if field == "citations" else ""
+    return reset
+
+
 HYPOTHESIS_SYSTEM_PROMPT = """주어진 연구 주제를 보고 검증 가능한 가설을 하나 세워라.
 가설은 관찰이나 실험으로 참/거짓을 확인할 수 있는 구체적인 주장이어야 한다 —
 "~일 것이다" 같은 모호한 진술이 아니라, 무엇을 측정하면 확인되는지가 분명해야 한다."""
@@ -132,8 +160,10 @@ def generate_hypothesis(state: WorkflowState) -> dict:
         "hypothesis": result.statement,
         "rationale": result.rationale,
         "testable_prediction": result.testable_prediction,
+        "comment": "",  # 이전 실행이 남긴 comment가 안 지워지고 계속 이어붙던 버그 수정(08-04)
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("hypothesis"),
     }
 
 
@@ -251,8 +281,10 @@ def design_experiment(state: WorkflowState) -> dict:
         "controlled_variables": result.controlled_variables,
         "equipment_needed": result.equipment_needed,
         "procedure": result.procedure,
+        "comment": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("design"),
     }
 
 
@@ -323,6 +355,7 @@ def analyze_results(state: WorkflowState) -> dict:
         "comment": OUTCOME_GUIDANCE[result.outcome],
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("operation"),
     }
 
 
@@ -362,7 +395,7 @@ def compile_experiment_report(state: WorkflowState) -> dict:
 {state.analysis}
 
 판정: {OUTCOME_LABELS.get(state.outcome, state.outcome)}"""
-    return {"experiment_report": report}
+    return {"experiment_report": report, "comment": "", **_reset_downstream_fields("report")}
 
 
 WRITING_SYSTEM_PROMPT = """주어진 실험 보고서를 바탕으로 논문 초안을 작성해라. 보고서에
@@ -419,8 +452,10 @@ def draft_paper(state: WorkflowState) -> dict:
         "results": result.results,
         "discussion": result.discussion,
         "citations": [c.model_dump() for c in result.citations],
+        "comment": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("writing"),
     }
 
 
