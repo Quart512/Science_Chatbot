@@ -10,7 +10,7 @@
 |---|---|---|
 | **README.md** (이 문서) | 현황 — 무엇인가, 아키텍처, 현재 구현, 실행법, API, 평가 | 사실이 바뀔 때만 (API·명령어·구조·아키텍처 변경) |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (빅뱅/Docker 방식 설치·운영 절차) | 배포 절차·환경이 바뀔 때 (README와 함께 움직이는 경우 많음) |
-| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·진행 중·**🧪 라이브 검증 체크리스트**·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다. **pytest로 못 잡아 미뤄둔 확인이 생기면 체크리스트에 추가** |
+| **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·**🧪 라이브 검증 체크리스트**·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다. **pytest로 못 잡아 미뤄둔 확인이 생기면 체크리스트에 추가** |
 | **To Do List** (Obsidian 칸반) | 실행 순서만 (한 줄 요약 — **세부 내용의 정본은 RoadMap**) | 상시 — RoadMap과 짝으로 동기화 |
 | **docs/README_08~13.md** | 주차별 개발 회고 (아카이브) — "무엇을 했는지"가 아니라 "왜 그렇게 했는지"와 겪은 문제 위주 | 해당 구간 마무리 시 1회 |
 
@@ -133,7 +133,7 @@ Science_Chatbot/
 ├── docs/
 │   ├── architecture.png     # 목표 아키텍처 다이어그램
 │   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
-│   ├── RoadMap.md           # 개발 이력·계획 (완료/진행중/예정 + 설계 노트)
+│   ├── RoadMap.md           # 개발 이력·계획 (완료/예정 + 설계 노트)
 │   ├── DEPLOY.md            # 배포 가이드 (빅뱅/Docker 방식)
 │   ├── README_08.md         # 개발 회고 (8주차: LangGraph 에이전트)
 │   ├── README_09.md         # 개발 회고 (9주차: QLoRA 파인튜닝·양자화·GGUF)
@@ -404,7 +404,7 @@ LANGSMITH_API_KEY=...   # 선택: tracing·평가용
 
 지금까지의 진행 과정과 앞으로의 계획은 별도 문서에 정리되어 있다:
 
-- **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 진행 중, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
+- **[docs/RoadMap.md](docs/RoadMap.md)** — 날짜별 개발 이력(완료), 라이브 검증 체크리스트, 예정 전체. 설계 노트·열린 질문·방향성 메모 포함
 - **주차별 회고** — [README_08](docs/README_08.md)(LangGraph 에이전트) · [README_09](docs/README_09.md)(QLoRA 파인튜닝·평가) · [README_10](docs/README_10.md)(서버 관찰) · [README_11](docs/README_11.md)(Docker·EC2·CI/CD) · [README_12](docs/README_12.md)(CI/프론트엔드 정비·아키텍처 개편·논문 요약기 완성) · [README_13](docs/README_13.md)(라이브러리 표면 1차·모델 fallback 버그 수정)
 
 ## 데이터 & 감사
