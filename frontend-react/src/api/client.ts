@@ -1,7 +1,12 @@
 // FastAPI 백엔드 호출 공용 헬퍼 — frontend/common.py의 BACKEND_URL과 같은 역할.
 // Vite는 VITE_ 접두사가 붙은 환경변수만 클라이언트 코드에 노출한다(보안 경계 —
 // 접두사 없는 변수는 서버 전용 시크릿일 수 있어 번들에 안 실림).
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+//
+// 기본값은 빈 문자열(같은 오리진) — 08-05 Docker 패키징부터 main.py가 dist를 같은
+// 포트(8000)로 같이 서빙하므로 프로덕션 빌드는 상대 경로(`/query` 등)로 충분하다.
+// 로컬 개발(Vite 5173 + 백엔드 8000, 서로 다른 포트)에서는 frontend-react/.env의
+// VITE_BACKEND_URL=http://localhost:8000이 이 기본값을 덮어쓴다.
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "";
 
 export class ApiError extends Error {
   status: number;

@@ -2,13 +2,15 @@ import asyncio
 import json
 import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import os
 
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 from pydantic import Field
@@ -635,3 +637,29 @@ async def retry_research_references(request: Request, thread_id: str):
 
     new_snapshot = await request.app.state.research_graph.aget_state(config)
     return new_snapshot.values
+
+
+# 설치판 정적 파일 서빙(08-05, Docker 패키징 착수 — RoadMap "설치 앱의 UI 실행 방식"
+# 설계 노트 참고) — 프론트 빌드 산출물을 백엔드가 같은 포트(8000)로 같이 서빙해서
+# BACKEND_URL이 빈 문자열(같은 오리진)로 동작하게 한다. 개발 환경(Vite 5173 + 백엔드
+# 8000, 서로 다른 포트)에서는 frontend-react/dist가 최신이 아니거나 없을 수 있어
+# is_dir()로 감싸 안전하게 건너뛴다 — 이 블록이 없어도 개발 환경은 그대로 동작한다.
+# **반드시 파일 맨 끝에 둔다**: 아래 catch-all 라우트(`/{full_path:path}`)가 위의 모든
+# API 라우트보다 먼저 등록되면 그것들을 전부 가려버린다(Starlette은 라우트를 등록
+# 순서대로 매칭). CORS 미들웨어는 그대로 둔다 — 같은 오리진 요청엔 CORS 헤더가
+# 아무 영향이 없어(브라우저가 same-origin 요청엔 CORS 검사 자체를 안 함) 프로덕션에서
+# 무해하고, 개발 환경(서로 다른 포트)은 여전히 CORS가 필요하므로 제거하면 그쪽이 깨진다.
+FRONTEND_DIST = Path(__file__).parent / "frontend-react" / "dist"
+
+if FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # 정적 파일이 직접 요청되면(예: /favicon.ico, /manifest.json) 그 파일을 그대로
+        # 돌려주고, 그 외(React Router가 처리할 경로, 예: /research)는 index.html을 돌려줘
+        # 클라이언트 라우팅이 이어받게 한다 — 새로고침·직접 URL 접근 시 필요한 SPA 폴백.
+        candidate = FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
