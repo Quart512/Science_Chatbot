@@ -135,6 +135,17 @@
   padding: 0.75rem 0;
 }
 
+.research-retry-path {
+  color: #6b7080;
+  font-size: 0.8rem;
+  margin: 0 0 0.4rem;
+}
+
+.research-retry-path-recommended {
+  color: #8ab4ff;
+  font-weight: 600;
+}
+
 .research-option button[type='submit'] {
   background: #3b5bdb;
   color: white;
