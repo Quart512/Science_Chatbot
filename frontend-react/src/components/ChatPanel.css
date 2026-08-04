@@ -87,8 +87,29 @@
   gap: 0.75rem;
 }
 
+.chat-message {
+  position: relative;
+}
+
 .chat-message-content {
   white-space: pre-wrap;
+}
+
+.chat-message-delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: none;
+  border: none;
+  color: #6b7080;
+  cursor: pointer;
+  font-size: 0.75rem;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.chat-message:hover .chat-message-delete {
+  opacity: 1;
 }
 
 .chat-message-user .chat-message-content {

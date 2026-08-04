@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { streamQuery } from '../api/chat'
+import { streamQuery, getQueryMessages, deleteQueryMessage } from '../api/chat'
 import { getInterestDraft } from '../api/interests'
 import './ChatPanel.css'
 
 interface Message {
+  id?: string // 스트리밍 중인 임시 버블(사용자 입력·진행 중 답변)엔 아직 없음
   role: 'user' | 'assistant'
   content: string
   comment?: string
@@ -48,6 +49,7 @@ export function ChatPanel() {
 
     let answer = ''
     let comment = ''
+    let succeeded = true
     try {
       for await (const chunk of streamQuery({ prompt: question, model, effort, threadId })) {
         if (chunk.trace) setProgress(chunk.trace)
@@ -57,12 +59,35 @@ export function ChatPanel() {
         }
       }
     } catch (e) {
+      succeeded = false
       answer = `백엔드 호출 실패: ${(e as Error).message}`
     }
 
     setProgress('')
     setIsStreaming(false)
+
+    if (succeeded) {
+      // 실제 체크포인트 목록으로 교체해 메시지별 id를 확보한다(메시지 삭제에 필요 —
+      // 08-13 메시지 트리밍 2단계, RoadMap 참고). comment는 체크포인트에 안 남는
+      // 값이라 방금 받은 답변에만 붙여준다(마지막 메시지 = 이번 턴의 assistant 답).
+      try {
+        const { messages: fromServer } = await getQueryMessages(threadId)
+        setMessages(
+          fromServer.map((m, i) =>
+            i === fromServer.length - 1 && m.role === 'assistant' ? { ...m, comment } : m,
+          ),
+        )
+        return
+      } catch {
+        // 목록 재조회 실패해도 방금 받은 답변은 화면에 보여야 하므로 아래로 폴백
+      }
+    }
     setMessages((m) => [...m, { role: 'assistant', content: answer, comment }])
+  }
+
+  async function deleteMessage(id: string) {
+    await deleteQueryMessage(threadId, id)
+    setMessages((m) => m.filter((msg) => msg.id !== id))
   }
 
   if (!open) {
@@ -106,9 +131,19 @@ export function ChatPanel() {
 
       <div className="chat-panel-messages">
         {messages.map((m, i) => (
-          <div key={i} className={`chat-message chat-message-${m.role}`}>
+          <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
             <div className="chat-message-content">{m.content}</div>
             {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
+            {m.id && (
+              <button
+                type="button"
+                className="chat-message-delete"
+                title="이 메시지 삭제"
+                onClick={() => deleteMessage(m.id!)}
+              >
+                🗑
+              </button>
+            )}
           </div>
         ))}
         {isStreaming && <div className="chat-panel-progress">⏳ {progress || '진행 중...'}</div>}

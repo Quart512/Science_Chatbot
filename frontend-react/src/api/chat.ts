@@ -1,4 +1,4 @@
-import { BACKEND_URL, ApiError } from './client'
+import { apiFetch, BACKEND_URL, ApiError } from './client'
 
 export interface QueryChunk {
   trace?: string
@@ -45,4 +45,21 @@ export async function* streamQuery(params: {
       yield JSON.parse(event.slice('data: '.length)) as QueryChunk
     }
   }
+}
+
+// 메시지 트리밍 2단계(08-13 후속, 수동 삭제) — 화면이 그리는 이력은 SSE로 받은 조각을
+// 조립한 세션 로컬 state라 백엔드 체크포인트의 실제 메시지 id가 없다. 이 함수로 진짜
+// 목록(id 포함)을 받아와야 "이 메시지를 지워줘"를 구체적인 id로 요청할 수 있다.
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export function getQueryMessages(threadId: string) {
+  return apiFetch<{ messages: ChatMessage[] }>(`/query/${threadId}/messages`)
+}
+
+export function deleteQueryMessage(threadId: string, messageId: string) {
+  return apiFetch<{ deleted_id: string }>(`/query/${threadId}/messages/${messageId}`, { method: 'DELETE' })
 }

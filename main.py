@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import Field
 from uuid import uuid4
 
+from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import equipment
@@ -86,6 +87,44 @@ async def query(request: Request, body: Query):
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# 메시지 트리밍 2단계 — 수동 삭제(08-13 1단계 자동 트리밍 후속, RoadMap "🔄 진행 중"
+# 참고). 화면(ChatPanel)이 그리는 이력은 지금 SSE로 받은 조각을 조립한 세션 로컬
+# state라 백엔드 체크포인트의 실제 메시지 id가 없다 — 이 엔드포인트가 체크포인트의
+# 진짜 목록(id 포함)을 내려줘야 프론트가 "이 메시지를 지워줘"를 구체적인 id로 요청할
+# 수 있다. role은 BaseMessage.type("human"/"ai")을 프론트 계약("user"/"assistant")에
+# 맞게 변환 — orchestrator.ParentState.messages는 physics_qa_node가 항상 Human/AI
+# 쌍만 쌓으므로(SystemMessage는 능력 내부에서만 쓰고 부모로 안 올라옴) 그 외 타입은
+# 원래 값을 그대로 둔다(향후 실제로 나오면 그때 대응).
+_MESSAGE_TYPE_TO_ROLE = {"human": "user", "ai": "assistant"}
+
+
+@app.get("/query/{thread_id}/messages")
+async def get_query_messages(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.graph.aget_state(config)
+    messages = snapshot.values.get("messages", [])
+    return {
+        "messages": [
+            {"id": m.id, "role": _MESSAGE_TYPE_TO_ROLE.get(m.type, m.type), "content": m.content}
+            for m in messages
+        ]
+    }
+
+
+# 특정 메시지 하나만 체크포인트에서 지운다 — RemoveMessage가 add_messages reducer의
+# 특수 신호라, 그래프 노드 실행 없이(LLM 호출 없이) aupdate_state로 값만 주입해도
+# 정확히 그 id만 지워짐을 직접 재현해 확인함(RoadMap 참고). orchestrator._trim_history가
+# 예산 초과분을 자동으로 지울 때 쓰는 것과 같은 메커니즘을, 여기서는 사용자가 특정 id
+# 하나를 지목한 경우에 쓴다.
+@app.delete("/query/{thread_id}/messages/{message_id}")
+async def delete_query_message(request: Request, thread_id: str, message_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    await request.app.state.graph.aupdate_state(
+        config, {"messages": [RemoveMessage(id=message_id)]}, as_node="__start__"
+    )
+    return {"deleted_id": message_id}
 
 
 # "관심사 등록" 버튼(라이브러리 폼)이 부르는 엔드포인트 — GET /interests/draft가 만든

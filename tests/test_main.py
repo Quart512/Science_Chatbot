@@ -9,6 +9,7 @@ import uuid
 
 import fitz
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, HumanMessage
 
 import equipment
 import interests
@@ -22,6 +23,61 @@ import research_branches
 import research_notes
 import research_sessions
 import research_workflow
+
+
+# --- GET/DELETE /query/{thread_id}/messages (08-13 메시지 트리밍 2단계, 수동 삭제) ---
+# orchestrator.ParentState.messages를 real 체크포인터에 aupdate_state로 직접 시딩
+# (LLM 호출 없음 — /interests/draft 테스트와 같은 패턴). thread_id는 매번 새로 발급.
+
+def test_get_query_messages_returns_role_and_content(monkeypatch):
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    with TestClient(main.app) as client:
+        asyncio.run(main.app.state.graph.aupdate_state(
+            config,
+            {"question": "테스트", "messages": [HumanMessage(content="질문"), AIMessage(content="답변")]},
+            as_node="__start__",
+        ))
+        resp = client.get(f"/query/{thread_id}/messages")
+
+    assert resp.status_code == 200
+    body = resp.json()["messages"]
+    assert [m["role"] for m in body] == ["user", "assistant"]
+    assert [m["content"] for m in body] == ["질문", "답변"]
+    assert all(m["id"] for m in body)  # 실제 체크포인터가 발급한 id(빈 문자열 아님)
+
+
+def test_get_query_messages_empty_for_fresh_thread(monkeypatch):
+    thread_id = str(uuid.uuid4())
+
+    with TestClient(main.app) as client:
+        resp = client.get(f"/query/{thread_id}/messages")
+
+    assert resp.status_code == 200
+    assert resp.json()["messages"] == []
+
+
+def test_delete_query_message_removes_only_target(monkeypatch):
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    with TestClient(main.app) as client:
+        asyncio.run(main.app.state.graph.aupdate_state(
+            config,
+            {"question": "테스트", "messages": [HumanMessage(content="첫 질문"), AIMessage(content="첫 답변"),
+                          HumanMessage(content="둘째 질문"), AIMessage(content="둘째 답변")]},
+            as_node="__start__",
+        ))
+        before = client.get(f"/query/{thread_id}/messages").json()["messages"]
+        target_id = before[0]["id"]  # "첫 질문"
+
+        del_resp = client.delete(f"/query/{thread_id}/messages/{target_id}")
+        after = client.get(f"/query/{thread_id}/messages").json()["messages"]
+
+    assert del_resp.status_code == 200
+    assert del_resp.json() == {"deleted_id": target_id}
+    assert [m["content"] for m in after] == ["첫 답변", "둘째 질문", "둘째 답변"]  # 지목한 것만 빠짐
 
 
 # --- GET /interests/draft (08-02, 챗 사이드바 "관심사로 등록" 버튼) ----------------
