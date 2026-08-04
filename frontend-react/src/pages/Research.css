@@ -1,27 +1,23 @@
-.research-layout {
+.research-session-nav {
   display: flex;
-  gap: 1.5rem;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-left: 0.5rem;
+  margin-top: 0.2rem;
 }
 
-.research-sidebar {
-  width: 260px;
-  min-width: 260px;
-}
-
-.research-main {
-  flex: 1;
-  min-width: 0;
+.research-session-nav-error {
+  padding-left: 0.5rem;
 }
 
 .research-session-card {
   border: 1px solid #2e313d;
   border-radius: 6px;
   padding: 0.5rem;
-  margin-bottom: 0.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  font-size: 0.85rem;
 }
 
 .research-session-card-selected {

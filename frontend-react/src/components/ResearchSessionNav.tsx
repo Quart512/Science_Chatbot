@@ -1,77 +1,47 @@
 import { useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  advanceResearch,
   closeResearchSession,
   listResearchSessions,
   renameResearchSession,
   type ResearchSession,
-} from '../../api/research'
+} from '../api/research'
+import '../pages/Research.css'
 
-interface Props {
-  selectedThreadId: string | null
-  onSelect: (threadId: string | null) => void
-}
+// 연구 워크플로우 네비 항목 아래 중첩되는 세션 목록(08-04 사용자 지적 — "세션이
+// 왼쪽에 있는 게 낫다"는 게 전역 좌측 네비 컬럼 자체를 말한 것이었다. 예전엔
+// Research.tsx 안에 별도 사이드바 컬럼으로 분리해뒀는데, 셸이 이미 왼쪽 네비를
+// 갖고 있다는 걸 다시 고려 안 하고 Streamlit research.py의 st.sidebar 구조를
+// 그대로 포팅한 결과였다). 선택 상태는 URL(`/research/:threadId`)이 기준이라
+// 새로고침해도 안 날아간다.
+export function ResearchSessionNav() {
+  const { threadId: selectedThreadId } = useParams<{ threadId?: string }>()
+  const navigate = useNavigate()
+  const { data, isError } = useQuery({ queryKey: ['research-sessions'], queryFn: listResearchSessions })
 
-export function SessionSidebar({ selectedThreadId, onSelect }: Props) {
-  const queryClient = useQueryClient()
-  const { data, isError, error } = useQuery({ queryKey: ['research-sessions'], queryFn: listResearchSessions })
-  const [topic, setTopic] = useState('')
-
-  const startMutation = useMutation({
-    mutationFn: async () => {
-      const newThreadId = crypto.randomUUID()
-      await advanceResearch(newThreadId, { stage: 'hypothesis', topic })
-      return newThreadId
-    },
-    onSuccess: (newThreadId) => {
-      setTopic('')
-      queryClient.invalidateQueries({ queryKey: ['research-sessions'] })
-      onSelect(newThreadId)
-    },
-  })
+  if (isError) {
+    return <p className="research-warning research-session-nav-error">세션 목록 조회 실패</p>
+  }
 
   return (
-    <aside className="research-sidebar">
-      <h3>연구 세션</h3>
-      {isError && <p className="research-warning">세션 목록 조회 실패: {(error as Error).message}</p>}
+    <div className="research-session-nav">
       {data?.sessions.map((s) => (
-        <SessionCard
+        <SessionNavItem
           key={s.thread_id}
           session={s}
           isSelected={s.thread_id === selectedThreadId}
-          onSelect={() => onSelect(s.thread_id)}
+          onSelect={() => navigate(`/research/${s.thread_id}`)}
           onClosed={() => {
-            if (selectedThreadId === s.thread_id) onSelect(null)
+            if (selectedThreadId === s.thread_id) navigate('/research')
           }}
         />
       ))}
-
-      <hr />
-      <h3>새 연구 시작</h3>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!topic) return
-          startMutation.mutate()
-        }}
-      >
-        <textarea
-          className="research-textarea"
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          placeholder="연구 주제·질문"
-        />
-        <button type="submit" disabled={startMutation.isPending}>
-          {startMutation.isPending ? '시작 중...' : '시작'}
-        </button>
-      </form>
-      {startMutation.isError && <p className="research-warning">시작 실패: {(startMutation.error as Error).message}</p>}
-    </aside>
+    </div>
   )
 }
 
-function SessionCard({
+function SessionNavItem({
   session,
   isSelected,
   onSelect,
@@ -125,7 +95,12 @@ function SessionCard({
                 취소
               </button>
             </div>
-            <button type="button" className="research-session-close" onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending}>
+            <button
+              type="button"
+              className="research-session-close"
+              onClick={() => closeMutation.mutate()}
+              disabled={closeMutation.isPending}
+            >
               닫기
             </button>
           </div>
@@ -143,7 +118,11 @@ function SessionCard({
         <div className="research-session-actions-left">
           <button onClick={startEditing}>수정</button>
         </div>
-        <button className="research-session-close" onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending}>
+        <button
+          className="research-session-close"
+          onClick={() => closeMutation.mutate()}
+          disabled={closeMutation.isPending}
+        >
           닫기
         </button>
       </div>

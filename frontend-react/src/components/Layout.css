@@ -7,18 +7,34 @@
 }
 
 .app-nav {
-  width: 200px;
-  min-width: 200px;
+  width: 280px;
+  min-width: 280px;
   border-right: 1px solid #2e313d;
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 1.25rem;
+  overflow-y: auto;
 }
 
 .app-nav-title {
   font-weight: 700;
-  margin-bottom: 0.5rem;
+}
+
+.app-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.app-nav-group-title {
+  color: #6b7080;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.5rem;
+  margin-bottom: 0.2rem;
 }
 
 .app-nav-link {

@@ -1,52 +1,92 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getResearchHistory, type HistoryEntry } from '../api/research'
-import { SessionSidebar } from './research/SessionSidebar'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { advanceResearch, getResearchHistory, type HistoryEntry } from '../api/research'
 import { StageContent } from './research/StageContent'
 import { NextOptions } from './research/NextOptions'
 import { DraftEditor } from './research/DraftEditor'
 import { STAGES, STAGE_DONE_FIELD, STAGE_LABELS } from './research/constants'
 import './Research.css'
 
-// frontend/views/research.py 전체와 같은 계약 — 세션 사이드바 + 5단계 완료 체크
-// 타임라인 + 체크포인트 탭("탭처럼 왔다갔다") + 현재 단계 내용 + 다음 단계 선택 패널.
+// frontend/views/research.py 전체와 같은 계약 — 5단계 완료 체크 타임라인 + 체크포인트
+// 탭("탭처럼 왔다갔다") + 현재 단계 내용 + 다음 단계 선택 패널. 세션 목록은 08-04
+// 사용자 지적으로 셸의 왼쪽 네비(`ResearchSessionNav`, 연구 워크플로우 항목 아래
+// 중첩)로 옮겼고, 선택 상태는 `/research/:threadId` URL로 옮겨서 새로고침해도
+// 안 날아간다(이전엔 컴포넌트 로컬 state였음).
 export function Research() {
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  const { threadId } = useParams<{ threadId?: string }>()
   const [viewCheckpointId, setViewCheckpointId] = useState<string | null>(null)
 
   const historyQuery = useQuery({
-    queryKey: ['research-history', selectedThreadId],
-    queryFn: () => getResearchHistory(selectedThreadId!),
-    enabled: selectedThreadId !== null,
+    queryKey: ['research-history', threadId],
+    queryFn: () => getResearchHistory(threadId!),
+    enabled: threadId !== undefined,
+  })
+
+  if (!threadId) {
+    return <NewResearchForm />
+  }
+
+  return (
+    <div>
+      {historyQuery.isLoading && <p>불러오는 중...</p>}
+      {historyQuery.isError && (
+        <p className="research-warning">히스토리 조회 실패: {(historyQuery.error as Error).message}</p>
+      )}
+
+      {historyQuery.data && historyQuery.data.history.length > 0 && (
+        <ResearchThreadView
+          threadId={threadId}
+          history={historyQuery.data.history}
+          viewCheckpointId={viewCheckpointId}
+          setViewCheckpointId={setViewCheckpointId}
+        />
+      )}
+    </div>
+  )
+}
+
+function NewResearchForm() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [topic, setTopic] = useState('')
+
+  const startMutation = useMutation({
+    mutationFn: async () => {
+      const newThreadId = crypto.randomUUID()
+      await advanceResearch(newThreadId, { stage: 'hypothesis', topic })
+      return newThreadId
+    },
+    onSuccess: (newThreadId) => {
+      queryClient.invalidateQueries({ queryKey: ['research-sessions'] })
+      navigate(`/research/${newThreadId}`)
+    },
   })
 
   return (
-    <div className="research-layout">
-      <SessionSidebar
-        selectedThreadId={selectedThreadId}
-        onSelect={(id) => {
-          setSelectedThreadId(id)
-          setViewCheckpointId(null)
+    <div>
+      <h1>🧬 연구 워크플로우</h1>
+      <p className="research-caption">왼쪽에서 세션을 선택하거나 새 연구를 시작하세요.</p>
+
+      <h3>새 연구 시작</h3>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!topic) return
+          startMutation.mutate()
         }}
-      />
-
-      <div className="research-main">
-        {!selectedThreadId && <p>왼쪽에서 세션을 선택하거나 새 연구를 시작하세요.</p>}
-
-        {selectedThreadId && historyQuery.isLoading && <p>불러오는 중...</p>}
-        {selectedThreadId && historyQuery.isError && (
-          <p className="research-warning">히스토리 조회 실패: {(historyQuery.error as Error).message}</p>
-        )}
-
-        {selectedThreadId && historyQuery.data && historyQuery.data.history.length > 0 && (
-          <ResearchThreadView
-            threadId={selectedThreadId}
-            history={historyQuery.data.history}
-            viewCheckpointId={viewCheckpointId}
-            setViewCheckpointId={setViewCheckpointId}
-          />
-        )}
-      </div>
+      >
+        <textarea
+          className="research-textarea"
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          placeholder="연구 주제·질문"
+        />
+        <button type="submit" disabled={startMutation.isPending}>
+          {startMutation.isPending ? '시작 중...' : '시작'}
+        </button>
+      </form>
+      {startMutation.isError && <p className="research-warning">시작 실패: {(startMutation.error as Error).message}</p>}
     </div>
   )
 }
