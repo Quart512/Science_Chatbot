@@ -70,6 +70,53 @@ export function resolveCitations(text: string, references: ResearchReference[]):
   })
 }
 
+// research_workflow._STAGE_FIELDS와 짝이 맞는 필드 라벨 — 재시도 폼에서 "직접 수정"
+// 입력창을 만드는 데만 쓴다. operation은 일부러 뺌: analysis/outcome은 LLM이
+// experiment_results로부터 다시 판정하는 값이라 직접 고칠 대상이 아니고, 그 단계의
+// 진짜 "사용자 입력"은 이미 experiment_results 텍스트박스(needsResults)가 담당한다.
+// writing도 뺌 — user_guidance를 읽는 노드가 generate_hypothesis/design_experiment/
+// analyze_results 셋뿐(research_workflow.WorkflowState.user_guidance 필드 참고).
+export const STAGE_FIELD_LABELS: Partial<Record<string, Array<[keyof ResearchState, string]>>> = {
+  hypothesis: [
+    ['hypothesis', '가설'],
+    ['rationale', '근거'],
+    ['testable_prediction', '검증 가능한 예측'],
+  ],
+  design: [
+    ['independent_variable', '독립변수'],
+    ['dependent_variable', '종속변수'],
+    ['controlled_variables', '통제변수'],
+    ['equipment_needed', '필요 장비'],
+    ['procedure', '절차'],
+  ],
+}
+
+// 재시도 폼이 보낼 user_guidance 문자열을 조립한다 — 직접 수정한 필드(원래 값과
+// 달라진 것만)와 방향 지시 텍스트박스 내용을 하나로 합친다. 백엔드는 이 텍스트
+// 안에 뭐가 들었는지 신경 안 쓴다(research_workflow._with_user_guidance 참고) —
+// 구조화된 별도 채널 대신 하나의 텍스트로 합치는 게 노드마다 다른 필드 집합을
+// 따로 받는 것보다 단순하다(사용자 결정).
+export function buildRetryGuidance(
+  target: string,
+  draftFields: Record<string, string>,
+  original: ResearchState,
+  guidanceText: string,
+): string | undefined {
+  const parts: string[] = []
+  const fieldLabels = STAGE_FIELD_LABELS[target]
+  if (fieldLabels) {
+    const edited = fieldLabels.filter(([field]) => draftFields[field] !== (original[field] as string))
+    if (edited.length > 0) {
+      parts.push(
+        '사용자가 다음과 같이 수정했습니다:\n' +
+          edited.map(([field, label]) => `${label}: ${draftFields[field]}`).join('\n'),
+      )
+    }
+  }
+  if (guidanceText.trim()) parts.push(`추가 지시: ${guidanceText.trim()}`)
+  return parts.length > 0 ? parts.join('\n\n') : undefined
+}
+
 export interface NextOption {
   label: string
   target: string

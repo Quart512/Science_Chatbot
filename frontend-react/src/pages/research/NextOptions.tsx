@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { advanceResearch, type ResearchState } from '../../api/research'
-import { nextOptions, stageIndex } from './constants'
+import { nextOptions, stageIndex, STAGE_FIELD_LABELS, buildRetryGuidance } from './constants'
 
 interface Props {
   threadId: string
   values: ResearchState
   tipValues: ResearchState
   fromCheckpointId: string | null
+  viewedCheckpointId: string
   onAdvanced: () => void
 }
 
@@ -17,7 +18,7 @@ interface Props {
 // 현재 단계보다 뒤면 진행, 아니면(같거나 앞) 재시도 — 이 인덱스 비교가 예전의
 // hasStaleDownstream 판정과 동치다(각 단계 진입 노드가 자기보다 뒤 단계 필드를 항상
 // 리셋하므로, "재시도" 대상은 반드시 지금 값이 이미 채워져 있어 경고가 항상 뜬다).
-export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onAdvanced }: Props) {
+export function NextOptions({ threadId, values, tipValues, fromCheckpointId, viewedCheckpointId, onAdvanced }: Props) {
   const options = nextOptions(values)
   const currentIndex = stageIndex(values.stage)
   const forwardOptions = options.filter((o) => stageIndex(o.target) > currentIndex)
@@ -36,9 +37,11 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
           <h4>진행</h4>
           {forwardOptions.map((opt) => (
             <OptionForm
-              key={`${opt.target}_${opt.label}`}
+              key={`${viewedCheckpointId}_${opt.target}_${opt.label}`}
               threadId={threadId}
               opt={opt}
+              values={values}
+              isRetry={false}
               fromCheckpointId={fromCheckpointId}
               newRefs={newRefs}
               onAdvanced={onAdvanced}
@@ -57,9 +60,11 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
           )}
           {retryOptions.map((opt) => (
             <OptionForm
-              key={`${opt.target}_${opt.label}`}
+              key={`${viewedCheckpointId}_${opt.target}_${opt.label}`}
               threadId={threadId}
               opt={opt}
+              values={values}
+              isRetry
               fromCheckpointId={fromCheckpointId}
               newRefs={newRefs}
               onAdvanced={onAdvanced}
@@ -74,12 +79,16 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
 function OptionForm({
   threadId,
   opt,
+  values,
+  isRetry,
   fromCheckpointId,
   newRefs,
   onAdvanced,
 }: {
   threadId: string
   opt: ReturnType<typeof nextOptions>[number]
+  values: ResearchState
+  isRetry: boolean
   fromCheckpointId: string | null
   newRefs: ResearchState['references']
   onAdvanced: () => void
@@ -87,12 +96,20 @@ function OptionForm({
   const queryClient = useQueryClient()
   const [resultsText, setResultsText] = useState('')
   const [keepIds, setKeepIds] = useState<Set<string>>(new Set())
+  const [guidanceText, setGuidanceText] = useState('')
+  // 재시도 대상 단계의 필드를 직접 고칠 수 있는 입력창(08-04 후속 — RoadMap "재생성
+  // 시 사용자 피드백/지시 반영") — hypothesis/design만 대상(STAGE_FIELD_LABELS 참고).
+  const editableFields = isRetry ? STAGE_FIELD_LABELS[opt.target] : undefined
+  const [draftFields, setDraftFields] = useState<Record<string, string>>(
+    () => Object.fromEntries((editableFields ?? []).map(([field]) => [field, (values[field] as string) ?? ''])),
+  )
 
   const mutation = useMutation({
     mutationFn: () =>
       advanceResearch(threadId, {
         stage: opt.target,
         experiment_results: opt.needsResults ? resultsText : undefined,
+        user_guidance: isRetry ? buildRetryGuidance(opt.target, draftFields, values, guidanceText) : undefined,
         from_checkpoint_id: fromCheckpointId ?? undefined,
         keep_reference_paper_ids: fromCheckpointId ? Array.from(keepIds) : undefined,
       }),
@@ -130,6 +147,32 @@ function OptionForm({
             onChange={(e) => setResultsText(e.target.value)}
             placeholder="실험 결과"
           />
+        )}
+
+        {isRetry && (
+          <div className="research-retry-guidance">
+            <textarea
+              className="research-textarea"
+              value={guidanceText}
+              onChange={(e) => setGuidanceText(e.target.value)}
+              placeholder="AI에게 방향을 지시하세요(선택) — 예: 더 초보적인 단계로, 더 간단한 장비로"
+            />
+            {editableFields && (
+              <details>
+                <summary>직접 수정</summary>
+                {editableFields.map(([field, fieldLabel]) => (
+                  <div key={field}>
+                    <label className="research-caption">{fieldLabel}</label>
+                    <textarea
+                      className="research-textarea"
+                      value={draftFields[field]}
+                      onChange={(e) => setDraftFields((f) => ({ ...f, [field]: e.target.value }))}
+                    />
+                  </div>
+                ))}
+              </details>
+            )}
+          </div>
         )}
 
         {newRefs.length > 0 && (

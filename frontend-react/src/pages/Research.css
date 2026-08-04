@@ -272,6 +272,20 @@
   cursor: not-allowed;
 }
 
+.research-retry-guidance {
+  margin: 0.5rem 0;
+}
+
+.research-retry-guidance details {
+  margin-top: 0.4rem;
+}
+
+.research-retry-guidance summary {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .research-textarea,
 .research-input {
   display: block;

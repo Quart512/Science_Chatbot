@@ -142,6 +142,7 @@ function ResearchThreadView({
         values={values}
         tipValues={tip.values}
         fromCheckpointId={isTip ? null : selected.checkpoint_id}
+        viewedCheckpointId={selected.checkpoint_id}
         onAdvanced={() => setViewCheckpointId(null)}
       />
     </>

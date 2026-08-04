@@ -760,6 +760,35 @@ def test_advance_research_creates_session_on_first_call(monkeypatch):
     assert fake_graph.invoked_with[0] == {"stage": "hypothesis", "topic": "그래핀 전도도"}
 
 
+def test_advance_research_passes_user_guidance_through(monkeypatch):
+    # 재생성 시 방향 지시(+프론트가 조립한 직접 수정 내용)가 ainvoke 입력에 실려가야
+    # generate_hypothesis 등이 프롬프트에 끼워 넣을 수 있다.
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    fake_graph = _FakeResearchGraph({"stage": "design"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/advance", json={"stage": "design", "user_guidance": "더 간단한 장비로"})
+
+    assert resp.status_code == 200
+    assert fake_graph.invoked_with[0] == {"stage": "design", "user_guidance": "더 간단한 장비로"}
+
+
+def test_advance_research_omits_user_guidance_when_not_given(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    fake_graph = _FakeResearchGraph({"stage": "design"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/advance", json={"stage": "design"})
+
+    assert "user_guidance" not in fake_graph.invoked_with[0]
+
+
 def test_advance_research_does_not_recreate_existing_session(monkeypatch):
     fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "hypothesis"}
     monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)

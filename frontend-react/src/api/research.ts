@@ -85,6 +85,7 @@ export interface AdvanceBody {
   stage: string
   topic?: string
   experiment_results?: string
+  user_guidance?: string
   from_checkpoint_id?: string
   keep_reference_paper_ids?: string[]
 }

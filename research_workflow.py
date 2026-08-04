@@ -51,6 +51,15 @@ class WorkflowState(BaseModel):
     stage: Literal["hypothesis", "design", "operation", "report", "writing"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
+    # 재생성 시 사람이 방향을 지시하는 채널(08-04, RoadMap "재생성 시 사용자 피드백/지시
+    # 반영" 참고) — generate_hypothesis/design_experiment/analyze_results 세 노드(재생성
+    # 대상인 노드들)가 프롬프트에 끼워 넣는다. 사용자가 필드를 직접 고친 내용도 별도
+    # 채널을 안 두고 프론트가 이 텍스트 안에 조립해서 함께 보낸다("사용자가 다음과 같이
+    # 수정했습니다: ..." + "추가 지시: ...") — 구조 하나로 통일하는 게 노드마다 다른
+    # 필드 집합을 별도로 받는 것보다 단순하다. experiment_results처럼 사용자가 입력하는
+    # 값이라 한 번 쓰고 나면 comment처럼 빈 문자열로 리셋한다(안 하면 다음 재생성에도
+    # 계속 붙어버림 — comment가 08-04에 겪은 것과 같은 함정).
+    user_guidance: str = ""
     hypothesis: str = ""
     rationale: str = ""
     testable_prediction: str = ""
@@ -137,6 +146,15 @@ def _reset_downstream_fields(stage: str) -> dict:
     return reset
 
 
+def _with_user_guidance(text: str, guidance: str) -> str:
+    """재생성 프롬프트 끝에 WorkflowState.user_guidance를 덧붙인다 — 없으면 그대로
+    반환. 이 함수는 가이던스 안에 뭐가 들었는지(직접 수정 내용인지 순수 지시인지)
+    신경 안 쓴다(WorkflowState.user_guidance 필드 설명 참고, 프론트가 조립해서 보냄)."""
+    if not guidance:
+        return text
+    return f"{text}\n\n사용자 지시: {guidance}"
+
+
 HYPOTHESIS_SYSTEM_PROMPT = """주어진 연구 주제를 보고 검증 가능한 가설을 하나 세워라.
 가설은 관찰이나 실험으로 참/거짓을 확인할 수 있는 구체적인 주장이어야 한다 —
 "~일 것이다" 같은 모호한 진술이 아니라, 무엇을 측정하면 확인되는지가 분명해야 한다."""
@@ -151,7 +169,7 @@ class HypothesisOutput(BaseModel):
 def generate_hypothesis(state: WorkflowState) -> dict:
     messages = [
         SystemMessage(content=HYPOTHESIS_SYSTEM_PROMPT),
-        HumanMessage(content=f"연구 주제: {state.topic}"),
+        HumanMessage(content=_with_user_guidance(f"연구 주제: {state.topic}", state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=HypothesisOutput, disabled_models=state.disabled_models
@@ -161,6 +179,7 @@ def generate_hypothesis(state: WorkflowState) -> dict:
         "rationale": result.rationale,
         "testable_prediction": result.testable_prediction,
         "comment": "",  # 이전 실행이 남긴 comment가 안 지워지고 계속 이어붙던 버그 수정(08-04)
+        "user_guidance": "",  # 한 번 쓰고 리셋 — 안 하면 다음 재생성에도 계속 붙음
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
         **_reset_downstream_fields("hypothesis"),
@@ -292,10 +311,10 @@ def design_experiment(state: WorkflowState) -> dict:
         # testable_prediction을 같이 넣는 이유: 다음 단계(analyze_results)가 "결과가 이
         # 예측을 지지하는가"로 성패를 판정하는데, 정작 그 예측을 측정 가능하게 만들어야
         # 할 설계 단계가 예측을 못 보고 짜이면 검증할 수 없는 실험이 나온다.
-        HumanMessage(content=(
+        HumanMessage(content=_with_user_guidance((
             f"가설: {state.hypothesis}\n근거: {state.rationale}\n"
             f"예측: {state.testable_prediction}\n\n보유 장비 목록:\n{equipment_text}"
-        )),
+        ), state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=ExperimentDesign, disabled_models=state.disabled_models
@@ -307,6 +326,7 @@ def design_experiment(state: WorkflowState) -> dict:
         "equipment_needed": result.equipment_needed,
         "procedure": result.procedure,
         "comment": "",
+        "user_guidance": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
         **_reset_downstream_fields("design"),
@@ -366,10 +386,10 @@ def analyze_results(state: WorkflowState) -> dict:
     # 성격이 다른 지점).
     messages = [
         SystemMessage(content=EXPERIMENT_ANALYSIS_SYSTEM_PROMPT),
-        HumanMessage(content=(
+        HumanMessage(content=_with_user_guidance((
             f"가설: {state.hypothesis}\n예측: {state.testable_prediction}\n"
             f"실험 절차: {state.procedure}\n\n실제 실험 결과: {state.experiment_results}"
-        )),
+        ), state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=ExperimentAnalysis, disabled_models=state.disabled_models
@@ -378,6 +398,7 @@ def analyze_results(state: WorkflowState) -> dict:
         "analysis": result.analysis,
         "outcome": result.outcome,
         "comment": OUTCOME_GUIDANCE[result.outcome],
+        "user_guidance": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
         **_reset_downstream_fields("operation"),

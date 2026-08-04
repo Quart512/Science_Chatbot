@@ -52,6 +52,37 @@ def test_generate_hypothesis_resets_comment_and_downstream_fields(monkeypatch):
     assert result["citations"] == []
 
 
+def test_with_user_guidance_returns_text_unchanged_when_empty():
+    assert research_workflow._with_user_guidance("본문", "") == "본문"
+
+
+def test_with_user_guidance_appends_guidance_when_present():
+    assert research_workflow._with_user_guidance("본문", "더 간단하게") == "본문\n\n사용자 지시: 더 간단하게"
+
+
+def test_generate_hypothesis_includes_user_guidance_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["content"] = messages[1].content
+        return _fake_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="더 초보적인 단계로")
+    research_workflow.generate_hypothesis(state)
+
+    assert "더 초보적인 단계로" in captured["content"]
+
+
+def test_generate_hypothesis_resets_user_guidance_after_use(monkeypatch):
+    # 한 번 쓴 뒤 안 지우면 다음 재생성에도 계속 붙는다(comment가 08-04에 겪은 것과 같은 함정).
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result())
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="더 초보적인 단계로")
+    result = research_workflow.generate_hypothesis(state)
+
+    assert result["user_guidance"] == ""
+
+
 def test_generate_hypothesis_passes_disabled_models_through(monkeypatch):
     # physics_qa_node/draft_interest_from_messages와 같은 서킷 브레이커 패턴 —
     # 넘긴 disabled_models가 invoke_with_fallback에 그대로 전달되고, 갱신된 값이
@@ -359,6 +390,30 @@ def test_design_experiment_includes_testable_prediction_in_prompt(monkeypatch):
     assert "온도-저항 그래프가 우상향" in captured["human"]
 
 
+def test_design_experiment_includes_user_guidance_in_prompt(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_design_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", user_guidance="더 간단한 장비로")
+    research_workflow.design_experiment(state)
+
+    assert "더 간단한 장비로" in captured["human"]
+
+
+def test_design_experiment_resets_user_guidance_after_use(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", user_guidance="더 간단한 장비로")
+    result = research_workflow.design_experiment(state)
+
+    assert result["user_guidance"] == ""
+
+
 def test_design_experiment_notes_when_no_equipment_registered(monkeypatch):
     monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
     captured = {}
@@ -509,6 +564,28 @@ def test_analyze_results_uses_experiment_results_in_prompt(monkeypatch):
     research_workflow.analyze_results(state)
 
     assert "저항이 거의 안 변했다" in captured["human"]
+
+
+def test_analyze_results_includes_user_guidance_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_analysis_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="측정 오차 범위도 고려해줘")
+    research_workflow.analyze_results(state)
+
+    assert "측정 오차 범위도 고려해줘" in captured["human"]
+
+
+def test_analyze_results_resets_user_guidance_after_use(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_analysis_result())
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="측정 오차 범위도 고려해줘")
+    result = research_workflow.analyze_results(state)
+
+    assert result["user_guidance"] == ""
 
 
 def test_analyze_results_passes_disabled_models_through(monkeypatch):

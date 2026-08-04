@@ -382,6 +382,10 @@ class ResearchAdvanceRequest(BaseModel):
     stage: Literal["hypothesis", "design", "operation", "report", "writing"]
     topic: str | None = None
     experiment_results: str | None = None
+    # 재생성 시 방향 지시 + 직접 수정한 필드 내용(프론트가 조립해서 하나의 텍스트로
+    # 보냄, 08-04 후속 — RoadMap "재생성 시 사용자 피드백/지시 반영") — generate_hypothesis/
+    # design_experiment/analyze_results만 읽는다(WorkflowState.user_guidance 필드 참고).
+    user_guidance: str | None = None
     # 과거 체크포인트에서 이어갈 때만 쓰는 필드(체크포인트 히스토리·복원, 08-04 후속) —
     # from_checkpoint_id가 있으면 그 시점 값을 현재 tip으로 복원한 뒤 이 요청의 stage로
     # 이어간다. references만은 예외로 항상 최신을 원칙으로 하되(RoadMap 설계 노트 참고),
@@ -434,6 +438,8 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
         inputs["topic"] = body.topic
     if body.experiment_results is not None:
         inputs["experiment_results"] = body.experiment_results
+    if body.user_guidance is not None:
+        inputs["user_guidance"] = body.user_guidance
 
     result = await request.app.state.research_graph.ainvoke(inputs, config=config)
     research_sessions.update_stage(thread_id, body.stage)
