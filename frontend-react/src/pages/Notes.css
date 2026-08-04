@@ -1,0 +1,84 @@
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 480px;
+  margin: 0.5rem 0 1rem;
+}
+
+.note-form input,
+.note-form textarea {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+}
+
+.note-form textarea {
+  min-height: 100px;
+}
+
+.note-form button {
+  align-self: flex-start;
+  background: #3b5bdb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.note-row {
+  border: 1px solid #2e313d;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.note-row-preview {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+.note-row-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.note-row-actions-left {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.note-row-actions button {
+  background: #2e313d;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+
+.note-row-actions button[type='submit'] {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: white;
+}
+
+.note-delete {
+  background: none;
+  border: 1px solid #40434f;
+  color: #ff7b72;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.note-error {
+  color: #ff7b72;
+}

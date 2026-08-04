@@ -1,0 +1,99 @@
+.interest-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 480px;
+  margin: 0.5rem 0 1rem;
+}
+
+.interest-form input,
+.interest-form textarea {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+}
+
+.interest-form textarea {
+  min-height: 60px;
+}
+
+.interest-form button {
+  align-self: flex-start;
+  background: #3b5bdb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.interest-card {
+  border: 1px solid #2e313d;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.interest-card-meta {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+}
+
+.interest-card-papers {
+  margin: 0.5rem 0;
+}
+
+.interest-card-paper {
+  padding: 0.25rem 0;
+}
+
+.interest-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.interest-card-actions-left {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.interest-card-actions button {
+  background: #2e313d;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.interest-card-actions button[type='submit'] {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: white;
+}
+
+.interest-card-delete {
+  color: #ff7b72 !important;
+}
+
+.interest-card-error {
+  color: #ff7b72;
+}
+
+.interest-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.interest-results-table th,
+.interest-results-table td {
+  border: 1px solid #2e313d;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}

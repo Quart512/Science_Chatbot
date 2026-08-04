@@ -95,6 +95,7 @@ def register_paper(
     doi: str | None = None,
     arxiv_id: str | None = None,
     bibliographic: dict | None = None,
+    filename: str = "",
     vectorstore=None,
 ) -> dict:
     """PDF를 파싱해 임베딩용 청크(doc_type=fulltext_chunk)로 등록한다. 요약은 lazy
@@ -103,7 +104,8 @@ def register_paper(
     doi/arxiv_id 중 있는 것만 넘기면 된다(우선순위: DOI > arXiv > 파일 해시). bibliographic
     없이도 동작(해시 기반 paper_id, 서지정보는 비움). arxiv_id는 있는데 abstract가 없으면
     fetch_by_id()로 자동 조회(title 등도 같이 채워짐, 호출자 값이 우선) — 조회 실패는
-    등록을 막지 않는다.
+    등록을 막지 않는다. filename(업로드 원본 파일명)은 카탈로그에만 저장되고 파싱에는
+    안 쓰인다 — title이 비어있는 논문을 화면에서 해시 대신 보여줄 차선책(08-04 참고).
 
     반환: {"paper_id", "text_extractable", "chunk_count", "page_count", "title_check":
     {"status", "given_title", "pdf_title"}}. 스캔본은 chunk_count=0으로 정직하게 보고하고
@@ -215,6 +217,7 @@ def register_paper(
         title=bib_meta.get("title", ""),
         authors=bib_meta.get("authors", ""),
         year=bib_meta.get("year", ""),
+        filename=filename,
     )
 
     return {

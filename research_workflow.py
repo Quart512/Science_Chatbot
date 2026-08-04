@@ -51,6 +51,15 @@ class WorkflowState(BaseModel):
     stage: Literal["hypothesis", "design", "operation", "report", "writing"] = "hypothesis"
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
+    # 재생성 시 사람이 방향을 지시하는 채널(08-04, RoadMap "재생성 시 사용자 피드백/지시
+    # 반영" 참고) — generate_hypothesis/design_experiment/analyze_results 세 노드(재생성
+    # 대상인 노드들)가 프롬프트에 끼워 넣는다. 사용자가 필드를 직접 고친 내용도 별도
+    # 채널을 안 두고 프론트가 이 텍스트 안에 조립해서 함께 보낸다("사용자가 다음과 같이
+    # 수정했습니다: ..." + "추가 지시: ...") — 구조 하나로 통일하는 게 노드마다 다른
+    # 필드 집합을 별도로 받는 것보다 단순하다. experiment_results처럼 사용자가 입력하는
+    # 값이라 한 번 쓰고 나면 comment처럼 빈 문자열로 리셋한다(안 하면 다음 재생성에도
+    # 계속 붙어버림 — comment가 08-04에 겪은 것과 같은 함정).
+    user_guidance: str = ""
     hypothesis: str = ""
     rationale: str = ""
     testable_prediction: str = ""
@@ -109,6 +118,43 @@ class WorkflowState(BaseModel):
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
 
 
+# 각 단계의 산출물 필드 — 08-04 실사용 중 발견한 버그(RoadMap 참고) 수정에 쓴다: 어느
+# 단계의 진입 노드든 자기 필드만 반환하고 뒤 단계 필드는 손을 안 대서, "report까지 만든
+# 뒤 design으로 되돌아가 고치기"를 해도 operation/report 필드가 그대로 남아 화면
+# 타임라인 체크가 안 꺼졌다. references는 예외(누적이 원래 설계, 체크포인트 복원
+# 설계 노트와 같은 결)라 여기 안 넣는다.
+_STAGE_ORDER = ("hypothesis", "design", "operation", "report", "writing")
+_STAGE_FIELDS = {
+    "hypothesis": ("hypothesis", "rationale", "testable_prediction"),
+    "design": ("independent_variable", "dependent_variable", "controlled_variables", "equipment_needed", "procedure"),
+    "operation": ("experiment_results", "analysis", "outcome"),
+    "report": ("experiment_report",),
+    "writing": ("title", "abstract", "introduction", "methods", "results", "discussion", "citations"),
+}
+
+
+def _reset_downstream_fields(stage: str) -> dict:
+    """stage보다 뒤에 있는 단계들의 산출물 필드를 전부 기본값으로 돌리는 dict를 만든다.
+    각 단계의 진입 노드(generate_hypothesis 등)가 자기 반환값에 그대로 얹으면, 그 노드가
+    어느 경로(과거 체크포인트 복원이든 tip에서 바로 이전 단계로 진행이든)로 실행되든
+    상관없이 낡은 하위 단계 값이 저절로 지워진다."""
+    idx = _STAGE_ORDER.index(stage)
+    reset = {}
+    for later_stage in _STAGE_ORDER[idx + 1:]:
+        for field in _STAGE_FIELDS[later_stage]:
+            reset[field] = [] if field == "citations" else ""
+    return reset
+
+
+def _with_user_guidance(text: str, guidance: str) -> str:
+    """재생성 프롬프트 끝에 WorkflowState.user_guidance를 덧붙인다 — 없으면 그대로
+    반환. 이 함수는 가이던스 안에 뭐가 들었는지(직접 수정 내용인지 순수 지시인지)
+    신경 안 쓴다(WorkflowState.user_guidance 필드 설명 참고, 프론트가 조립해서 보냄)."""
+    if not guidance:
+        return text
+    return f"{text}\n\n사용자 지시: {guidance}"
+
+
 HYPOTHESIS_SYSTEM_PROMPT = """주어진 연구 주제를 보고 검증 가능한 가설을 하나 세워라.
 가설은 관찰이나 실험으로 참/거짓을 확인할 수 있는 구체적인 주장이어야 한다 —
 "~일 것이다" 같은 모호한 진술이 아니라, 무엇을 측정하면 확인되는지가 분명해야 한다."""
@@ -123,7 +169,7 @@ class HypothesisOutput(BaseModel):
 def generate_hypothesis(state: WorkflowState) -> dict:
     messages = [
         SystemMessage(content=HYPOTHESIS_SYSTEM_PROMPT),
-        HumanMessage(content=f"연구 주제: {state.topic}"),
+        HumanMessage(content=_with_user_guidance(f"연구 주제: {state.topic}", state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=HypothesisOutput, disabled_models=state.disabled_models
@@ -132,8 +178,11 @@ def generate_hypothesis(state: WorkflowState) -> dict:
         "hypothesis": result.statement,
         "rationale": result.rationale,
         "testable_prediction": result.testable_prediction,
+        "comment": "",  # 이전 실행이 남긴 comment가 안 지워지고 계속 이어붙던 버그 수정(08-04)
+        "user_guidance": "",  # 한 번 쓰고 리셋 — 안 하면 다음 재생성에도 계속 붙음
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("hypothesis"),
     }
 
 
@@ -149,11 +198,13 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
     것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다). 여기서 노드가 예외를
     던지면 방금 LLM으로 만든 가설·설계가 체크포인트에 커밋되지 못하고 통째로 날아간다.
 
-    `RuntimeError`(모델 소진)만 잡지 않고 `Exception`을 잡는 이유: 이 함수가 부르는
-    경로가 recommend_references → paper_search → arxiv_api라서 arxiv가 잠깐 죽으면
-    `requests.RequestException`/`HTTPError`가 그대로 올라온다. 예외 타입을 열거하면
-    어댑터를 갈아끼울 때마다 목록이 새고, 그때마다 "핵심 결과가 날아가는" 방식으로
-    실패한다. 대신 잡은 예외 타입을 로그에 남겨 조용히 삼키지는 않는다.
+    `RuntimeError`(모델 소진)·`ReferenceSearchError`(arxiv 검색 오류)를 각각 구분해서
+    잡고, 그 아래 `Exception`도 여전히 잡는다 — recommend_references가 부르는 경로가
+    paper_search → arxiv_api라 예상 못 한 예외가 새어나올 수 있는데(어댑터를 갈아끼울
+    때마다 예외 타입 목록이 늘어나는 걸 막으려 이전부터 `Exception`을 최종 방어선으로
+    잡아왔다), 08-04부터는 사용자에게 실패 사유를 4갈래로 구분해 보여주려고(RoadMap
+    "참고문헌만 재검색 + 실패 사유 표시") 그 위에 두 타입을 먼저 잡는 게 추가됐다. 잡은
+    예외 타입은 여전히 로그에 남겨 조용히 삼키지는 않는다.
 
     "이미 증명된 이론·이미 한 실험인지"는 LLM이 판정하지 않는다 — 찾은 참고문헌(이미
     screen_candidate의 연관성 근거가 붙어 있음)을 사람이 직접 읽고 템플릿을 고치거나
@@ -171,15 +222,28 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
         def _with_prior_comment(text: str) -> str:
             return f"{state.comment}\n\n{text}" if state.comment else text
 
+        # 예외 3갈래(③④, 검색어 추출 단계 포함)를 각각 다른 문구로 안내 — RuntimeError가
+        # ReferenceSearchError보다 먼저 와야 하는 순서 제약은 없다(서로 다른 계통이라
+        # 교집합 없음), 그냥 구체적인 타입을 Exception보다 먼저 잡아야 한다.
         try:
-            found, disabled_models, tokens_used = reference_recommender.recommend_references(
+            found, reason, disabled_models, tokens_used = reference_recommender.recommend_references(
                 get_text(state), disabled_models=state.disabled_models
             )
-        except Exception as e:
-            print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
+        except RuntimeError as e:
+            print(f"참고문헌 추천 실패, 모델 소진(이 단계는 건너뜀): {type(e).__name__}: {e}")
             # 실패해도 disabled_models는 못 건진다 — 예외를 던진 시점의 갱신값이 호출
             # 스택과 함께 사라지기 때문(살리려면 예외에 실어 보내야 하는데, 그건 정상
             # 경로가 아닌 곳에 데이터를 태우는 설계라 안 한다). 다음 단계가 다시 판단한다.
+            return {"comment": _with_prior_comment(
+                "AI 모델이 모두 소진돼 참고문헌을 찾지 못했습니다 — 잠시 후 재생성해주세요."
+            )}
+        except reference_recommender.ReferenceSearchError as e:
+            print(f"참고문헌 추천 실패, arxiv 검색 오류(이 단계는 건너뜀): {type(e).__name__}: {e}")
+            return {"comment": _with_prior_comment(
+                "arXiv 검색 중 오류가 발생했습니다 — 잠시 후 재생성해주세요."
+            )}
+        except Exception as e:
+            print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
             return {"comment": _with_prior_comment("참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요.")}
 
         existing_ids = {r["paper_id"] for r in state.references}
@@ -192,8 +256,18 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
                 "참고논문을 확인해서 선행 연구된 내용이 있는지 확인하고 템플릿을 채우거나 "
                 "수정해주세요. 참고문헌이 부족하다면 재생성을 눌러주세요."
             )
-        else:
+        elif found:
+            # found는 있었지만 전부 이미 references에 있던 것(dedup) — 검색은 성공했으니
+            # reason으로 구분할 실패가 아니다. 기존 문구 그대로.
             comment = "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요."
+        else:
+            # found가 애초에 비어 있었던 경우만 reason으로 4갈래 중 ①②를 구분한다
+            # (③④는 위에서 예외로 이미 처리됨).
+            comment = {
+                "no_candidates": "검색 결과가 없습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.",
+                "all_irrelevant": "찾은 논문이 모두 관련성이 낮다고 판단됐습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.",
+                "models_exhausted": "AI 모델이 모두 소진돼 후보 논문을 평가하지 못했습니다 — 잠시 후 재생성해주세요.",
+            }.get(reason, "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.")
 
         return {
             "references": state.references + new_entries,
@@ -237,10 +311,10 @@ def design_experiment(state: WorkflowState) -> dict:
         # testable_prediction을 같이 넣는 이유: 다음 단계(analyze_results)가 "결과가 이
         # 예측을 지지하는가"로 성패를 판정하는데, 정작 그 예측을 측정 가능하게 만들어야
         # 할 설계 단계가 예측을 못 보고 짜이면 검증할 수 없는 실험이 나온다.
-        HumanMessage(content=(
+        HumanMessage(content=_with_user_guidance((
             f"가설: {state.hypothesis}\n근거: {state.rationale}\n"
             f"예측: {state.testable_prediction}\n\n보유 장비 목록:\n{equipment_text}"
-        )),
+        ), state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=ExperimentDesign, disabled_models=state.disabled_models
@@ -251,8 +325,11 @@ def design_experiment(state: WorkflowState) -> dict:
         "controlled_variables": result.controlled_variables,
         "equipment_needed": result.equipment_needed,
         "procedure": result.procedure,
+        "comment": "",
+        "user_guidance": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("design"),
     }
 
 
@@ -309,10 +386,10 @@ def analyze_results(state: WorkflowState) -> dict:
     # 성격이 다른 지점).
     messages = [
         SystemMessage(content=EXPERIMENT_ANALYSIS_SYSTEM_PROMPT),
-        HumanMessage(content=(
+        HumanMessage(content=_with_user_guidance((
             f"가설: {state.hypothesis}\n예측: {state.testable_prediction}\n"
             f"실험 절차: {state.procedure}\n\n실제 실험 결과: {state.experiment_results}"
-        )),
+        ), state.user_guidance)),
     ]
     result, _, disabled_models, tokens_used = invoke_with_fallback(
         state.model, messages, structured=ExperimentAnalysis, disabled_models=state.disabled_models
@@ -321,12 +398,25 @@ def analyze_results(state: WorkflowState) -> dict:
         "analysis": result.analysis,
         "outcome": result.outcome,
         "comment": OUTCOME_GUIDANCE[result.outcome],
+        "user_guidance": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("operation"),
     }
 
 
 find_operation_references = _make_reference_node(lambda s: s.analysis, "operation")
+
+# 참고문헌만 독립 재시도(⑥, RoadMap "참고문헌만 재검색 + 실패 사유 표시" Part B)용 —
+# main.py의 재시도 엔드포인트가 tip의 stage만 보고 어느 노드를 다시 부를지 찾는다.
+# report/writing은 참고문헌 노드가 없어(compile_experiment_report/draft_paper는 새
+# 텍스트를 안 만들고 있는 걸 재배열/종합할 뿐이라 검색할 새 주장이 없음, 위 주석 참고)
+# 이 매핑에 없다 — 호출부가 stage로 조회해 없으면 400으로 막는다.
+REFERENCE_NODE_BY_STAGE: dict[str, Callable[["WorkflowState"], dict]] = {
+    "hypothesis": find_hypothesis_references,
+    "design": find_design_references,
+    "operation": find_operation_references,
+}
 
 
 def compile_experiment_report(state: WorkflowState) -> dict:
@@ -362,7 +452,7 @@ def compile_experiment_report(state: WorkflowState) -> dict:
 {state.analysis}
 
 판정: {OUTCOME_LABELS.get(state.outcome, state.outcome)}"""
-    return {"experiment_report": report}
+    return {"experiment_report": report, "comment": "", **_reset_downstream_fields("report")}
 
 
 WRITING_SYSTEM_PROMPT = """주어진 실험 보고서를 바탕으로 논문 초안을 작성해라. 보고서에
@@ -419,8 +509,10 @@ def draft_paper(state: WorkflowState) -> dict:
         "results": result.results,
         "discussion": result.discussion,
         "citations": [c.model_dump() for c in result.citations],
+        "comment": "",
         "disabled_models": disabled_models,
         "tokens_used": add_tokens(state.tokens_used, tokens_used),
+        **_reset_downstream_fields("writing"),
     }
 
 

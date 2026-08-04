@@ -32,6 +32,57 @@ def test_generate_hypothesis_returns_structured_fields(monkeypatch):
     assert result["testable_prediction"] == "온도-저항 그래프가 우상향"
 
 
+def test_generate_hypothesis_resets_comment_and_downstream_fields(monkeypatch):
+    # 08-04 실사용 버그: report까지 만든 뒤 "가설부터 재수립"해도 design/operation/
+    # report/writing 필드가 그대로 남아 화면 타임라인 체크가 안 꺼졌다. comment도
+    # 안 지워져서 예전 안내 문구가 계속 이어붙었다(둘 다 이 수정으로 해소).
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result())
+
+    state = research_workflow.WorkflowState(
+        topic="주제", comment="예전 안내 문구", procedure="예전 절차", outcome="supported",
+        experiment_report="예전 보고서", abstract="예전 초록", citations=[{"paper_id": "p1", "reasoning": "x"}],
+    )
+    result = research_workflow.generate_hypothesis(state)
+
+    assert result["comment"] == ""
+    assert result["procedure"] == ""
+    assert result["outcome"] == ""
+    assert result["experiment_report"] == ""
+    assert result["abstract"] == ""
+    assert result["citations"] == []
+
+
+def test_with_user_guidance_returns_text_unchanged_when_empty():
+    assert research_workflow._with_user_guidance("본문", "") == "본문"
+
+
+def test_with_user_guidance_appends_guidance_when_present():
+    assert research_workflow._with_user_guidance("본문", "더 간단하게") == "본문\n\n사용자 지시: 더 간단하게"
+
+
+def test_generate_hypothesis_includes_user_guidance_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["content"] = messages[1].content
+        return _fake_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="더 초보적인 단계로")
+    research_workflow.generate_hypothesis(state)
+
+    assert "더 초보적인 단계로" in captured["content"]
+
+
+def test_generate_hypothesis_resets_user_guidance_after_use(monkeypatch):
+    # 한 번 쓴 뒤 안 지우면 다음 재생성에도 계속 붙는다(comment가 08-04에 겪은 것과 같은 함정).
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_result())
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="더 초보적인 단계로")
+    result = research_workflow.generate_hypothesis(state)
+
+    assert result["user_guidance"] == ""
+
+
 def test_generate_hypothesis_passes_disabled_models_through(monkeypatch):
     # physics_qa_node/draft_interest_from_messages와 같은 서킷 브레이커 패턴 —
     # 넘긴 disabled_models가 invoke_with_fallback에 그대로 전달되고, 갱신된 값이
@@ -80,11 +131,11 @@ def _ref(paper_id, title="", source="owned", reasoning=""):
 _TOKENS = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
 
 
-def _returning(refs, disabled_models=None):
-    """recommend_references 대역 — 계약이 (목록, disabled_models, tokens_used) 3튜플이라
-    테스트마다 튜플을 손으로 쓰지 않게 감싼다. **kw를 받는 이유는 노드가 항상
-    disabled_models=를 키워드로 넘기기 때문."""
-    return lambda text, **kw: (refs, disabled_models or [], _TOKENS)
+def _returning(refs, disabled_models=None, reason=None):
+    """recommend_references 대역 — 계약이 (목록, 실패사유, disabled_models, tokens_used)
+    4튜플이라 테스트마다 튜플을 손으로 쓰지 않게 감싼다. **kw를 받는 이유는 노드가
+    항상 disabled_models=를 키워드로 넘기기 때문."""
+    return lambda text, **kw: (refs, reason, disabled_models or [], _TOKENS)
 
 
 def test_find_hypothesis_references_appends_with_stage_tag(monkeypatch):
@@ -104,7 +155,7 @@ def test_find_hypothesis_references_searches_using_hypothesis_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="온도가 오르면 저항이 커진다")
@@ -136,7 +187,7 @@ def test_find_hypothesis_references_shares_circuit_breaker_and_tokens(monkeypatc
     captured = {}
     def _fake_recommend(text, **kw):
         captured["disabled_models"] = kw.get("disabled_models")
-        return [], ["claude", "gemini"], _TOKENS
+        return [], None, ["claude", "gemini"], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(
@@ -150,7 +201,8 @@ def test_find_hypothesis_references_shares_circuit_breaker_and_tokens(monkeypatc
     assert result["tokens_used"] == {"input_tokens": 11, "output_tokens": 6, "total_tokens": 17}
 
 
-def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
+def test_find_hypothesis_references_skips_step_on_model_exhaustion(monkeypatch):
+    # 4갈래 중 ④(모델 소진) — 검색어 추출 단계에서 나는 RuntimeError.
     def _boom(text, **kw):
         raise RuntimeError("전 모델 소진 흉내")
     monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
@@ -159,16 +211,27 @@ def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
     result = research_workflow.find_hypothesis_references(state)
 
     assert "references" not in result  # 워크플로우를 안 막음 — references 안 건드림
-    assert "검토" in result["comment"]  # 실패했다는 사실은 사용자에게 안내
+    assert "모델" in result["comment"] and "소진" in result["comment"]  # 실패 사유가 구분돼 안내됨
 
 
-def test_find_hypothesis_references_skips_step_on_network_failure(monkeypatch):
-    # 모델 소진(RuntimeError)뿐 아니라 arxiv 네트워크 장애도 이 단계만 건너뛰어야 한다 —
-    # 여기서 예외가 새면 방금 만든 가설이 체크포인트에 커밋되지 못하고 날아간다.
-    import requests
-
+def test_find_hypothesis_references_skips_step_on_search_error(monkeypatch):
+    # 4갈래 중 ③(arxiv 검색 오류) — 여기서 예외가 새면 방금 만든 가설이 체크포인트에
+    # 커밋되지 못하고 날아간다.
     def _boom(text, **kw):
-        raise requests.exceptions.ConnectionError("arxiv 응답 없음 흉내")
+        raise reference_recommender.ReferenceSearchError("arxiv 응답 없음 흉내")
+    monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "references" not in result
+    assert "arXiv" in result["comment"]
+
+
+def test_find_hypothesis_references_skips_step_on_unexpected_error(monkeypatch):
+    # 4갈래 어디에도 안 속하는 예상 못 한 예외 — 여전히 이 단계만 건너뛰고 워크플로우는 안 막는다.
+    def _boom(text, **kw):
+        raise ValueError("예상 못 한 오류 흉내")
     monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
@@ -196,6 +259,37 @@ def test_find_hypothesis_references_comment_suggests_regenerate_when_none_found(
 
     assert result["references"] == []
     assert "재생성" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_no_candidates(monkeypatch):
+    # 4갈래 중 ②(검색 자체가 0건) — reason="no_candidates".
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="no_candidates"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "검색 결과가 없습니다" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_all_irrelevant(monkeypatch):
+    # 4갈래 중 ①(검색은 됐지만 스크리닝에서 전부 무관 판정) — reason="all_irrelevant".
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="all_irrelevant"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "관련성이 낮다" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_screening_models_exhausted(monkeypatch):
+    # 4갈래 중 ④(스크리닝 도중 모델 소진) — reason="models_exhausted". 검색어 추출
+    # 단계의 모델 소진(RuntimeError로 즉시 예외)과 달리 이건 정상 반환값 경로다.
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="models_exhausted"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "모델" in result["comment"] and "소진" in result["comment"]
 
 
 def test_find_hypothesis_references_comment_suggests_regenerate_when_all_duplicates(monkeypatch):
@@ -242,6 +336,24 @@ def test_design_experiment_returns_structured_fields(monkeypatch):
     assert "저항을 측정한다" in result["procedure"]
 
 
+def test_design_experiment_resets_comment_and_downstream_fields(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", comment="예전 안내 문구",
+        outcome="supported", experiment_report="예전 보고서", abstract="예전 초록",
+    )
+    result = research_workflow.design_experiment(state)
+
+    assert result["comment"] == ""
+    assert result["outcome"] == ""
+    assert result["experiment_report"] == ""
+    assert result["abstract"] == ""
+    # 앞선 단계(가설) 필드는 안 건드려야 함 — 되돌아가기가 아니라 그대로 유지되는 값
+    assert "hypothesis" not in result
+
+
 def test_design_experiment_includes_equipment_list_in_prompt(monkeypatch):
     monkeypatch.setattr(
         equipment, "list_equipment",
@@ -276,6 +388,30 @@ def test_design_experiment_includes_testable_prediction_in_prompt(monkeypatch):
     research_workflow.design_experiment(state)
 
     assert "온도-저항 그래프가 우상향" in captured["human"]
+
+
+def test_design_experiment_includes_user_guidance_in_prompt(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_design_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", user_guidance="더 간단한 장비로")
+    research_workflow.design_experiment(state)
+
+    assert "더 간단한 장비로" in captured["human"]
+
+
+def test_design_experiment_resets_user_guidance_after_use(monkeypatch):
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_design_result())
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설", user_guidance="더 간단한 장비로")
+    result = research_workflow.design_experiment(state)
+
+    assert result["user_guidance"] == ""
 
 
 def test_design_experiment_notes_when_no_equipment_registered(monkeypatch):
@@ -325,7 +461,7 @@ def test_find_design_references_searches_using_procedure_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", procedure="1. 시료를 냉각한다\n2. 저항을 측정한다")
@@ -367,6 +503,19 @@ def test_analyze_results_returns_structured_fields(monkeypatch):
 
     assert result["analysis"] == "예측과 일치"
     assert result["outcome"] == "supported"
+
+
+def test_analyze_results_resets_downstream_fields(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_analysis_result())
+
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", procedure="절차", experiment_results="결과",
+        experiment_report="예전 보고서", abstract="예전 초록",
+    )
+    result = research_workflow.analyze_results(state)
+
+    assert result["experiment_report"] == ""
+    assert result["abstract"] == ""
 
 
 def test_analyze_results_sets_comment_from_outcome_guidance(monkeypatch):
@@ -417,6 +566,28 @@ def test_analyze_results_uses_experiment_results_in_prompt(monkeypatch):
     assert "저항이 거의 안 변했다" in captured["human"]
 
 
+def test_analyze_results_includes_user_guidance_in_prompt(monkeypatch):
+    captured = {}
+    def _fake_invoke(model, messages, structured=None, disabled_models=None):
+        captured["human"] = messages[-1].content
+        return _fake_analysis_result()
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", _fake_invoke)
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="측정 오차 범위도 고려해줘")
+    research_workflow.analyze_results(state)
+
+    assert "측정 오차 범위도 고려해줘" in captured["human"]
+
+
+def test_analyze_results_resets_user_guidance_after_use(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_analysis_result())
+
+    state = research_workflow.WorkflowState(topic="주제", user_guidance="측정 오차 범위도 고려해줘")
+    result = research_workflow.analyze_results(state)
+
+    assert result["user_guidance"] == ""
+
+
 def test_analyze_results_passes_disabled_models_through(monkeypatch):
     captured = {}
     def _fake_invoke(model, messages, structured=None, disabled_models=None):
@@ -448,7 +619,7 @@ def test_find_operation_references_searches_using_analysis_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", analysis="결과가 예측과 어긋났다")
@@ -517,6 +688,18 @@ def test_compile_experiment_report_includes_all_stage_fields():
         assert text in report
 
 
+def test_compile_experiment_report_resets_comment_and_writing_fields():
+    state = research_workflow.WorkflowState(
+        topic="주제", hypothesis="가설", comment="예전 안내 문구", abstract="예전 초록",
+        citations=[{"paper_id": "p1", "reasoning": "x"}],
+    )
+    result = research_workflow.compile_experiment_report(state)
+
+    assert result["comment"] == ""
+    assert result["abstract"] == ""
+    assert result["citations"] == []
+
+
 def test_compile_experiment_report_labels_unset_outcome():
     # analyze_results를 아직 안 거친 상태(outcome="")로 report를 만들면 빈 라벨 대신
     # "미분석"임을 명시해야 한다 — 빈 문자열을 그냥 이어붙이면 무슨 값인지 안 보임.
@@ -577,6 +760,15 @@ def test_draft_paper_returns_structured_fields(monkeypatch):
     assert result["methods"] == "실험 방법"
     assert result["results"] == "측정 결과"
     assert result["discussion"] == "고찰 내용"
+
+
+def test_draft_paper_resets_comment(monkeypatch):
+    monkeypatch.setattr(research_workflow, "invoke_with_fallback", lambda *a, **kw: _fake_draft_result())
+
+    state = research_workflow.WorkflowState(topic="주제", experiment_report="보고서", comment="예전 안내 문구")
+    result = research_workflow.draft_paper(state)
+
+    assert result["comment"] == ""
 
 
 def test_draft_paper_converts_citations_to_dicts(monkeypatch):

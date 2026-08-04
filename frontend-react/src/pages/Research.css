@@ -1,0 +1,344 @@
+.research-session-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-left: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.research-session-nav-error {
+  padding-left: 0.5rem;
+}
+
+.research-session-card {
+  border: 1px solid #2e313d;
+  border-radius: 6px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.research-session-card-selected {
+  border-color: #3b5bdb;
+}
+
+.research-session-select {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.research-session-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.research-session-actions-left {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.research-session-actions button {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.research-session-actions button[type='submit'] {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: white;
+}
+
+.research-session-close {
+  color: #a0a4b0;
+}
+
+/* 브랜치형 타임라인(BranchTimeline.tsx) — 예전 research-timeline(완료체크 5칸)과
+   research-tabs(체크포인트 버튼 목록)를 하나로 합친 것. RoadMap "타임라인·체크
+   결합(브랜치형)" 설계 노트 참고. */
+.research-branch-timeline {
+  margin-bottom: 1rem;
+}
+
+.research-branch-toggle {
+  background: none;
+  color: #a0a4b0;
+  border: none;
+  padding: 0;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.research-branch-rows {
+  position: relative;
+}
+
+.research-branch-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.research-branch-line {
+  stroke: #40434f;
+  stroke-width: 2;
+}
+
+.research-branch-line-branch {
+  stroke: #8ab4ff;
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+
+.research-branch-dot {
+  fill: #40434f;
+}
+
+.research-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  height: 44px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.research-branch-row:hover {
+  background: #22242e;
+}
+
+.research-branch-row-active {
+  background: rgba(59, 91, 219, 0.2);
+}
+
+.research-branch-row-label {
+  flex-shrink: 0;
+  width: 8rem;
+  color: #a0a4b0;
+  font-size: 0.8rem;
+}
+
+.research-branch-cells {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.research-branch-cell {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.research-branch-cell-fresh {
+  background: #3b5bdb;
+  color: white;
+}
+
+.research-branch-cell-inherited {
+  background: #2e313d;
+  color: #c7c9d1;
+}
+
+.research-branch-cell-pending {
+  background: none;
+  color: #5a5e6b;
+  border: 1px solid #3a3d48;
+}
+
+.research-branch-future {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.3rem 0 0 0.4rem;
+  padding-left: 1rem;
+  border-left: 2px dashed #40434f;
+}
+
+.research-branch-future-label {
+  color: #6b7080;
+  font-size: 0.78rem;
+}
+
+.research-branch-future-options {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.research-branch-future-chip {
+  background: #22242e;
+  color: #c7c9d1;
+  border: 1px solid #40434f;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.research-branch-future-chip-recommended {
+  background: rgba(59, 91, 219, 0.25);
+  color: #8ab4ff;
+  border-color: #3b5bdb;
+  font-weight: 600;
+}
+
+.research-retry-references {
+  margin: 0.75rem 0;
+}
+
+.research-retry-references button {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.research-retry-references button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.research-note-editor {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #2e313d;
+  border-radius: 4px;
+}
+
+.research-note-editor label {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.research-note-editor textarea {
+  min-height: 60px;
+}
+
+.research-note-editor button {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.research-note-editor button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.research-comment {
+  background: rgba(59, 91, 219, 0.15);
+  color: #8ab4ff;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+
+.research-caption {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+}
+
+.research-pre {
+  white-space: pre-wrap;
+}
+
+.research-warning {
+  color: #e3b341;
+  font-size: 0.85rem;
+}
+
+.research-option-group {
+  margin-top: 1rem;
+}
+
+.research-option-group h4 {
+  margin: 0 0 0.25rem;
+  color: #a0a4b0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.research-option {
+  border-top: 1px solid #2e313d;
+  padding: 0.75rem 0;
+}
+
+.research-option button[type='submit'] {
+  background: #3b5bdb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.research-option button[type='submit']:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.research-retry-guidance {
+  margin: 0.5rem 0;
+}
+
+.research-retry-guidance details {
+  margin-top: 0.4rem;
+}
+
+.research-retry-guidance summary {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.research-textarea,
+.research-input {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+  margin: 0.3rem 0;
+}
+
+.research-textarea {
+  min-height: 80px;
+}
+
+.research-ref-diff {
+  margin: 0.5rem 0;
+}
+
+.research-ref-checkbox {
+  display: block;
+  margin: 0.25rem 0;
+}

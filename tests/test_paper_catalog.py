@@ -18,6 +18,40 @@ def conn():
     c.close()
 
 
+def test_init_schema_adds_missing_filename_column_to_existing_table():
+    # filename이 없던 시절에 만들어진 DB — 실제 배포 환경(EC2 바인드 마운트)에 남아있을
+    # 수 있는 상태다. equipment.py가 precautions 컬럼에서 실제로 겪은 문제와 같은
+    # 패턴(CREATE TABLE IF NOT EXISTS만으로는 컬럼이 안 생김).
+    old = sqlite3.connect(":memory:")
+    old.row_factory = sqlite3.Row
+    old.executescript("""
+        CREATE TABLE papers (
+            paper_id TEXT PRIMARY KEY,
+            doi TEXT UNIQUE,
+            arxiv_id TEXT UNIQUE,
+            title TEXT NOT NULL DEFAULT '',
+            authors TEXT NOT NULL DEFAULT '',
+            year TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'recommended',
+            journal_ref TEXT,
+            citation_count INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    old.execute(
+        "INSERT INTO papers (paper_id, title, created_at, updated_at) VALUES ('hash:old', '구형 논문', 'x', 'x')"
+    )
+    old.commit()
+
+    paper_catalog.init_schema(old)
+
+    paper_catalog.mark_owned("hash:new", filename="새논문.pdf", conn=old)
+    assert paper_catalog.get_paper("hash:new", conn=old)["filename"] == "새논문.pdf"
+    assert paper_catalog.get_paper("hash:old", conn=old)["filename"] == ""  # 기존 행은 DEFAULT로 채워짐
+    old.close()
+
+
 def test_upsert_recommended_inserts_new_paper(conn):
     added = paper_catalog.upsert_recommended(
         "arxiv:2401.1", arxiv_id="2401.1", title="테스트 논문", authors="김, 이", year="2024", conn=conn
@@ -65,6 +99,24 @@ def test_mark_owned_transitions_existing_recommended_to_owned(conn):
     row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
     assert row["status"] == "owned"
     assert row["title"] == "추천됨"  # mark_owned가 title을 안 넘겼으면 기존 값 유지
+
+
+def test_mark_owned_stores_filename_on_new_row(conn):
+    # title이 비어있는 논문(서지정보를 못 찾은 경우) 화면 표시용 차선책 — 08-04 사용자 요청.
+    paper_catalog.mark_owned("hash:abcd", filename="내논문.pdf", conn=conn)
+    row = paper_catalog.get_paper("hash:abcd", conn=conn)
+
+    assert row["filename"] == "내논문.pdf"
+
+
+def test_mark_owned_backfills_filename_on_promoted_row(conn):
+    # 추천으로 먼저 생긴 행(filename 없음)을 나중에 실제로 업로드해 owned로 승격할 때도
+    # filename이 채워져야 한다 — 추천 경로엔 애초에 업로드 파일이 없어 채울 기회가 없었음.
+    paper_catalog.upsert_recommended("arxiv:2401.1", title="추천됨", conn=conn)
+    paper_catalog.mark_owned("arxiv:2401.1", filename="업로드한파일.pdf", conn=conn)
+
+    row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
+    assert row["filename"] == "업로드한파일.pdf"
 
 
 def test_dismiss_marks_status_and_returns_true(conn):
@@ -169,6 +221,22 @@ def test_list_papers_for_interest_only_relevant_filters(conn):
 
 def test_list_papers_for_interest_returns_empty_when_none_screened(conn):
     assert paper_catalog.list_papers_for_interest(999, conn=conn) == []
+
+
+def test_delete_screenings_for_interest_removes_only_that_interests_rows(conn):
+    # 08-04 버그 수정 — 관심사 삭제 시 이 함수가 안 불리면 interest_paper가 고아로 남는다.
+    paper_catalog.upsert_recommended("arxiv:1", title="논문1", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="관심사1 근거", conn=conn)
+    paper_catalog.record_screening(2, "arxiv:1", is_relevant=True, reasoning="관심사2 근거", conn=conn)
+
+    paper_catalog.delete_screenings_for_interest(1, conn=conn)
+
+    assert paper_catalog.list_papers_for_interest(1, conn=conn) == []
+    assert len(paper_catalog.list_papers_for_interest(2, conn=conn)) == 1  # 다른 관심사 것은 안 건드림
+
+
+def test_delete_screenings_for_interest_no_error_when_none_exist(conn):
+    paper_catalog.delete_screenings_for_interest(999, conn=conn)  # 예외 없이 끝나야 함
 
 
 def test_doi_and_arxiv_id_uniqueness_allows_multiple_nulls(conn):

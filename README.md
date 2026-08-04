@@ -1,6 +1,6 @@
 # Science Chatbot — 물리 연구 어시스턴트
 
-실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**다. 현재는 **Self-RAG 물리 QA**(메인 챗) · **논문 파이프라인**(요약기·스크리닝·추천 검색·카탈로그, 라이브러리 화면 포함) · **연구 워크플로우**(가설 수립→실험 설계→실험 운영, 백엔드만)가 동작한다.
+실험을 보조하고, 논문을 검색·학습해 지식을 안내하는 물리 연구 어시스턴트. 최종 목표는 **표면(UI) · 능력(에이전트 그래프) · 데이터 서비스의 3층 구조**다. 현재는 **Self-RAG 물리 QA**(메인 챗) · **논문 파이프라인**(요약기·스크리닝·추천 검색·카탈로그, 라이브러리 화면 포함) · **연구 워크플로우**(가설 수립→실험 설계→실험 운영→보고서→논문 초안, 화면 포함)가 동작한다.
 
 ## 문서 안내
 
@@ -29,7 +29,7 @@
 | 표면 | 형태 | 내용 |
 |---|---|---|
 | 메인 챗 | 상시 대화형 | 물리 QA(④)만 수행. 당초 얇은 라우터로 QA/문서 작성기 호출/추천 조회를 분기하려 했으나(08-10) 재검토 결과 등록·조회는 라우터가 아니라 각 표면의 버튼·폼이 직접 트리거하는 쪽으로 정리됨(07-24 "등록·조회는 폼+어시스트" 원칙과 일치) — 상세: [docs/RoadMap.md](docs/RoadMap.md) 설계 노트 "메인 챗 라우터 착수 보류" |
-| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면. **백엔드 그래프는 5단계 전부 구현**(`research_workflow.py`, 체크포인트 영속화), 화면은 라이브러리와 함께 |
+| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면(`views/research.py`). **백엔드 그래프 5단계 전부(`research_workflow.py`, 체크포인트 영속화) + 세션 목록(`research_sessions.py`) + 화면까지 구현 완료**(08-04). 자체 버전 관리 필드 없이 LangGraph 체크포인터 히스토리를 그대로 활용해 과거 시점을 탭처럼 조회·복원 가능(`GET /research/{id}/history`, `POST /research/{id}/advance`의 `from_checkpoint_id`). 논문 초안 텍스트는 `POST /research/{id}/draft`로 인앱 편집 가능(LLM 재호출 없이 값만 저장) |
 | 라이브러리 | 관리 UI (탭) | 관심사·논문·실험도구·지식 노트를 등록·조회·관리하는 통합 화면. 관심사 탭: 관심사 카드별 보유/추천/권위 논문 목록 + "지금 검색" 트리거(③). 논문 탭: PDF·DOI·arxiv id 등록 → 전문 인코딩, 요약은 요청 시 생성(②a) (등록의 주 경로 — 메인 챗 붙여넣기는 보조). 편집은 폼 + AI 어시스트(문서 작성기) |
 
 > **후순위 아이디어 — 피드 표면**: 관심사와 무관하게 hype 소식을 cron 크롤링 → 키워드 태깅 → 관심사와 일치하는 키워드를 강조·상단 정렬하는 화면. 방향은 유효하지만 지금 규모(혼자 사용)에 크롤링 인프라와 cron 스케줄러까지 얹는 건 과하다고 판단해 **후순위로 내렸다.** 착수한다면 라이브러리 표면·프론트 스택 전환과 묶어서 UI 작업으로 함께 진행한다. `docs/architecture.png`에는 아직 표면 4개로 그려져 있다 — 다음 아키텍처 변경 때 함께 갱신.
@@ -77,7 +77,7 @@
 - **관련도 정확도는 관심사 문서 품질에 달려 있다**: ① 템플릿에 "무엇을 찾고 있나 / 이미 아는 것 / 제외할 주제"를 넣어야 판정이 정확해진다 — 평가 기준의 일부는 사용자가 관심사에 써주는 것..
 - **피드와 추천의 분리**: 피드는 관심사와 무관한 hype 소식을 cron으로 싸고 넓게 수집(키워드 태깅 → 관심사 일치 키워드만 색 강조 + 상단 정렬), 추천 검색(③)은 관심사에서 트리거할 때만 실행(②b 스크리닝 포함). 추천 리스트에서 끝나고 구매·ingest는 사람이 밖에서 결정 — 그래프 차원의 HITL이 아니다. 등록되면 카탈로그 DOI 매칭으로 추천 목록에서 자동으로 내려간다.
 - **외부 API는 최종 단계의 어댑터**: 유료 저널 대응(Crossref 신착 감지, Unpaywall/CORE OA 본문, OpenAlex 인용수·권위 논문)은 검색 함수 뒤에 숨는 구현 세부 — 초기엔 arxiv·웹 검색만으로 전 기능을 완성하고, API 어댑터는 마지막에 갈아끼운다. API 연결 자체가 목표가 되지 않게.
-- **프론트 스택은 Streamlit 유지**: 표면이 늘어도 백엔드 엔드포인트는 스택과 무관하고 `st.navigation()`(multipage)이 저비용이라 당분간 Streamlit으로 간다. React 등 전환은 화면이 더 늘거나 한계에 부딪힐 때 재검토.
+- **프론트 스택 — React+TypeScript로 전환(08-04)**: Streamlit의 구조적 한계(페이지 단위 전체 재실행이라 여러 화면 동시 사용 불가, Cmd+C 복사 시 리런되는 버그)에 실사용 중 부딪혀 전환 착수·1차 완료(`frontend-react/`, Vite SPA). 왼쪽 네비게이션 + 가운데 라우팅 콘텐츠 + 오른쪽 **항상 떠 있는 챗 패널** 3분할 셸(다른 화면을 보면서 챗을 동시에 쓸 수 있음). 기존 `frontend/`(Streamlit)는 당분간 유지(다른 표면에서 참고용), 걷어내는 시점은 미정. 상세: `docs/RoadMap.md` "프론트 스택 전환" 설계 노트.
 - **관심사 등록은 명시적 버튼 하나로 트리거**: 라이브러리의 "관심사로 등록" 버튼 — 사용자가 명시적으로 누른 것 자체가 의도 신호라 "반복해서 언급됐는가" 같은 판정 없이 대화 이력에서 곧장 초안을 뽑는다. 당초 있던 매 턴 자동 제안 훅(`should_suggest` 게이트)은 버튼이 생기며 08-02에 폐기 — 판정이 틀리면 명시적 요청도 조용히 무시될 위험이 있었고(반복 안 됐다고 판정되면 초안이 빈 채로 나옴), 매 턴 LLM 호출이 느는 비용 대비 얻는 게 적었다.
 - **가설 수립과 실험 설계 분리**: 가설을 세우는 일(귀추적 추론)과 검증 가능한 실험으로 번역하는 일(방법론·장비·통제조건)은 성격이 다른 작업. 재실험·대체실험 루프는 실험 운영이 **실험 설계만 재호출** — 가설은 고정한 채 프로토콜만 다시 짜는 게 흔한 경로라 매번 가설부터 재추론하면 낭비.
 - **참고문헌은 워크플로우가 끌고 다니는 누적 산출물**: 가설 수립(배경 문헌) → 실험 설계(방법론) → 실험 운영(결과 비교) 각 단계가 참고문헌 추천기를 호출해 공유 references 목록에 append(서지정보 + 인용 이유 + 추가된 단계 기록), ⑦(논문 작성)이 최종 소비자 — 새 검색 없이 이 목록만 읽는다("사용자 문서"가 곧 이 목록, 08-03). QA(④)에서는 기본은 retrieve가 이미 가져온 문서의 메타데이터를 "참고"로 붙인다(추가 호출 0). **"사용자가 요청하면 추천기 풀 호출" 자체는 무기한 연기됐다**(08-03, 사용자 결정) — 관심사를 거쳐 참고문헌을 찾고 다시 질문하는 우회 경로가 이미 있어 새 기능 없이 커버되고, 이 아이디어는 RoadMap 백로그로 승격된 적도 없었다(상세: RoadMap 예정 표).
@@ -124,7 +124,7 @@ START → retrieve → generate ──(tool 요청)──→ run_tools ──→
 - `graph.py`의 `retrieve()`가 `papers_vectorstore`도 같은 질문으로 검색해 QA 답변에 참고로 붙인다(추가 LLM 호출 없음). 등록된 논문이 없으면 빈 결과만 돌아와 기존 동작에 영향이 없다. 두 컬렉션 후보는 `similarity_search_with_score`의 점수(L2, 작을수록 유사) 기준으로 병합한 뒤 상위 top_k개만 채택. 논문 한 편이 병합 결과를 독점하지 않도록 `MAX_CHUNKS_PER_PAPER=2` 상한도 적용(그리디 백필로 남는 자리는 다음 순위가 채움) — 파인만 쪽 최소 보장 쿼터는 두지 않는다(근접-오검색을 반대 방향으로 재현하므로).
 - **요약 부재 시 전문 청크로 답하고 요약은 백그라운드**: 전자는 별도 코드가 필요 없다 — 요약 문서가 없으면 위 검색이 애초에 `fulltext_chunk`만 돌려준다. 후자는 `retrieve()`가 요약 없는 논문을 발견하면 `ensure_summary_in_background()`(daemon thread + 중복 생성 방지용 in-flight 집합)를 호출해 이번 턴을 막지 않고 생성을 시작한다. 완료를 이번 요청에 실시간으로 통지하진 않는다 — 다음에 같은 논문이 조회될 때 캐시로 잡히는 것 자체가 결과다. 생성 모델은 그 턴의 `state.model`이 아니라 예산이 가장 넉넉한 고정 모델(`BACKGROUND_SUMMARY_MODEL`)을 쓰고, `ContextBudgetExceeded`(재시도해도 항상 같은 이유로 실패)는 영구 실패로 기록해 매 조회마다 스레드를 새로 안 띄운다(재등록하면 기록이 풀림).
 
-라이브러리 UI(논문 탭·관심사 탭)와 논문 카탈로그(SQLite, `paper_catalog.py`)는 구현됨 — 아래 [API](#api) 참고. **관심사별 보유/추천 논문 필터는 백엔드 완료**(08-03, `interest_paper` 조인 테이블 + `GET /interests/{id}/papers`), **지식 노트도 백엔드 완료**(08-03, `knowledge_notes.py` + `/notes` CRUD) — 둘 다 화면 연결은 아직. 미구현: 실험도구 탭, 지식 노트 탭.
+라이브러리 UI — 논문·관심사·실험도구·지식 노트 4탭 전부 구현됨(08-03에 실험도구·지식 노트 탭 신설 + 관심사 탭에 카드별 보유·추천 논문 표시 연결). 논문 카탈로그(SQLite, `paper_catalog.py`)와 `interest_paper` 조인도 구현 — 아래 [API](#api) 참고.
 
 ## 파일 구조
 
@@ -165,8 +165,9 @@ Science_Chatbot/
 │   ├── test_knowledge_notes.py      # 지식 노트 CRUD — 본문은 SQLite(:memory:), VDB는 FakeVectorstore로 재색인 시점만 확인
 │   ├── test_reference_recommender.py # 참고문헌 추천기 — 보유 VDB 우선/외부 보충 분기, 서킷 브레이커 전파
 │   ├── test_research_workflow.py    # 연구 워크플로우(⑥⑦) 노드 + stage 라우팅(MemorySaver로 5단계 통과)
+│   ├── test_research_sessions.py    # 연구 세션 목록 RDB CRUD (실제 sqlite3 :memory: 연결, PK가 thread_id)
 │   ├── test_orchestrator.py         # 대화 이력 트리밍(_trim_history), 관심사 초안 추출(draft_interest_from_messages)
-│   └── test_main.py                 # POST /interests, /interests/{id}/search, /equipment (TestClient, 몽키패치)
+│   └── test_main.py                 # POST /interests, /interests/{id}/search, /equipment, /research/{id}/advance (TestClient, 몽키패치)
 ├── evaluation/
 │   ├── eval.json             # 평가 데이터셋 31문항 (질문/정답/카테고리/난이도/unsolved)
 │   ├── eval.md               # eval.json에서 자동 생성되는 카테고리별 표
@@ -200,14 +201,18 @@ Science_Chatbot/
 ├── knowledge_notes.py    # 지식 노트 — 본문은 RDB(SQLite, data/app.db 공유), VDB(notes_vectorstore)는 검색용 청크만 담는 disposable 인덱스(수정 시 통째로 재색인)
 ├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
 ├── research_workflow.py  # 연구 워크플로우(⑥⑦) 그래프 — 가설 수립→실험 설계→실험 운영→실험 보고서→논문 초안. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
-├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD)
-├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 라이브러리(논문/관심사 탭)
+├── research_sessions.py  # 연구 세션 목록(⑥) RDB(SQLite) — data/app.db 공유, PK는 thread_id(호출자가 uuid4() 발급)
+├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD), /research/sessions(+CRUD)·/research/{id}/advance·/research/{id}(+/history)·/research/{id}/draft
+├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 연구 워크플로우 + 라이브러리(논문/관심사/실험도구/지식노트 탭)
 │   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
 │   ├── common.py             # BACKEND_URL 등 공용 설정
 │   └── views/
 │       ├── chat.py               # 메인 챗 화면
+│       ├── research.py           # 연구 워크플로우 화면(08-04) — 세션 사이드바 + 5단계 완료 체크 타임라인 + 다음 단계 선택 패널
 │       ├── papers.py             # 논문 탭 — 등록 폼(POST /papers) + 카탈로그 조회(GET /papers)
-│       └── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
+│       ├── interests.py          # 관심사 탭 — 카드별 생성/수정/삭제/검색·추가검색
+│       ├── equipment.py          # 실험도구 탭(08-03) — 카드별 생성/수정/삭제, precautions는 경고 배너로 표시
+│       └── notes.py              # 지식 노트 탭(08-03) — 카드별 생성/수정/삭제, 본문은 200자 미리보기
 └── .env                  # API 키 (git 제외)
 ```
 

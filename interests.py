@@ -119,8 +119,11 @@ def update_interest(interest_id: int, *, conn: sqlite3.Connection | None = None,
 
 def delete_interest(interest_id: int, *, conn: sqlite3.Connection | None = None) -> bool:
     """관심사를 삭제한다(반환값은 실제로 지워졌는지 — update_interest()와 같은 계약).
-    interest_paper 조인 테이블이 아직 없어 이 행 하나만 지우면 된다(생기면 CASCADE
-    여부를 다시 정해야 함, RoadMap "관심사↔논문이 다대다다" 참고)."""
+    이 행 하나만 지운다 — interest_paper 조인 행(paper_catalog.py가 스키마 소유)은
+    여기서 안 지운다. 순환 import(paper_catalog.py가 이미 interests를 import함) 때문에
+    이 모듈이 직접 못 지우므로, 호출부(main.py의 DELETE /interests/{id})가
+    paper_catalog.delete_screenings_for_interest()와 같이 불러야 한다(08-04, 안 그러면
+    고아 행이 남는 버그를 실사용 중 발견)."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:

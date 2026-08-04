@@ -138,7 +138,8 @@ def test_register_paper_marks_catalog_owned(monkeypatch, tmp_path):
     vs = FakeVectorstore()
     bibliographic = {"title": "테스트 논문", "authors": ["김철수", "이영희"], "year": 2024}
     result = paper_ingest.register_paper(
-        str(pdf_path), arxiv_id="2401.12345", bibliographic=bibliographic, vectorstore=vs
+        str(pdf_path), arxiv_id="2401.12345", bibliographic=bibliographic,
+        filename="원본파일.pdf", vectorstore=vs,
     )
 
     assert len(calls) == 1
@@ -149,6 +150,22 @@ def test_register_paper_marks_catalog_owned(monkeypatch, tmp_path):
     assert kwargs["title"] == "테스트 논문"
     assert kwargs["authors"] == "김철수, 이영희"
     assert kwargs["year"] == 2024
+    assert kwargs["filename"] == "원본파일.pdf"
+
+
+def test_register_paper_defaults_filename_to_empty_string(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: calls.append(kwargs)
+    )
+
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.12346", vectorstore=FakeVectorstore())
+
+    assert calls[0]["filename"] == ""
 
 
 def test_register_paper_scanned_pdf_skips_catalog(monkeypatch, tmp_path):

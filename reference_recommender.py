@@ -13,6 +13,7 @@
 # 점수로 합쳐 재정렬하지 않고 보유 결과를 앞에 그대로 둔다("스크리닝 축을 합치지
 # 않는다" 원칙과 같은 결).
 
+import requests
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,13 @@ from models import EMPTY_TOKENS, add_tokens, invoke_with_fallback
 from retrieval import papers_vectorstore
 import paper_screening
 import paper_search
+
+
+class ReferenceSearchError(Exception):
+    """arxiv 검색 자체가 실패했을 때(네트워크 장애·API 오류 등) — 모델 소진
+    (RuntimeError)과 원인이 다르므로 별도 타입으로 구분한다. _make_reference_node가
+    이 타입을 보고 사용자에게 "arXiv 검색 오류"와 "AI 모델 소진"을 다른 문구로
+    안내한다(RoadMap "참고문헌만 재검색 + 실패 사유 표시" 참고)."""
 
 EXTRACTION_MODEL = "gemini"
 
@@ -65,7 +73,7 @@ def extract_search_query(
 def recommend_references(
     text: str, *, max_results: int = 5, min_owned_results: int = 3,
     disabled_models: list[str] | None = None,
-) -> tuple[list[dict], list[str], dict]:
+) -> tuple[list[dict], str | None, list[str], dict]:
     """text에서 검색어를 뽑아 참고문헌 후보 목록을 만든다.
 
     1. 보유 논문 VDB 우선 검색(papers_vectorstore) — 스크리닝 없이 그대로 채택.
@@ -76,9 +84,20 @@ def recommend_references(
        검색 → screen_candidate()로 관련도만 걸러 통과분만 추가(실패한 후보는 건너뜀,
        paper_recommend.py와 같은 정책).
 
-    반환: (참고문헌 목록, 갱신된 disabled_models, 누적 tokens_used). 목록은 보유 결과가
-    먼저, 신규(관련 있는 것만) 결과가 뒤. 각 항목:
+    반환: (참고문헌 목록, 실패 사유, 갱신된 disabled_models, 누적 tokens_used). 목록은
+    보유 결과가 먼저, 신규(관련 있는 것만) 결과가 뒤. 각 항목:
     {"paper_id", "title", "source": "owned" 또는 "external", "reasoning"}.
+
+    실패 사유(목록이 비었을 때만 의미 있음, 아니면 None) — 호출부(research_workflow의
+    _make_reference_node)가 사용자에게 왜 못 찾았는지 구분해서 보여줄 수 있게
+    한다(RoadMap "참고문헌만 재검색 + 실패 사유 표시" 참고):
+    - "no_candidates": 신규 검색 자체가 0건(또는 애초에 신규 검색을 안 함)
+    - "all_irrelevant": 후보는 찾았지만 스크리닝에서 전부 무관 판정
+    - "models_exhausted": 스크리닝 도중 최소 한 후보에서 전 모델 소진(RuntimeError)이 나서
+      끝까지 평가하지 못함(서킷 브레이커가 이어지므로 남은 후보도 사실상 다 같이 실패)
+    검색어 추출 단계의 전 모델 소진이나 arxiv 네트워크 장애는 반환값이 아니라 예외
+    (RuntimeError / ReferenceSearchError)로 그대로 전파된다 — 그 시점엔 검색 자체를
+    시작도 못 했으므로 "빈 목록"이 아니라 "호출 실패"가 맞다.
 
     보유 논문은 스크리닝을 안 거쳐 근거 문장이 없지만 `reasoning` 키 자체는 빈 문자열로
     채워 넣는다 — 소비자(⑦ 논문 작성 등)가 source에 따라 키가 있다 없다 하는 걸 기억해야
@@ -114,8 +133,13 @@ def recommend_references(
         })
 
     external_results = []
+    candidates: list[dict] | None = None
+    screening_exhausted = False
     if len(owned_results) < min_owned_results:
-        candidates = paper_search.search_papers(query, max_results=max_results)
+        try:
+            candidates = paper_search.search_papers(query, max_results=max_results)
+        except requests.exceptions.RequestException as e:
+            raise ReferenceSearchError(f"arxiv 검색 실패: {type(e).__name__}: {e}") from e
         for candidate in candidates:
             if candidate["paper_id"] in seen_paper_ids:
                 continue
@@ -128,6 +152,7 @@ def recommend_references(
                 # 재귀하면서 쌓은 목록이 예외와 함께 스택에 묻히기 때문. 다만 이 RuntimeError는
                 # 애초에 "전 모델 소진"일 때만 나므로 남은 후보도 어차피 다 실패한다(잃는 게 없음).
                 print(f"참고문헌 스크리닝 실패, 이 후보는 건너뜀(paper_id={candidate['paper_id']}): {type(e).__name__}: {e}")
+                screening_exhausted = True
                 continue
             disabled_models = screened["disabled_models"]
             tokens_used = add_tokens(tokens_used, screened["tokens_used"])
@@ -140,4 +165,14 @@ def recommend_references(
                     "reasoning": screened["reasoning"],
                 })
 
-    return owned_results + external_results, disabled_models, tokens_used
+    results = owned_results + external_results
+    reason = None
+    if not results:
+        if screening_exhausted:
+            reason = "models_exhausted"
+        elif not candidates:
+            reason = "no_candidates"
+        else:
+            reason = "all_irrelevant"
+
+    return results, reason, disabled_models, tokens_used

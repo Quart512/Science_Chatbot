@@ -3,14 +3,18 @@ import json
 import tempfile
 from contextlib import asynccontextmanager
 
+import os
+
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Literal
 from pydantic import Field
 from uuid import uuid4
 
+from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import equipment
@@ -20,22 +24,45 @@ import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+import research_branches
+import research_notes
+import research_sessions
+import research_workflow
 from models import ContextBudgetExceeded
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
 # astream() 아래서 예외가 나 비동기 버전이 필수. 컨텍스트 매니저를 요청마다 여닫을 수
 # 없어 lifespan에서 한 번만 열고 app.state에 컴파일된 그래프를 올려둔다 — orchestrator.py는
-# graph 구조만, 체크포인터 연결(컴파일)은 여기서 책임진다.
+# graph 구조만, 체크포인터 연결(컴파일)은 여기서 책임진다. 연구 워크플로우(⑥)도 State
+# 스키마가 다른 독립 그래프라 체크포인터·컴파일된 그래프를 따로 둔다(research_workflow.py
+# 모듈 docstring 참고 — 두 그래프는 애초에 State를 공유하지 않는다).
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     orchestrator.ensure_checkpoint_dir()
-    async with AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer:
+    research_workflow.ensure_checkpoint_dir()
+    async with (
+        AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer,
+        AsyncSqliteSaver.from_conn_string(research_workflow.CHECKPOINT_DB_PATH) as research_checkpointer,
+    ):
         app.state.graph = orchestrator.graph.compile(checkpointer=checkpointer)
+        app.state.research_graph = research_workflow.graph.compile(checkpointer=research_checkpointer)
         yield
     # async with 블록을 빠져나가면(서버 종료) 커넥션이 자동으로 닫힘
 
 # fastapi
 app = FastAPI(lifespan=lifespan)
+
+# 08-04 React 프론트 전환 착수 전까진 필요 없었다 — Streamlit은 서버 쪽(streamlit 프로세스)
+# 에서 requests로 이 API를 호출해 브라우저 CORS가 아예 안 걸렸는데, 브라우저가 직접
+# fetch하는 새 프론트가 생기면서 처음 필요해짐. 프런트 개발 서버 포트(Vite 기본 5173)를
+# 환경변수로 오버라이드 가능하게(frontend/common.py의 BACKEND_URL과 같은 패턴) —
+# 배포 시 실제 도메인으로 바뀌어야 하므로 와일드카드 대신 명시적 목록을 유지한다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에 그대로는 안 뺌 — 대신 Claude의 reasoning
 # effort와 같은 패턴으로 low/medium/high 프로필만 노출. 실제 숫자 매핑은 graph.py(EFFORT_PROFILES)
@@ -60,6 +87,44 @@ async def query(request: Request, body: Query):
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# 메시지 트리밍 2단계 — 수동 삭제(08-13 1단계 자동 트리밍 후속, RoadMap "🔄 진행 중"
+# 참고). 화면(ChatPanel)이 그리는 이력은 지금 SSE로 받은 조각을 조립한 세션 로컬
+# state라 백엔드 체크포인트의 실제 메시지 id가 없다 — 이 엔드포인트가 체크포인트의
+# 진짜 목록(id 포함)을 내려줘야 프론트가 "이 메시지를 지워줘"를 구체적인 id로 요청할
+# 수 있다. role은 BaseMessage.type("human"/"ai")을 프론트 계약("user"/"assistant")에
+# 맞게 변환 — orchestrator.ParentState.messages는 physics_qa_node가 항상 Human/AI
+# 쌍만 쌓으므로(SystemMessage는 능력 내부에서만 쓰고 부모로 안 올라옴) 그 외 타입은
+# 원래 값을 그대로 둔다(향후 실제로 나오면 그때 대응).
+_MESSAGE_TYPE_TO_ROLE = {"human": "user", "ai": "assistant"}
+
+
+@app.get("/query/{thread_id}/messages")
+async def get_query_messages(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.graph.aget_state(config)
+    messages = snapshot.values.get("messages", [])
+    return {
+        "messages": [
+            {"id": m.id, "role": _MESSAGE_TYPE_TO_ROLE.get(m.type, m.type), "content": m.content}
+            for m in messages
+        ]
+    }
+
+
+# 특정 메시지 하나만 체크포인트에서 지운다 — RemoveMessage가 add_messages reducer의
+# 특수 신호라, 그래프 노드 실행 없이(LLM 호출 없이) aupdate_state로 값만 주입해도
+# 정확히 그 id만 지워짐을 직접 재현해 확인함(RoadMap 참고). orchestrator._trim_history가
+# 예산 초과분을 자동으로 지울 때 쓰는 것과 같은 메커니즘을, 여기서는 사용자가 특정 id
+# 하나를 지목한 경우에 쓴다.
+@app.delete("/query/{thread_id}/messages/{message_id}")
+async def delete_query_message(request: Request, thread_id: str, message_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    await request.app.state.graph.aupdate_state(
+        config, {"messages": [RemoveMessage(id=message_id)]}, as_node="__start__"
+    )
+    return {"deleted_id": message_id}
 
 
 # "관심사 등록" 버튼(라이브러리 폼)이 부르는 엔드포인트 — GET /interests/draft가 만든
@@ -136,10 +201,13 @@ def register_interest(body: InterestRegistration):
     return {"interest_id": new_id, "action": "created"}
 
 
-# interest_paper 조인 테이블이 없어 관심사 삭제는 interests 행 하나만 지운다 —
-# 그 관심사가 추천한 카탈로그 행을 같이 지울지는 조인 테이블이 생길 때 정한다.
+# interest_paper(관심사가 스크리닝한 논문 기록)도 같이 지운다 — 08-04 실사용 중
+# 발견한 버그: 이 조인 행을 안 지우면 삭제한 관심사가 남긴 recommended 논문·스크리닝
+# 기록이 고아로 남아 "관심사와 무관한데 recommended"로 혼란을 준다. interest_paper는
+# paper_catalog.py가 스키마를 소유해서 그쪽 함수를 통해 지운다(순환 import 방지).
 @app.delete("/interests/{interest_id}")
 def delete_interest(interest_id: int):
+    paper_catalog.delete_screenings_for_interest(interest_id)
     deleted = interests.delete_interest(interest_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"관심사 id={interest_id}를 찾을 수 없습니다")
@@ -198,7 +266,9 @@ def register_paper_endpoint(
         tmp.write(file_bytes)
         tmp.flush()
         try:
-            return paper_ingest.register_paper(tmp.name, doi=doi, arxiv_id=arxiv_id)
+            return paper_ingest.register_paper(
+                tmp.name, doi=doi, arxiv_id=arxiv_id, filename=file.filename or ""
+            )
         except fitz.FileDataError:
             raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
 
@@ -311,3 +381,257 @@ def delete_note(note_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"노트 id={note_id}를 찾을 수 없습니다")
     return {"note_id": note_id, "action": "deleted"}
+
+
+# 연구 워크플로우(⑥) 세션 목록 — 챗 사이드바와 같은 패턴(thread_id는 프론트가 새 연구를
+# 시작할 때 uuid4()로 발급, chat.py의 st.session_state.thread_id 발급 방식 그대로).
+# /research/sessions처럼 리터럴 경로를 /research/{thread_id} 계열보다 먼저 선언해야
+# 한다 — Starlette은 등록 순서대로 매칭하므로, {thread_id}가 먼저 있으면 "sessions"가
+# 그 파라미터로 먹혀버린다.
+@app.get("/research/sessions")
+def list_research_sessions():
+    return {"sessions": research_sessions.list_sessions()}
+
+
+class ResearchSessionTitleUpdate(BaseModel):
+    title: str
+
+
+@app.post("/research/sessions/{thread_id}/title")
+def rename_research_session(thread_id: str, body: ResearchSessionTitleUpdate):
+    updated = research_sessions.update_title(thread_id, body.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "updated"}
+
+
+# 세션 목록에서만 지운다 — 실제 체크포인트는 안 지운다(research_sessions.delete_session()
+# docstring, RoadMap §4 참고).
+@app.delete("/research/sessions/{thread_id}")
+def close_research_session(thread_id: str):
+    deleted = research_sessions.delete_session(thread_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "deleted"}
+
+
+# 워크플로우 본체 호출 — equipment.py의 "None=명시 안 함" 패턴처럼 topic·experiment_results는
+# 옵셔널로 받아 넘긴 것만 ainvoke에 실어 보낸다(topic은 최초 hypothesis 호출에만,
+# experiment_results는 operation 호출에만 실제로 쓰인다 — WorkflowState 필드 주석 참고).
+# 이 thread_id로 research_sessions에 행이 없으면(=신규 연구) 같이 생성한다 — RoadMap
+# "새 연구 시작 = 테이블에 새 행 + graph를 ainvoke" 설계 그대로.
+class ResearchAdvanceRequest(BaseModel):
+    stage: Literal["hypothesis", "design", "operation", "report", "writing"]
+    topic: str | None = None
+    experiment_results: str | None = None
+    # 재생성 시 방향 지시 + 직접 수정한 필드 내용(프론트가 조립해서 하나의 텍스트로
+    # 보냄, 08-04 후속 — RoadMap "재생성 시 사용자 피드백/지시 반영") — generate_hypothesis/
+    # design_experiment/analyze_results만 읽는다(WorkflowState.user_guidance 필드 참고).
+    user_guidance: str | None = None
+    # 과거 체크포인트에서 이어갈 때만 쓰는 필드(체크포인트 히스토리·복원, 08-04 후속) —
+    # from_checkpoint_id가 있으면 그 시점 값을 현재 tip으로 복원한 뒤 이 요청의 stage로
+    # 이어간다. references만은 예외로 항상 최신을 원칙으로 하되(RoadMap 설계 노트 참고),
+    # 그 시점 이후 새로 쌓인 것 중 사용자가 명시적으로 남기기로 고른 paper_id만 같이 살린다
+    # — 기본값(빈 리스트)은 "그 시점에 없던 참고문헌은 버린다"는 뜻.
+    from_checkpoint_id: str | None = None
+    keep_reference_paper_ids: list[str] = Field(default_factory=list)
+
+
+@app.post("/research/{thread_id}/advance")
+async def advance_research(request: Request, thread_id: str, body: ResearchAdvanceRequest):
+    session = research_sessions.get_session(thread_id)
+    if session is None:
+        # 신규 thread — WorkflowState.topic이 필수 필드라 체크포인트가 없는 첫 호출은
+        # topic 없이는 애초에 그래프가 Pydantic 검증에서 터진다. stage도 hypothesis가
+        # 아니면(예: 첫 호출인데 design) 가설 없이 설계를 뽑는 이상한 상태가 되므로 막는다.
+        if body.topic is None or body.stage != "hypothesis":
+            raise HTTPException(
+                status_code=400,
+                detail="새 연구 세션은 stage='hypothesis'와 topic이 함께 필요합니다",
+            )
+        research_sessions.create_session(thread_id, title=body.topic, topic=body.topic, stage=body.stage)
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    if body.from_checkpoint_id is not None:
+        past_config = {"configurable": {"thread_id": thread_id, "checkpoint_id": body.from_checkpoint_id}}
+        past_snapshot = await request.app.state.research_graph.aget_state(past_config)
+        if not past_snapshot.values:
+            raise HTTPException(status_code=404, detail=f"checkpoint_id={body.from_checkpoint_id}를 찾을 수 없습니다")
+        tip_snapshot = await request.app.state.research_graph.aget_state(config)
+
+        past_references = past_snapshot.values.get("references", [])
+        past_paper_ids = {r["paper_id"] for r in past_references}
+        keep_ids = set(body.keep_reference_paper_ids)
+        kept_new_references = [
+            r for r in tip_snapshot.values.get("references", [])
+            if r["paper_id"] not in past_paper_ids and r["paper_id"] in keep_ids
+        ]
+        # 과거 값 전체를 새 tip으로 복사(LLM 호출 없음, main.py의 disabled_models 갱신과
+        # 같은 as_node="__start__" 패턴) — 복사 직전까지의 tip은 그 자체로 이미 하나의
+        # 체크포인트라 사라지지 않는다, 그쪽으로도 언제든 다시 이 방식으로 돌아올 수 있다.
+        await request.app.state.research_graph.aupdate_state(
+            config, {**past_snapshot.values, "references": past_references + kept_new_references},
+            as_node="__start__",
+        )
+
+    inputs = {"stage": body.stage}
+    if body.topic is not None:
+        inputs["topic"] = body.topic
+    if body.experiment_results is not None:
+        inputs["experiment_results"] = body.experiment_results
+    if body.user_guidance is not None:
+        inputs["user_guidance"] = body.user_guidance
+
+    result = await request.app.state.research_graph.ainvoke(inputs, config=config)
+    research_sessions.update_stage(thread_id, body.stage)
+
+    # 복원 경로였다면 이 턴이 어느 과거 체크포인트에서 갈라졌는지 기록 — parent_config로는
+    # 못 얻는 이유는 research_branches.py 모듈 주석 참고. tip을 다시 조회해야
+    # ainvoke가 실제로 남긴 turn-final 체크포인트의 checkpoint_id를 얻는다(ainvoke
+    # 반환값은 값 dict일 뿐 체크포인트 메타를 안 담음).
+    if body.from_checkpoint_id is not None:
+        new_tip = await request.app.state.research_graph.aget_state(config)
+        research_branches.record_branch(
+            child_checkpoint_id=new_tip.config["configurable"]["checkpoint_id"],
+            source_checkpoint_id=body.from_checkpoint_id,
+            thread_id=thread_id,
+        )
+
+    return result
+
+
+# 페이지 새로고침 시 재실행 없이 현재 값만 보는 조회 — GET /interests/draft가
+# aget_state()로 조회만 하는 것과 같은 패턴. 체크포인트가 아예 없으면(닫힌 적 없는데도
+# 한 번도 advance가 안 된 thread_id) snapshot.values가 비어 404.
+@app.get("/research/{thread_id}")
+async def get_research_state(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+    return snapshot.values
+
+
+# 체크포인트 히스토리(08-04 후속, "탭처럼 왔다갔다") — 그래프가 노드 하나 실행할 때마다
+# 체크포인트를 남겨서(가설 호출 하나에도 generate_hypothesis·find_hypothesis_references
+# 두 번) 전부 보여주면 노이즈가 많다. snapshot.next가 빈 튜플인 것만 그 turn(advance
+# 호출 하나)의 최종 결과라 그것만 추린다.
+#
+# 예외 하나: aupdate_state로 값만 주입한 체크포인트(예: /draft의 순수 편집 저장,
+# 노드를 안 태우니 LLM 재호출이 없다)는 next가 안 비어있다(실제로 toy 그래프로 재현·확인—
+# "다음에 route_by_stage가 이 stage를 다시 라우팅하면 실행될 노드"가 next에 남아서다).
+# 그래서 metadata["source"] == "update"인 것도 **가장 최신 것 하나에 한해** 포함한다 —
+# 최신이 아닌 update 체크포인트는 항상 그 직후에 실제 advance(loop)가 뒤따라와 already
+# next==()로 다시 잡히므로(복원 흐름이 aupdate_state 직후 꼭 ainvoke를 부르는 것과 같은
+# 이유) 제외해도 정보 손실이 없다.
+# 새로 진행 순(오래된 것부터)으로 뒤집어 반환 — 화면이 타임라인처럼 왼쪽부터 그리기 편하도록.
+@app.get("/research/{thread_id}/history")
+async def get_research_history(request: Request, thread_id: str):
+    snapshots = [
+        s async for s in request.app.state.research_graph.aget_state_history(
+            {"configurable": {"thread_id": thread_id}}
+        )
+    ]
+    entries = []
+    for i, snapshot in enumerate(snapshots):
+        is_turn_final = not snapshot.next
+        is_latest_edit = i == 0 and snapshot.metadata.get("source") == "update"
+        if not (is_turn_final or is_latest_edit):
+            continue
+        entries.append({
+            "checkpoint_id": snapshot.config["configurable"]["checkpoint_id"],
+            "stage": snapshot.values.get("stage"),
+            "created_at": snapshot.created_at,
+            "values": snapshot.values,
+        })
+    entries.reverse()
+
+    # 브랜치형 타임라인(설계 노트 참고)의 세로선(계보) 연결용 — LangGraph 체크포인터의
+    # parent_config는 항상 선형이라 못 쓰고(research_branches.py 주석 참고), 복원이
+    # 일어날 때 main.py가 따로 남겨둔 기록을 여기서 붙여준다. 분기 없이 만들어진
+    # 체크포인트는 매핑에 없으니 None.
+    sources = research_branches.get_sources([e["checkpoint_id"] for e in entries])
+    # 단계별 메모(08-04 후속, RoadMap "타임라인·체크 결합(브랜치형)" 설계 노트 §단계별
+    # 메모, 방식 B) — 체크포인트를 안 건드리는 별도 사이드테이블이라 여기서 같은
+    # 방식(N+1 쿼리 없이 한 번에)으로 붙여준다. 메모 없으면 빈 문자열.
+    notes = research_notes.get_notes_for_checkpoints([e["checkpoint_id"] for e in entries])
+    for entry in entries:
+        entry["branched_from_checkpoint_id"] = sources.get(entry["checkpoint_id"])
+        entry["note"] = notes.get(entry["checkpoint_id"], "")
+
+    return {"history": entries}
+
+
+# 단계별 메모(08-04 후속, RoadMap "타임라인·체크 결합(브랜치형)" 설계 노트 §단계별
+# 메모, 방식 B로 결정) — 체크포인트를 안 건드리는 별도 사이드테이블(research_notes.py)
+# 이라 tip뿐 아니라 과거 체크포인트에도 자유롭게 필기·수정할 수 있다. 그래프를 전혀
+# 안 태우고 순수 CRUD라 aget_state/aupdate_state도 필요 없다 — thread_id는 저장할 때
+# 같이 남겨두기만 하고(조회는 checkpoint_id 기준), checkpoint_id가 실제로 이 thread의
+# 것인지는 검증하지 않는다(프론트가 /history에서 받은 checkpoint_id만 넘기므로).
+class ResearchNoteUpdate(BaseModel):
+    note: str
+
+
+@app.post("/research/{thread_id}/notes/{checkpoint_id}")
+async def save_research_note(thread_id: str, checkpoint_id: str, body: ResearchNoteUpdate):
+    research_notes.set_note(checkpoint_id, thread_id, body.note)
+    return {"checkpoint_id": checkpoint_id, "note": body.note}
+
+
+# 논문 초안 인앱 편집(08-04 후속) — draft_paper()가 채우는 텍스트 필드만 대상. PDF가
+# 아니라 평범한 문자열이라 편집 자체는 단순하다. equipment.py의 "None=명시 안 함" 패턴
+# 그대로 옵셔널 필드만 받아 넘긴 것만 바꾼다. LLM 재호출 없이 aupdate_state로 값만
+# 덮어쓴다(복원 기능과 같은 패턴) — 저장 한 번이 새 tip 체크포인트 하나(위 히스토리의
+# "가장 최신 update" 예외로 탭에도 잡힘).
+class ResearchDraftUpdate(BaseModel):
+    title: str | None = None
+    abstract: str | None = None
+    introduction: str | None = None
+    methods: str | None = None
+    results: str | None = None
+    discussion: str | None = None
+
+
+@app.post("/research/{thread_id}/draft")
+async def update_research_draft(request: Request, thread_id: str, body: ResearchDraftUpdate):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+    if snapshot.values.get("stage") != "writing":
+        raise HTTPException(status_code=400, detail="논문 초안(writing) 단계에서만 수정할 수 있습니다")
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await request.app.state.research_graph.aupdate_state(config, updates, as_node="__start__")
+        snapshot = await request.app.state.research_graph.aget_state(config)
+    return snapshot.values
+
+
+# 참고문헌만 독립 재시도(08-04 후속, Part B — RoadMap "참고문헌만 재검색 + 실패 사유
+# 표시") — 지금까진 "참고문헌을 찾지 못했습니다"가 뜨면 그 단계 전체(가설·설계 등,
+# LLM 재호출 포함)를 재생성해야만 참고문헌도 다시 찾아졌다. 이 엔드포인트는 그래프를
+# 안 타고 tip의 stage에 맞는 참고문헌 노드 함수만 직접 불러(research_workflow의
+# REFERENCE_NODE_BY_STAGE) /draft와 같은 aupdate_state(as_node="__start__") 패턴으로
+# 결과만 tip에 얹는다 — 가설·설계 산출물 자체는 안 건드리고 참고문헌 검색(검색어 추출+
+# 스크리닝)만 다시 돈다. 노드 함수가 동기(LLM 호출 포함)라 /interests/draft와 같은
+# 이유로 asyncio.to_thread로 감싼다.
+@app.post("/research/{thread_id}/references/retry")
+async def retry_research_references(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+
+    stage = snapshot.values.get("stage")
+    node = research_workflow.REFERENCE_NODE_BY_STAGE.get(stage)
+    if node is None:
+        raise HTTPException(status_code=400, detail=f"{stage} 단계는 참고문헌 재검색 대상이 아닙니다")
+
+    state = research_workflow.WorkflowState(**snapshot.values)
+    updates = await asyncio.to_thread(node, state)
+    await request.app.state.research_graph.aupdate_state(config, updates, as_node="__start__")
+
+    new_snapshot = await request.app.state.research_graph.aget_state(config)
+    return new_snapshot.values

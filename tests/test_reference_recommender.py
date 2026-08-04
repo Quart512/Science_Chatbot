@@ -82,10 +82,11 @@ def test_recommend_references_returns_owned_only_when_enough(monkeypatch):
         raise AssertionError("보유 논문이 충분하면 신규 검색을 하면 안 됨")
     monkeypatch.setattr(paper_search, "search_papers", _boom_search)
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
+    results, reason, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
 
     assert [r["paper_id"] for r in results] == ["p1", "p2", "p3"]
     assert all(r["source"] == "owned" for r in results)
+    assert reason is None
 
 
 def test_recommend_references_owned_and_external_share_the_same_keys(monkeypatch):
@@ -96,7 +97,7 @@ def test_recommend_references_owned_and_external_share_the_same_keys(monkeypatch
     monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [_candidate("arxiv:new", "새 논문")])
     monkeypatch.setattr(paper_screening, "screen_candidate", lambda candidate, topic, **kw: _screened("arxiv:new", True, "관련 있음"))
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
 
     assert len(results) == 2
     assert {frozenset(r) for r in results} == {frozenset({"paper_id", "title", "source", "reasoning"})}
@@ -130,7 +131,7 @@ def test_recommend_references_caps_owned_results_at_max_results(monkeypatch):
     monkeypatch.setattr(reference_recommender, "papers_vectorstore", _FakeVectorstore(many))
     monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [])
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", max_results=3, min_owned_results=3)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", max_results=3, min_owned_results=3)
 
     assert [r["paper_id"] for r in results] == ["p0", "p1", "p2"]  # 유사도 상위 3편만
 
@@ -158,7 +159,7 @@ def test_recommend_references_carries_circuit_breaker_across_candidates(monkeypa
         return result
     monkeypatch.setattr(paper_screening, "screen_candidate", _fake_screen)
 
-    results, disabled_models, tokens_used = reference_recommender.recommend_references(
+    results, _reason, disabled_models, tokens_used = reference_recommender.recommend_references(
         "텍스트", min_owned_results=1
     )
 
@@ -177,7 +178,7 @@ def test_recommend_references_dedupes_owned_by_paper_id(monkeypatch):
     monkeypatch.setattr(reference_recommender, "papers_vectorstore", fake_vs)
     monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [])
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
 
     assert [r["paper_id"] for r in results] == ["p1"]
 
@@ -189,7 +190,7 @@ def test_recommend_references_falls_back_to_external_search_when_owned_insuffici
     monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [_candidate("arxiv:new", "새 논문")])
     monkeypatch.setattr(paper_screening, "screen_candidate", lambda candidate, topic, **kw: _screened("arxiv:new", True, "관련 있음"))
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
 
     assert [r["paper_id"] for r in results] == ["p1", "arxiv:new"]
     assert results[0]["source"] == "owned"
@@ -203,9 +204,51 @@ def test_recommend_references_excludes_irrelevant_external_candidates(monkeypatc
     monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [_candidate("arxiv:no", "무관한 논문")])
     monkeypatch.setattr(paper_screening, "screen_candidate", lambda candidate, topic, **kw: _screened("arxiv:no", False))
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
+    results, reason, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
 
     assert results == []
+    assert reason == "all_irrelevant"
+
+
+def test_recommend_references_reason_is_no_candidates_when_search_returns_empty(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "invoke_with_fallback", lambda *a, **kw: _fake_query_result("검색어"))
+    monkeypatch.setattr(reference_recommender, "papers_vectorstore", _FakeVectorstore([]))
+    monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [])
+
+    results, reason, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
+
+    assert results == []
+    assert reason == "no_candidates"
+
+
+def test_recommend_references_reason_is_models_exhausted_when_screening_fails(monkeypatch):
+    monkeypatch.setattr(reference_recommender, "invoke_with_fallback", lambda *a, **kw: _fake_query_result("검색어"))
+    monkeypatch.setattr(reference_recommender, "papers_vectorstore", _FakeVectorstore([]))
+    monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [_candidate("arxiv:fail", "실패")])
+
+    def _boom_screen(*a, **kw):
+        raise RuntimeError("전 모델 소진 흉내")
+    monkeypatch.setattr(paper_screening, "screen_candidate", _boom_screen)
+
+    results, reason, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
+
+    assert results == []
+    assert reason == "models_exhausted"
+
+
+def test_recommend_references_raises_reference_search_error_on_network_failure(monkeypatch):
+    import pytest
+    import requests
+
+    monkeypatch.setattr(reference_recommender, "invoke_with_fallback", lambda *a, **kw: _fake_query_result("검색어"))
+    monkeypatch.setattr(reference_recommender, "papers_vectorstore", _FakeVectorstore([]))
+
+    def _boom_search(*a, **kw):
+        raise requests.exceptions.ConnectionError("arxiv 응답 없음 흉내")
+    monkeypatch.setattr(paper_search, "search_papers", _boom_search)
+
+    with pytest.raises(reference_recommender.ReferenceSearchError):
+        reference_recommender.recommend_references("텍스트", min_owned_results=1)
 
 
 def test_recommend_references_skips_external_candidate_on_screening_failure(monkeypatch):
@@ -221,7 +264,7 @@ def test_recommend_references_skips_external_candidate_on_screening_failure(monk
         return _screened("arxiv:ok", True)
     monkeypatch.setattr(paper_screening, "screen_candidate", _fake_screen)
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=1)
 
     assert [r["paper_id"] for r in results] == ["arxiv:ok"]
 
@@ -236,6 +279,6 @@ def test_recommend_references_external_search_excludes_already_owned_paper_ids(m
         raise AssertionError("이미 보유한 논문은 스크리닝도 할 필요 없이 건너뛰어야 함")
     monkeypatch.setattr(paper_screening, "screen_candidate", _boom_screen)
 
-    results, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
+    results, _, _, _ = reference_recommender.recommend_references("텍스트", min_owned_results=3)
 
     assert [r["paper_id"] for r in results] == ["p1"]
