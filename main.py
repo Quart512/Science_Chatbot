@@ -3,8 +3,11 @@ import json
 import tempfile
 from contextlib import asynccontextmanager
 
+import os
+
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Literal
@@ -45,6 +48,18 @@ async def lifespan(app: FastAPI):
 
 # fastapi
 app = FastAPI(lifespan=lifespan)
+
+# 08-04 React 프론트 전환 착수 전까진 필요 없었다 — Streamlit은 서버 쪽(streamlit 프로세스)
+# 에서 requests로 이 API를 호출해 브라우저 CORS가 아예 안 걸렸는데, 브라우저가 직접
+# fetch하는 새 프론트가 생기면서 처음 필요해짐. 프런트 개발 서버 포트(Vite 기본 5173)를
+# 환경변수로 오버라이드 가능하게(frontend/common.py의 BACKEND_URL과 같은 패턴) —
+# 배포 시 실제 도메인으로 바뀌어야 하므로 와일드카드 대신 명시적 목록을 유지한다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에 그대로는 안 뺌 — 대신 Claude의 reasoning
 # effort와 같은 패턴으로 low/medium/high 프로필만 노출. 실제 숫자 매핑은 graph.py(EFFORT_PROFILES)

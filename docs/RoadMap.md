@@ -186,6 +186,14 @@
 
 ## 설계 노트 · 열린 질문
 
+**프론트 스택 전환 — Streamlit → React+TypeScript (08-04, 착수)**: README·RoadMap에 여러 번 적어둔 "React 전환은 화면이 더 늘거나 한계에 부딪힐 때 재검토" 조건이 실제로 충족됨 — 라이브러리 4탭+연구 워크플로우까지 화면이 다 나온 뒤, 사용자가 실사용 중 Streamlit의 구조적 한계 두 가지를 직접 부딪힘: **①** 텍스트를 Cmd+C로 복사하려 하면 Streamlit이 그 입력을 위젯 상호작용으로 오인해 앱이 리런되며 진행 상태가 날아감(재현·원인 조사는 아직, 아래 "Streamlit — Cmd+C" 항목 참고). **②** 연구 워크플로우를 돌리면서 동시에 챗에 질문하거나 관심사를 추가하려면 브라우저 탭을 새로 열어야 함 — Streamlit이 "페이지 하나 = 매 상호작용마다 전체 재실행" 구조라 여러 화면이 한 뷰에 같이 못 살기 때문(멀티 탭 자체는 이미 되지만 UX가 비직관적이라는 게 사용자 지적).
+
+- **결정**: React + **TypeScript**(사용자 선택 — 화면이 8개나 되고 API 응답 모양이 이미 복잡해서(`WorkflowState` 필드 20개 넘음) 타입이 오타를 미리 잡아주는 이득이, 새 문법을 배우는 비용보다 크다고 판단) + **Vite**(SPA, Next.js 아님 — SSR이 필요한 이유가 없는 개인용 내부 도구라 순수 클라이언트 SPA로 충분, 기존 FastAPI를 그대로 API 서버로 씀).
+- **병행 전략**: 기존 `frontend/`(Streamlit)는 그대로 두고 새 디렉터리(`frontend-react/` 등, 착수 시 확정)에 새로 구축 — 화면을 하나씩 옮기는 동안 기존 앱이 계속 돌아가야 마이그레이션 중에도 서비스가 끊기지 않는다. 전 화면 이관 완료 후에 Streamlit을 걷어냄(그 시점에 `docker-compose.yml`·`Dockerfile`·README도 갱신).
+- **이관 순서**: 셸(사이드바+레이아웃)+챗 화면부터 — 지금 겪은 두 문제를 가장 먼저 해결해주는 부분이고, SSE 스트리밍(`/query`)을 새 스택에서 다루는 시험대도 됨. 그다음 나머지 화면(논문·관심사·실험도구·지식노트·연구 워크플로우, 뒤로 갈수록 복잡도가 높아지는 순서 — 연구 워크플로우는 탭+히스토리+폼이 얽혀있어 마지막).
+- **백엔드 변경 필요**: `main.py`에 `CORSMiddleware` 추가 — 지금까지는 Streamlit이 서버 쪽에서 `requests`로 호출해 브라우저 CORS 문제가 아예 없었는데, 브라우저가 직접 `fetch`하게 되면 필요해짐. 이 프로젝트에서 CORS를 처음 다루는 지점.
+- **Phase 0(스캐폴딩) 완료(08-04)**: `frontend-react/`(디렉터리명 확정) — Vite `react-ts` 템플릿 + `react-router-dom`(라우팅) + `@tanstack/react-query`(서버 상태 관리, 확정 — CRUD 화면이 많아 캐싱·리페치를 손으로 짜는 것보다 나음). `src/api/client.ts`에 `apiFetch<T>()` 공용 fetch 래퍼(FastAPI의 `{"detail": "..."}` 에러 형식을 `ApiError`로 통일) + `BACKEND_URL`(Vite는 `VITE_` 접두사 붙은 환경변수만 클라이언트에 노출 — `.env`에 `VITE_BACKEND_URL` 설정, `frontend/common.py`의 `BACKEND_URL` 패턴과 같은 역할). `main.py`에 `CORSMiddleware` 추가(`CORS_ALLOWED_ORIGINS` 환경변수, 기본값 Vite 개발 서버 포트 5173). `.claude/launch.json`에 `frontend-react` 항목 추가. **실제로 브라우저에서 확인**: React 앱이 `GET /interests`를 실제로 호출해 데이터를 받아옴(CORS 정상), `tsc -b && vite build` 프로덕션 빌드도 에러 없이 통과. 스캐폴드 기본 자산(react.svg 등 안 쓰는 것)은 정리. **다음**: 셸(사이드바 레이아웃)+챗 화면(SSE 스트리밍 대응) 착수.
+
 **연구 워크플로우 화면 — 확정된 설계, 착수 전 (08-03)**: 라이브러리 4탭을 끝내고 마지막 남은 표면 작업. 이 절 하나로 다음 세션이 바로 구현에 들어갈 수 있어야 한다 — 화면을 어떻게 만들지는 세션 내내 논의로 이미 다 정해졌고, **코드는 한 줄도 안 썼다.**
 
 **1. 지금 없는 것 (착수 시 제일 먼저 확인)**

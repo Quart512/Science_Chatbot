@@ -1,0 +1,27 @@
+// FastAPI 백엔드 호출 공용 헬퍼 — frontend/common.py의 BACKEND_URL과 같은 역할.
+// Vite는 VITE_ 접두사가 붙은 환경변수만 클라이언트 코드에 노출한다(보안 경계 —
+// 접두사 없는 변수는 서버 전용 시크릿일 수 있어 번들에 안 실림).
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// 모든 API 함수가 공유하는 저수준 fetch 래퍼 — 에러 응답(4xx/5xx)을 ApiError로
+// 통일해서 던진다. FastAPI의 HTTPException은 {"detail": "..."} 형태로 오므로
+// 그 필드를 우선 메시지로 쓴다.
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    headers: { "Content-Type": "application/json", ...init?.headers },
+    ...init,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, body?.detail ?? res.statusText);
+  }
+  return res.json() as Promise<T>;
+}
