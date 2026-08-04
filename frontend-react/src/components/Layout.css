@@ -1,0 +1,24 @@
+.app-shell {
+  display: flex;
+  height: 100vh;
+  background: #0e0f13;
+  color: #e6e6e6;
+  font-family: system-ui, sans-serif;
+}
+
+.app-nav {
+  width: 200px;
+  min-width: 200px;
+  border-right: 1px solid #2e313d;
+  padding: 1rem;
+}
+
+.app-nav-title {
+  font-weight: 700;
+}
+
+.app-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem;
+}
