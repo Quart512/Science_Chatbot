@@ -4,10 +4,15 @@
 # 아님, RoadMap 참고) — main.py의 POST 엔드포인트가 사용자 요청으로만 호출.
 # =========================================================
 
+import re
+
 import interests
 import paper_catalog
 import paper_screening
 import paper_search
+import reference_recommender
+
+_HANGUL_RE = re.compile(r"[가-힣]")
 
 
 def _interest_topic_text(interest: dict) -> str:
@@ -21,9 +26,23 @@ def _interest_topic_text(interest: dict) -> str:
     )
 
 
+def _english_query(text: str) -> str:
+    """arxiv 메타데이터는 사실상 전부 영어라, 한국어 문장을 그대로 검색어로 던지면
+    우연히 걸리는 영어 단어 하나로 무관한 논문이 검색 단계에서부터 걸린다(08-11
+    실사용 중 재현, RoadMap 참고). 한글이 있을 때만 LLM으로 영어 검색어를 뽑고
+    (reference_recommender.extract_search_query — 프롬프트에 영어 지침이 이미 있음),
+    이미 영어면 그대로 써서 불필요한 호출을 피한다(정규식 확인은 LLM 호출이 아니라
+    공짜 — 착수 전 우려했던 "이미 영어인데 호출 하나 추가"를 이렇게 피한다)."""
+    if not _HANGUL_RE.search(text):
+        return text
+    query, _disabled_models, _tokens_used = reference_recommender.extract_search_query(text)
+    return query
+
+
 def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int = 0, conn=None) -> list[dict]:
     """관심사 하나를 기준으로 논문을 검색·스크리닝한다. 검색 쿼리는 looking_for(비어
-    있으면 title 폴백). start는 페이지네이션 오프셋("추가 검색"이 다음 순위부터 이어받게).
+    있으면 title 폴백) — 한글이 있으면 영어로 변환한 뒤 검색한다(_english_query 참고,
+    08-03). start는 페이지네이션 오프셋("추가 검색"이 다음 순위부터 이어받게).
 
     **카탈로그 저장**(관련 있는 것만 — dismissed는 "사용자가 직접 기각"만을 위한
     신호라 스크리닝이 거른 것과 섞으면 오염됨)과 **반환 목록**(관련 없다고 판정된
@@ -38,7 +57,7 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
     if interest is None:
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
 
-    query = interest["looking_for"] or interest["title"]
+    query = _english_query(interest["looking_for"] or interest["title"])
     candidates = paper_search.search_papers(query, max_results=max_results, start=start)
 
     topic = _interest_topic_text(interest)
