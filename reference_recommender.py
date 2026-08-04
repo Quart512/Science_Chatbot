@@ -35,10 +35,21 @@ EXTRACTION_MODEL = "gemini"
 # 한 편이 100청크를 넘고(14페이지 논문이 122청크였다) 유사도 상위권은 거의 항상 같은
 # 논문의 인접 청크라, k=N이면 dedupe 후 1~2편만 남아 보유 논문이 있어도 항상 외부 검색으로
 # 넘어간다. graph.py의 retrieve()가 MAX_CHUNKS_PER_PAPER로 푼 것과 같은 성격의 문제.
-# 임계값(거리 컷)은 두지 않는다 — 보유 논문은 사용자가 직접 등록한 것 자체가 신뢰 신호라는
-# 기존 원칙(retrieve()가 논문 VDB를 무조건 신뢰하는 것과 같은 결)을 유지하고, 실측 없이
-# 정한 L2 거리 상수는 근거 없는 숫자만 하나 늘리는 셈이라서다.
+# 임계값(거리 컷)으로 걸러내진 않는다 — 보유 논문은 사용자가 직접 등록한 것 자체가
+# 신뢰 신호라는 기존 원칙(retrieve()가 논문 VDB를 무조건 신뢰하는 것과 같은 결)을
+# 유지한다. 08-05 라이브 검증에서 실측치(관련 질의 L2 거리 0.44~0.57, 무관한 질의
+# 1.04~1.34)로 "근거 없는 숫자" 쪽 반론은 풀렸지만, "등록 자체가 신뢰 신호"라는 원칙은
+# 데이터로 풀리는 게 아니라 판단이라 유지하기로 함(사용자 결정) — 대신 판정으로
+# 걸러내지 않고 거리값을 reasoning에 실어 사람이 직접 볼 수 있게 한다("판정 대신
+# 추출/신호" 원칙과 같은 결, OWNED_MATCH_REASONING 참고).
 OWNED_CHUNK_DEPTH_FACTOR = 20
+
+# L2 거리는 그 자체로 의미가 안 와닿는 숫자라 "낮을수록 관련도 높음" 해석을 같이 적는다.
+# "자동으로 걸러내지 않음"까지 명시하는 이유 — 값이 커도(무관해 보여도) 이 항목이 그냥
+# 빠지지 않고 그대로 남아있다는 걸 읽는 사람이 오해하지 않게. 문장에 "이 정도면 괜찮다"
+# 식의 경계값을 안 박아두는 것도 의도적 — 그 판단까지 대신하면 "판정 대신 신호" 원칙이
+# 무색해진다.
+OWNED_MATCH_REASONING = "보유 논문 벡터 검색 결과 — 질의와의 거리 {score:.2f}(참고용, 0에 가까울수록 관련도 높음, 자동으로 걸러내지 않음)"
 
 EXTRACTION_PROMPT = """주어진 텍스트를 읽고 참고문헌을 찾기 위한 검색어를 하나 뽑아라.
 텍스트의 핵심 주장이나 개념을 논문 검색에 쓸 수 있는 간결한 구·문장으로 요약해라 —
@@ -99,9 +110,13 @@ def recommend_references(
     (RuntimeError / ReferenceSearchError)로 그대로 전파된다 — 그 시점엔 검색 자체를
     시작도 못 했으므로 "빈 목록"이 아니라 "호출 실패"가 맞다.
 
-    보유 논문은 스크리닝을 안 거쳐 근거 문장이 없지만 `reasoning` 키 자체는 빈 문자열로
-    채워 넣는다 — 소비자(⑦ 논문 작성 등)가 source에 따라 키가 있다 없다 하는 걸 기억해야
-    하면 그 규칙은 소비자가 늘수록 언젠가 깨진다. 생산자가 한 번 채우는 쪽이 싸다.
+    보유 논문은 스크리닝을 안 거치므로 사람이 검토할 근거 문장이 따로 없다 — 대신
+    `reasoning`에 벡터 검색 거리(OWNED_MATCH_REASONING, 08-05 라이브 검증 후속)를
+    사람이 읽을 수 있는 짧은 문장으로 채운다. 거리로 걸러내진 않는다(위
+    OWNED_CHUNK_DEPTH_FACTOR 주석 참고) — 그래서 값이 커도(관련 없어 보여도) 항목
+    자체는 그대로 남고, 판단은 사람 몫으로 넘긴다. `reasoning` 키 자체를 항상 채우는 건
+    소비자(⑦ 논문 작성 등)가 source에 따라 키가 있다 없다 하는 걸 기억해야 하면 그
+    규칙은 소비자가 늘수록 언젠가 깨지기 때문 — 생산자가 한 번 채우는 쪽이 싸다.
 
     이 함수는 검색어 추출 1회 + 스크리닝 N회로 워크플로우에서 LLM을 가장 많이 부르는
     지점이라, 서킷 브레이커(disabled_models)와 토큰을 호출 안에서 이어받고 밖으로도
@@ -118,7 +133,7 @@ def recommend_references(
     )
     seen_paper_ids: set[str] = set()
     owned_results = []
-    for doc, _score in owned_hits:
+    for doc, score in owned_hits:
         if len(owned_results) >= max_results:
             break  # 유사도순이라 앞에서 끊으면 곧 "가장 가까운 논문 max_results편"
         paper_id = doc.metadata.get("paper_id")
@@ -129,7 +144,7 @@ def recommend_references(
             "paper_id": paper_id,
             "title": doc.metadata.get("title", ""),
             "source": "owned",
-            "reasoning": "",  # 스크리닝 없이 채택 — 근거 문장은 없지만 키는 맞춰둔다
+            "reasoning": OWNED_MATCH_REASONING.format(score=score),
         })
 
     external_results = []
