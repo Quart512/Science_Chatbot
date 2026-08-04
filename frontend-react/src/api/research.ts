@@ -55,6 +55,11 @@ export interface HistoryEntry {
   stage: string
   created_at: string
   values: ResearchState
+  // 이 턴이 복원(from_checkpoint_id)으로 만들어졌다면 그 원본 체크포인트 id, 아니면
+  // null — LangGraph 체크포인터의 parent_config는 항상 선형이라 못 쓰고(RoadMap
+  // "타임라인·체크 결합(브랜치형)" 설계 노트 참고) 백엔드가 research_branches
+  // 사이드테이블에서 붙여준다.
+  branched_from_checkpoint_id: string | null
 }
 
 export function listResearchSessions() {
@@ -105,4 +110,10 @@ export function updateResearchDraft(threadId: string, body: DraftUpdateBody) {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+// 참고문헌만 독립 재시도(08-04 후속, Part B) — 그 단계 산출물은 안 건드리고 참고문헌
+// 검색(검색어 추출+스크리닝)만 다시 돈다. 백엔드가 tip에서만 지원(main.py 참고).
+export function retryResearchReferences(threadId: string) {
+  return apiFetch<ResearchState>(`/research/${threadId}/references/retry`, { method: 'POST' })
 }

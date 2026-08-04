@@ -25,6 +25,27 @@ export function stageIndex(stage: string): number {
   return STAGES.findIndex(([s]) => s === stage)
 }
 
+// research_workflow.REFERENCE_NODE_BY_STAGE와 같은 계약 — report/writing은 참고문헌
+// 노드가 없어(새 텍스트를 안 만들어 검색할 새 주장이 없음) "참고문헌만 다시 찾기"
+// 버튼을 이 단계들에는 안 보여준다.
+export const STAGES_WITH_REFERENCES = new Set(['hypothesis', 'design', 'operation'])
+
+export type CellStatus = 'fresh' | 'inherited' | 'pending'
+
+// 브랜치형 타임라인의 셀 3분류(RoadMap 설계 노트 참고) — 체크포인트 값을 diff할 필요
+// 없이 entryStage 하나만으로 결정론적으로 나온다: research_workflow._reset_downstream_fields가
+// 각 stage 진입 노드는 정확히 자기 필드만 채우고 뒤 단계는 항상 리셋하도록 보장하기
+// 때문에, cellStage가 entryStage보다 앞이면 그 체크포인트가 만들어질 때 안 건드려서
+// 부모에서 그대로 넘어온 값("계승"), 같으면 그 턴에 막 채운 값("fresh"), 뒤면
+// 리셋되어 비어있는 값("미진행")이다.
+export function cellStatus(entryStage: string, cellStage: string): CellStatus {
+  const entryIdx = stageIndex(entryStage)
+  const cellIdx = stageIndex(cellStage)
+  if (cellIdx < entryIdx) return 'inherited'
+  if (cellIdx === entryIdx) return 'fresh'
+  return 'pending'
+}
+
 // target_stage(포함) 이후 단계 중 이미 값이 채워진 게 있으면, 재생성해도 자동으로
 // 안 지워지고 낡은 채 남는다(WorkflowState에 버전 관리가 없음 — RoadMap 설계 노트 참고).
 export function hasStaleDownstream(values: ResearchState, targetStage: string): boolean {

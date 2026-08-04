@@ -18,7 +18,9 @@ import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+import research_branches
 import research_sessions
+import research_workflow
 
 
 # --- GET /interests/draft (08-02, 챗 사이드바 "관심사로 등록" 버튼) ----------------
@@ -696,6 +698,9 @@ class _FakeResearchGraph:
             pass
         snapshot = _Snapshot()
         snapshot.values = self.checkpoints.get(checkpoint_id, {}) if checkpoint_id else self.result
+        # checkpoint_id 없이 조회하면(=tip 재조회) advance_research()가 복원 경로에서
+        # 새 turn-final 체크포인트 id를 얻으려고 다시 부르는 호출과 짝을 맞춘다.
+        snapshot.config = {"configurable": {"checkpoint_id": checkpoint_id or "new-tip-cp"}}
         return snapshot
 
     async def aupdate_state(self, config, values, as_node=None):
@@ -875,6 +880,13 @@ def test_advance_research_from_checkpoint_restores_past_values(monkeypatch):
     fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
     monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
     monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    recorded_branches = []
+    monkeypatch.setattr(
+        research_branches, "record_branch",
+        lambda child_checkpoint_id, source_checkpoint_id, thread_id, **kw: recorded_branches.append(
+            (child_checkpoint_id, source_checkpoint_id, thread_id)
+        ),
+    )
 
     past_values = {
         "stage": "hypothesis", "hypothesis": "옛 가설",
@@ -902,12 +914,16 @@ def test_advance_research_from_checkpoint_restores_past_values(monkeypatch):
     assert [r["paper_id"] for r in fake_graph.updated_state["references"]] == ["p1", "p2"]
     # 복원 후 이어지는 ainvoke는 checkpoint_id 없는 tip config로(새로 만든 tip에서 진행)
     assert "checkpoint_id" not in fake_graph.invoked_with[1]["configurable"]
+    # 이 턴이 cp1에서 갈라졌다는 게 research_branches에 기록됨(새 tip은 가짜 그래프의
+    # aget_state가 내주는 "new-tip-cp")
+    assert recorded_branches == [("new-tip-cp", "cp1", "t1")]
 
 
 def test_advance_research_from_checkpoint_defaults_to_dropping_new_references(monkeypatch):
     fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
     monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
     monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+    monkeypatch.setattr(research_branches, "record_branch", lambda **kw: None)
 
     past_values = {"stage": "hypothesis", "references": [{"paper_id": "p1", "title": "A", "source": "owned", "reasoning": ""}]}
     tip_values = {
@@ -940,6 +956,7 @@ def test_advance_research_404_when_from_checkpoint_not_found(monkeypatch):
 
 
 def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monkeypatch):
+    monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
     history = [  # aget_state_history는 최신순으로 내놓음
         _FakeSnapshot("c3", {"stage": "design"}, next=(), created_at="t3"),
         _FakeSnapshot("c2b", {"stage": "hypothesis"}, next=("find_hypothesis_references",), created_at="t2b"),
@@ -960,6 +977,7 @@ def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monke
 def test_get_research_history_includes_latest_pure_edit_checkpoint(monkeypatch):
     # /draft로 값만 주입한 체크포인트는 next가 안 비어있지만(toy 그래프로 실제 확인),
     # 그게 최신(index 0)이면 사용자가 방금 저장한 편집본이라 탭에 보여야 한다.
+    monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
     history = [
         _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
         _FakeSnapshot("c1", {"stage": "writing"}, next=(), created_at="t1", source="loop"),
@@ -974,9 +992,31 @@ def test_get_research_history_includes_latest_pure_edit_checkpoint(monkeypatch):
     assert ids == ["c1", "c2edit"]
 
 
+def test_get_research_history_attaches_branch_source(monkeypatch):
+    # research_branches에 기록이 있으면 그 entry에 branched_from_checkpoint_id로
+    # 붙고, 기록이 없는 entry는 None — parent_config가 아니라 이 사이드테이블이
+    # 계보 정보의 유일한 출처다(설계 노트 참고).
+    monkeypatch.setattr(
+        research_branches, "get_sources", lambda ids, **kw: {"c2": "c1"} if "c2" in ids else {}
+    )
+    history = [
+        _FakeSnapshot("c2", {"stage": "hypothesis"}, next=(), created_at="t2"),
+        _FakeSnapshot("c1", {"stage": "design"}, next=(), created_at="t1"),
+    ]
+    fake_graph = _FakeResearchGraph({}, history=history)
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1/history")
+
+    entries = {e["checkpoint_id"]: e["branched_from_checkpoint_id"] for e in resp.json()["history"]}
+    assert entries == {"c1": None, "c2": "c1"}
+
+
 def test_get_research_history_excludes_stale_edit_checkpoint(monkeypatch):
     # 편집(update) 체크포인트가 최신이 아니면(그 뒤에 진짜 advance가 또 일어났으면)
     # 이미 그 advance의 최종 결과가 next==()로 잡히니 굳이 또 보여줄 필요가 없다.
+    monkeypatch.setattr(research_branches, "get_sources", lambda ids, **kw: {})
     history = [
         _FakeSnapshot("c3", {"stage": "writing"}, next=(), created_at="t3", source="loop"),
         _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
@@ -1037,3 +1077,64 @@ def test_update_research_draft_skips_update_when_no_fields_given(monkeypatch):
 
     assert resp.status_code == 200
     assert fake_graph.updated_state is None  # 빈 요청으로 불필요한 체크포인트를 안 만듦
+
+
+# --- 참고문헌만 독립 재시도 (08-04 후속, Part B) -----------------------------------
+
+def test_retry_research_references_404_when_no_state(monkeypatch):
+    fake_graph = _FakeResearchGraph({})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/references/retry")
+
+    assert resp.status_code == 404
+
+
+def test_retry_research_references_400_for_stage_without_reference_node(monkeypatch):
+    # report/writing은 REFERENCE_NODE_BY_STAGE에 없음 — compile_experiment_report/
+    # draft_paper는 새 텍스트를 안 만들어 검색할 새 주장이 없다(research_workflow.py 참고).
+    fake_graph = _FakeResearchGraph({"topic": "주제", "stage": "writing"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/references/retry")
+
+    assert resp.status_code == 400
+
+
+def test_retry_research_references_calls_matching_node_and_persists(monkeypatch):
+    captured = {}
+
+    def _fake_design_node(state):
+        captured["procedure"] = state.procedure
+        return {
+            "references": [{"paper_id": "p1", "title": "새 논문", "source": "external", "reasoning": "관련"}],
+            "comment": "새로 찾음",
+        }
+    monkeypatch.setitem(research_workflow.REFERENCE_NODE_BY_STAGE, "design", _fake_design_node)
+
+    def _boom_hypothesis_node(state):
+        raise AssertionError("stage=design인데 hypothesis 노드가 불리면 안 됨")
+    monkeypatch.setitem(research_workflow.REFERENCE_NODE_BY_STAGE, "hypothesis", _boom_hypothesis_node)
+
+    fake_graph = _FakeResearchGraph({
+        "topic": "주제", "stage": "design", "hypothesis": "가설",
+        "procedure": "1. 실험한다", "comment": "이전 안내", "references": [],
+    })
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/references/retry")
+
+    assert resp.status_code == 200
+    assert captured["procedure"] == "1. 실험한다"  # tip 값으로 WorkflowState가 재구성됨
+    # 그래프를 안 타고 aupdate_state(as_node="__start__")로 결과만 tip에 얹음(/draft와 같은 패턴)
+    assert fake_graph.updated_state == {
+        "references": [{"paper_id": "p1", "title": "새 논문", "source": "external", "reasoning": "관련"}],
+        "comment": "새로 찾음",
+    }
+    body = resp.json()
+    assert body["comment"] == "새로 찾음"
+    assert body["references"][0]["paper_id"] == "p1"
+    assert body["procedure"] == "1. 실험한다"  # 설계 산출물 자체는 안 건드림

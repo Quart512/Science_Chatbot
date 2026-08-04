@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { advanceResearch, type ResearchState } from '../../api/research'
-import { nextOptions, stageIndex, STAGE_LABELS } from './constants'
+import { nextOptions, stageIndex } from './constants'
 
 interface Props {
   threadId: string
@@ -63,7 +63,6 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
               fromCheckpointId={fromCheckpointId}
               newRefs={newRefs}
               onAdvanced={onAdvanced}
-              currentStage={values.stage}
             />
           ))}
         </div>
@@ -78,14 +77,12 @@ function OptionForm({
   fromCheckpointId,
   newRefs,
   onAdvanced,
-  currentStage,
 }: {
   threadId: string
   opt: ReturnType<typeof nextOptions>[number]
   fromCheckpointId: string | null
   newRefs: ResearchState['references']
   onAdvanced: () => void
-  currentStage?: string
 }) {
   const queryClient = useQueryClient()
   const [resultsText, setResultsText] = useState('')
@@ -119,11 +116,6 @@ function OptionForm({
 
   return (
     <div className="research-option">
-      {currentStage && (
-        <p className={`research-retry-path ${opt.recommended ? 'research-retry-path-recommended' : ''}`}>
-          {STAGE_LABELS[currentStage]} → {STAGE_LABELS[opt.target]}
-        </p>
-      )}
       <form
         onSubmit={(e) => {
           e.preventDefault()

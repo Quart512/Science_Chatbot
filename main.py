@@ -23,6 +23,7 @@ import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
 import paper_recommend
+import research_branches
 import research_sessions
 import research_workflow
 from models import ContextBudgetExceeded
@@ -436,6 +437,19 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
 
     result = await request.app.state.research_graph.ainvoke(inputs, config=config)
     research_sessions.update_stage(thread_id, body.stage)
+
+    # 복원 경로였다면 이 턴이 어느 과거 체크포인트에서 갈라졌는지 기록 — parent_config로는
+    # 못 얻는 이유는 research_branches.py 모듈 주석 참고. tip을 다시 조회해야
+    # ainvoke가 실제로 남긴 turn-final 체크포인트의 checkpoint_id를 얻는다(ainvoke
+    # 반환값은 값 dict일 뿐 체크포인트 메타를 안 담음).
+    if body.from_checkpoint_id is not None:
+        new_tip = await request.app.state.research_graph.aget_state(config)
+        research_branches.record_branch(
+            child_checkpoint_id=new_tip.config["configurable"]["checkpoint_id"],
+            source_checkpoint_id=body.from_checkpoint_id,
+            thread_id=thread_id,
+        )
+
     return result
 
 
@@ -484,6 +498,15 @@ async def get_research_history(request: Request, thread_id: str):
             "values": snapshot.values,
         })
     entries.reverse()
+
+    # 브랜치형 타임라인(설계 노트 참고)의 세로선(계보) 연결용 — LangGraph 체크포인터의
+    # parent_config는 항상 선형이라 못 쓰고(research_branches.py 주석 참고), 복원이
+    # 일어날 때 main.py가 따로 남겨둔 기록을 여기서 붙여준다. 분기 없이 만들어진
+    # 체크포인트는 매핑에 없으니 None.
+    sources = research_branches.get_sources([e["checkpoint_id"] for e in entries])
+    for entry in entries:
+        entry["branched_from_checkpoint_id"] = sources.get(entry["checkpoint_id"])
+
     return {"history": entries}
 
 
@@ -515,3 +538,31 @@ async def update_research_draft(request: Request, thread_id: str, body: Research
         await request.app.state.research_graph.aupdate_state(config, updates, as_node="__start__")
         snapshot = await request.app.state.research_graph.aget_state(config)
     return snapshot.values
+
+
+# 참고문헌만 독립 재시도(08-04 후속, Part B — RoadMap "참고문헌만 재검색 + 실패 사유
+# 표시") — 지금까진 "참고문헌을 찾지 못했습니다"가 뜨면 그 단계 전체(가설·설계 등,
+# LLM 재호출 포함)를 재생성해야만 참고문헌도 다시 찾아졌다. 이 엔드포인트는 그래프를
+# 안 타고 tip의 stage에 맞는 참고문헌 노드 함수만 직접 불러(research_workflow의
+# REFERENCE_NODE_BY_STAGE) /draft와 같은 aupdate_state(as_node="__start__") 패턴으로
+# 결과만 tip에 얹는다 — 가설·설계 산출물 자체는 안 건드리고 참고문헌 검색(검색어 추출+
+# 스크리닝)만 다시 돈다. 노드 함수가 동기(LLM 호출 포함)라 /interests/draft와 같은
+# 이유로 asyncio.to_thread로 감싼다.
+@app.post("/research/{thread_id}/references/retry")
+async def retry_research_references(request: Request, thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+
+    stage = snapshot.values.get("stage")
+    node = research_workflow.REFERENCE_NODE_BY_STAGE.get(stage)
+    if node is None:
+        raise HTTPException(status_code=400, detail=f"{stage} 단계는 참고문헌 재검색 대상이 아닙니다")
+
+    state = research_workflow.WorkflowState(**snapshot.values)
+    updates = await asyncio.to_thread(node, state)
+    await request.app.state.research_graph.aupdate_state(config, updates, as_node="__start__")
+
+    new_snapshot = await request.app.state.research_graph.aget_state(config)
+    return new_snapshot.values

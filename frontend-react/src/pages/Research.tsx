@@ -5,13 +5,17 @@ import { advanceResearch, getResearchHistory, type HistoryEntry } from '../api/r
 import { StageContent } from './research/StageContent'
 import { NextOptions } from './research/NextOptions'
 import { DraftEditor } from './research/DraftEditor'
-import { STAGES, STAGE_DONE_FIELD, STAGE_LABELS } from './research/constants'
+import { BranchTimeline } from './research/BranchTimeline'
+import { RetryReferencesButton } from './research/RetryReferencesButton'
+import { nextOptions, STAGES_WITH_REFERENCES } from './research/constants'
 import './Research.css'
 
-// frontend/views/research.py 전체와 같은 계약 — 5단계 완료 체크 타임라인 + 체크포인트
-// 탭("탭처럼 왔다갔다") + 현재 단계 내용 + 다음 단계 선택 패널. 세션 목록은 08-04
-// 사용자 지적으로 셸의 왼쪽 네비(`ResearchSessionNav`, 연구 워크플로우 항목 아래
-// 중첩)로 옮겼고, 선택 상태는 `/research/:threadId` URL로 옮겨서 새로고침해도
+// frontend/views/research.py 전체와 같은 계약이었던 데서 출발 — 브랜치형 타임라인
+// (BranchTimeline, RoadMap "타임라인·체크 결합(브랜치형)" 설계 노트) + 현재 단계
+// 내용 + 다음 단계 선택 패널. 예전엔 완료체크 타임라인과 체크포인트 탭이 따로였는데
+// 이제 BranchTimeline 하나가 "지나온/현재/갈 수 있는 곳"을 전부 보여준다. 세션 목록은
+// 08-04 사용자 지적으로 셸의 왼쪽 네비(`ResearchSessionNav`, 연구 워크플로우 항목
+// 아래 중첩)로 옮겼고, 선택 상태는 `/research/:threadId` URL로 옮겨서 새로고침해도
 // 안 날아간다(이전엔 컴포넌트 로컬 state였음).
 export function Research() {
   const { threadId } = useParams<{ threadId?: string }>()
@@ -111,40 +115,21 @@ function ResearchThreadView({
 
   return (
     <>
-      <div className="research-timeline">
-        {STAGES.map(([stageKey, label]) => {
-          const done = Boolean(tip.values[STAGE_DONE_FIELD[stageKey]])
-          const isCurrent = tip.values.stage === stageKey
-          return (
-            <span key={stageKey} className="research-timeline-item">
-              {done ? '✅' : '⬜'} {label}
-              {isCurrent && ' ← 현재'}
-            </span>
-          )
-        })}
-      </div>
-
-      <div className="research-tabs">
-        {history.map((entry) => {
-          const ts = entry.created_at ? entry.created_at.slice(11, 16) : ''
-          const isTipEntry = entry.checkpoint_id === tip.checkpoint_id
-          return (
-            <button
-              key={entry.checkpoint_id}
-              className={`research-tab ${entry.checkpoint_id === effectiveViewId ? 'research-tab-active' : ''}`}
-              onClick={() => setViewCheckpointId(entry.checkpoint_id)}
-            >
-              {STAGE_LABELS[entry.stage] ?? entry.stage} {ts}
-              {isTipEntry && ' (현재)'}
-            </button>
-          )
-        })}
-      </div>
+      <BranchTimeline
+        history={history}
+        selectedCheckpointId={effectiveViewId}
+        onSelect={setViewCheckpointId}
+        nextOpts={nextOptions(tip.values)}
+      />
 
       {!isTip && <p className="research-caption">과거 시점입니다 — 여기서 진행하면 이 시점을 기준으로 새로 이어집니다.</p>}
       {values.comment && <p className="research-comment">{values.comment}</p>}
 
       <StageContent values={values} />
+
+      {isTip && STAGES_WITH_REFERENCES.has(values.stage) && (
+        <RetryReferencesButton threadId={threadId} onRetried={() => setViewCheckpointId(null)} />
+      )}
 
       {values.stage === 'writing' && values.abstract && isTip && (
         <DraftEditor threadId={threadId} values={values} checkpointId={selected.checkpoint_id} />

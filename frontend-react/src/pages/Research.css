@@ -64,36 +64,159 @@
   color: #a0a4b0;
 }
 
-.research-timeline {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
+/* 브랜치형 타임라인(BranchTimeline.tsx) — 예전 research-timeline(완료체크 5칸)과
+   research-tabs(체크포인트 버튼 목록)를 하나로 합친 것. RoadMap "타임라인·체크
+   결합(브랜치형)" 설계 노트 참고. */
+.research-branch-timeline {
   margin-bottom: 1rem;
 }
 
-.research-timeline-item {
-  font-weight: 600;
+.research-branch-toggle {
+  background: none;
+  color: #a0a4b0;
+  border: none;
+  padding: 0;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
 }
 
-.research-tabs {
+.research-branch-rows {
+  position: relative;
+}
+
+.research-branch-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.research-branch-line {
+  stroke: #40434f;
+  stroke-width: 2;
+}
+
+.research-branch-line-branch {
+  stroke: #8ab4ff;
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+
+.research-branch-dot {
+  fill: #40434f;
+}
+
+.research-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  height: 44px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.research-branch-row:hover {
+  background: #22242e;
+}
+
+.research-branch-row-active {
+  background: rgba(59, 91, 219, 0.2);
+}
+
+.research-branch-row-label {
+  flex-shrink: 0;
+  width: 8rem;
+  color: #a0a4b0;
+  font-size: 0.8rem;
+}
+
+.research-branch-cells {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.research-branch-cell {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.research-branch-cell-fresh {
+  background: #3b5bdb;
+  color: white;
+}
+
+.research-branch-cell-inherited {
+  background: #2e313d;
+  color: #c7c9d1;
+}
+
+.research-branch-cell-pending {
+  background: none;
+  color: #5a5e6b;
+  border: 1px solid #3a3d48;
+}
+
+.research-branch-future {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.3rem 0 0 0.4rem;
+  padding-left: 1rem;
+  border-left: 2px dashed #40434f;
+}
+
+.research-branch-future-label {
+  color: #6b7080;
+  font-size: 0.78rem;
+}
+
+.research-branch-future-options {
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
 }
 
-.research-tab {
+.research-branch-future-chip {
+  background: #22242e;
+  color: #c7c9d1;
+  border: 1px solid #40434f;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.research-branch-future-chip-recommended {
+  background: rgba(59, 91, 219, 0.25);
+  color: #8ab4ff;
+  border-color: #3b5bdb;
+  font-weight: 600;
+}
+
+.research-retry-references {
+  margin: 0.75rem 0;
+}
+
+.research-retry-references button {
   background: #22242e;
   color: #e6e6e6;
   border: 1px solid #40434f;
   border-radius: 4px;
-  padding: 0.4rem 0.7rem;
+  padding: 0.4rem 0.8rem;
   cursor: pointer;
 }
 
-.research-tab-active {
-  background: #3b5bdb;
-  border-color: #3b5bdb;
+.research-retry-references button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .research-comment {
@@ -133,17 +256,6 @@
 .research-option {
   border-top: 1px solid #2e313d;
   padding: 0.75rem 0;
-}
-
-.research-retry-path {
-  color: #6b7080;
-  font-size: 0.8rem;
-  margin: 0 0 0.4rem;
-}
-
-.research-retry-path-recommended {
-  color: #8ab4ff;
-  font-weight: 600;
 }
 
 .research-option button[type='submit'] {

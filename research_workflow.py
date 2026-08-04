@@ -179,11 +179,13 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
     것과 같은 논리: 부가 기능 실패가 핵심 결과를 막지 않는다). 여기서 노드가 예외를
     던지면 방금 LLM으로 만든 가설·설계가 체크포인트에 커밋되지 못하고 통째로 날아간다.
 
-    `RuntimeError`(모델 소진)만 잡지 않고 `Exception`을 잡는 이유: 이 함수가 부르는
-    경로가 recommend_references → paper_search → arxiv_api라서 arxiv가 잠깐 죽으면
-    `requests.RequestException`/`HTTPError`가 그대로 올라온다. 예외 타입을 열거하면
-    어댑터를 갈아끼울 때마다 목록이 새고, 그때마다 "핵심 결과가 날아가는" 방식으로
-    실패한다. 대신 잡은 예외 타입을 로그에 남겨 조용히 삼키지는 않는다.
+    `RuntimeError`(모델 소진)·`ReferenceSearchError`(arxiv 검색 오류)를 각각 구분해서
+    잡고, 그 아래 `Exception`도 여전히 잡는다 — recommend_references가 부르는 경로가
+    paper_search → arxiv_api라 예상 못 한 예외가 새어나올 수 있는데(어댑터를 갈아끼울
+    때마다 예외 타입 목록이 늘어나는 걸 막으려 이전부터 `Exception`을 최종 방어선으로
+    잡아왔다), 08-04부터는 사용자에게 실패 사유를 4갈래로 구분해 보여주려고(RoadMap
+    "참고문헌만 재검색 + 실패 사유 표시") 그 위에 두 타입을 먼저 잡는 게 추가됐다. 잡은
+    예외 타입은 여전히 로그에 남겨 조용히 삼키지는 않는다.
 
     "이미 증명된 이론·이미 한 실험인지"는 LLM이 판정하지 않는다 — 찾은 참고문헌(이미
     screen_candidate의 연관성 근거가 붙어 있음)을 사람이 직접 읽고 템플릿을 고치거나
@@ -201,15 +203,28 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
         def _with_prior_comment(text: str) -> str:
             return f"{state.comment}\n\n{text}" if state.comment else text
 
+        # 예외 3갈래(③④, 검색어 추출 단계 포함)를 각각 다른 문구로 안내 — RuntimeError가
+        # ReferenceSearchError보다 먼저 와야 하는 순서 제약은 없다(서로 다른 계통이라
+        # 교집합 없음), 그냥 구체적인 타입을 Exception보다 먼저 잡아야 한다.
         try:
-            found, disabled_models, tokens_used = reference_recommender.recommend_references(
+            found, reason, disabled_models, tokens_used = reference_recommender.recommend_references(
                 get_text(state), disabled_models=state.disabled_models
             )
-        except Exception as e:
-            print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
+        except RuntimeError as e:
+            print(f"참고문헌 추천 실패, 모델 소진(이 단계는 건너뜀): {type(e).__name__}: {e}")
             # 실패해도 disabled_models는 못 건진다 — 예외를 던진 시점의 갱신값이 호출
             # 스택과 함께 사라지기 때문(살리려면 예외에 실어 보내야 하는데, 그건 정상
             # 경로가 아닌 곳에 데이터를 태우는 설계라 안 한다). 다음 단계가 다시 판단한다.
+            return {"comment": _with_prior_comment(
+                "AI 모델이 모두 소진돼 참고문헌을 찾지 못했습니다 — 잠시 후 재생성해주세요."
+            )}
+        except reference_recommender.ReferenceSearchError as e:
+            print(f"참고문헌 추천 실패, arxiv 검색 오류(이 단계는 건너뜀): {type(e).__name__}: {e}")
+            return {"comment": _with_prior_comment(
+                "arXiv 검색 중 오류가 발생했습니다 — 잠시 후 재생성해주세요."
+            )}
+        except Exception as e:
+            print(f"참고문헌 추천 실패(이 단계는 건너뜀): {type(e).__name__}: {e}")
             return {"comment": _with_prior_comment("참고문헌 추천에 실패했습니다 — 직접 템플릿을 검토해주세요.")}
 
         existing_ids = {r["paper_id"] for r in state.references}
@@ -222,8 +237,18 @@ def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name:
                 "참고논문을 확인해서 선행 연구된 내용이 있는지 확인하고 템플릿을 채우거나 "
                 "수정해주세요. 참고문헌이 부족하다면 재생성을 눌러주세요."
             )
-        else:
+        elif found:
+            # found는 있었지만 전부 이미 references에 있던 것(dedup) — 검색은 성공했으니
+            # reason으로 구분할 실패가 아니다. 기존 문구 그대로.
             comment = "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요."
+        else:
+            # found가 애초에 비어 있었던 경우만 reason으로 4갈래 중 ①②를 구분한다
+            # (③④는 위에서 예외로 이미 처리됨).
+            comment = {
+                "no_candidates": "검색 결과가 없습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.",
+                "all_irrelevant": "찾은 논문이 모두 관련성이 낮다고 판단됐습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.",
+                "models_exhausted": "AI 모델이 모두 소진돼 후보 논문을 평가하지 못했습니다 — 잠시 후 재생성해주세요.",
+            }.get(reason, "참고문헌을 찾지 못했습니다 — 재생성을 눌러 다시 시도하거나 직접 템플릿을 채워주세요.")
 
         return {
             "references": state.references + new_entries,
@@ -360,6 +385,17 @@ def analyze_results(state: WorkflowState) -> dict:
 
 
 find_operation_references = _make_reference_node(lambda s: s.analysis, "operation")
+
+# 참고문헌만 독립 재시도(⑥, RoadMap "참고문헌만 재검색 + 실패 사유 표시" Part B)용 —
+# main.py의 재시도 엔드포인트가 tip의 stage만 보고 어느 노드를 다시 부를지 찾는다.
+# report/writing은 참고문헌 노드가 없어(compile_experiment_report/draft_paper는 새
+# 텍스트를 안 만들고 있는 걸 재배열/종합할 뿐이라 검색할 새 주장이 없음, 위 주석 참고)
+# 이 매핑에 없다 — 호출부가 stage로 조회해 없으면 400으로 막는다.
+REFERENCE_NODE_BY_STAGE: dict[str, Callable[["WorkflowState"], dict]] = {
+    "hypothesis": find_hypothesis_references,
+    "design": find_design_references,
+    "operation": find_operation_references,
+}
 
 
 def compile_experiment_report(state: WorkflowState) -> dict:

@@ -100,11 +100,11 @@ def _ref(paper_id, title="", source="owned", reasoning=""):
 _TOKENS = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
 
 
-def _returning(refs, disabled_models=None):
-    """recommend_references 대역 — 계약이 (목록, disabled_models, tokens_used) 3튜플이라
-    테스트마다 튜플을 손으로 쓰지 않게 감싼다. **kw를 받는 이유는 노드가 항상
-    disabled_models=를 키워드로 넘기기 때문."""
-    return lambda text, **kw: (refs, disabled_models or [], _TOKENS)
+def _returning(refs, disabled_models=None, reason=None):
+    """recommend_references 대역 — 계약이 (목록, 실패사유, disabled_models, tokens_used)
+    4튜플이라 테스트마다 튜플을 손으로 쓰지 않게 감싼다. **kw를 받는 이유는 노드가
+    항상 disabled_models=를 키워드로 넘기기 때문."""
+    return lambda text, **kw: (refs, reason, disabled_models or [], _TOKENS)
 
 
 def test_find_hypothesis_references_appends_with_stage_tag(monkeypatch):
@@ -124,7 +124,7 @@ def test_find_hypothesis_references_searches_using_hypothesis_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="온도가 오르면 저항이 커진다")
@@ -156,7 +156,7 @@ def test_find_hypothesis_references_shares_circuit_breaker_and_tokens(monkeypatc
     captured = {}
     def _fake_recommend(text, **kw):
         captured["disabled_models"] = kw.get("disabled_models")
-        return [], ["claude", "gemini"], _TOKENS
+        return [], None, ["claude", "gemini"], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(
@@ -170,7 +170,8 @@ def test_find_hypothesis_references_shares_circuit_breaker_and_tokens(monkeypatc
     assert result["tokens_used"] == {"input_tokens": 11, "output_tokens": 6, "total_tokens": 17}
 
 
-def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
+def test_find_hypothesis_references_skips_step_on_model_exhaustion(monkeypatch):
+    # 4갈래 중 ④(모델 소진) — 검색어 추출 단계에서 나는 RuntimeError.
     def _boom(text, **kw):
         raise RuntimeError("전 모델 소진 흉내")
     monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
@@ -179,16 +180,27 @@ def test_find_hypothesis_references_skips_step_on_failure(monkeypatch):
     result = research_workflow.find_hypothesis_references(state)
 
     assert "references" not in result  # 워크플로우를 안 막음 — references 안 건드림
-    assert "검토" in result["comment"]  # 실패했다는 사실은 사용자에게 안내
+    assert "모델" in result["comment"] and "소진" in result["comment"]  # 실패 사유가 구분돼 안내됨
 
 
-def test_find_hypothesis_references_skips_step_on_network_failure(monkeypatch):
-    # 모델 소진(RuntimeError)뿐 아니라 arxiv 네트워크 장애도 이 단계만 건너뛰어야 한다 —
-    # 여기서 예외가 새면 방금 만든 가설이 체크포인트에 커밋되지 못하고 날아간다.
-    import requests
-
+def test_find_hypothesis_references_skips_step_on_search_error(monkeypatch):
+    # 4갈래 중 ③(arxiv 검색 오류) — 여기서 예외가 새면 방금 만든 가설이 체크포인트에
+    # 커밋되지 못하고 날아간다.
     def _boom(text, **kw):
-        raise requests.exceptions.ConnectionError("arxiv 응답 없음 흉내")
+        raise reference_recommender.ReferenceSearchError("arxiv 응답 없음 흉내")
+    monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "references" not in result
+    assert "arXiv" in result["comment"]
+
+
+def test_find_hypothesis_references_skips_step_on_unexpected_error(monkeypatch):
+    # 4갈래 어디에도 안 속하는 예상 못 한 예외 — 여전히 이 단계만 건너뛰고 워크플로우는 안 막는다.
+    def _boom(text, **kw):
+        raise ValueError("예상 못 한 오류 흉내")
     monkeypatch.setattr(reference_recommender, "recommend_references", _boom)
 
     state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
@@ -216,6 +228,37 @@ def test_find_hypothesis_references_comment_suggests_regenerate_when_none_found(
 
     assert result["references"] == []
     assert "재생성" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_no_candidates(monkeypatch):
+    # 4갈래 중 ②(검색 자체가 0건) — reason="no_candidates".
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="no_candidates"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "검색 결과가 없습니다" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_all_irrelevant(monkeypatch):
+    # 4갈래 중 ①(검색은 됐지만 스크리닝에서 전부 무관 판정) — reason="all_irrelevant".
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="all_irrelevant"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "관련성이 낮다" in result["comment"]
+
+
+def test_find_hypothesis_references_comment_distinguishes_screening_models_exhausted(monkeypatch):
+    # 4갈래 중 ④(스크리닝 도중 모델 소진) — reason="models_exhausted". 검색어 추출
+    # 단계의 모델 소진(RuntimeError로 즉시 예외)과 달리 이건 정상 반환값 경로다.
+    monkeypatch.setattr(reference_recommender, "recommend_references", _returning([], reason="models_exhausted"))
+
+    state = research_workflow.WorkflowState(topic="주제", hypothesis="가설")
+    result = research_workflow.find_hypothesis_references(state)
+
+    assert "모델" in result["comment"] and "소진" in result["comment"]
 
 
 def test_find_hypothesis_references_comment_suggests_regenerate_when_all_duplicates(monkeypatch):
@@ -363,7 +406,7 @@ def test_find_design_references_searches_using_procedure_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", procedure="1. 시료를 냉각한다\n2. 저항을 측정한다")
@@ -499,7 +542,7 @@ def test_find_operation_references_searches_using_analysis_text(monkeypatch):
     captured = {}
     def _fake_recommend(text, **kw):
         captured["text"] = text
-        return [], [], _TOKENS
+        return [], None, [], _TOKENS
     monkeypatch.setattr(reference_recommender, "recommend_references", _fake_recommend)
 
     state = research_workflow.WorkflowState(topic="주제", analysis="결과가 예측과 어긋났다")
