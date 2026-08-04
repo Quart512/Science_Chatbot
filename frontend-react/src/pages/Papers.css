@@ -1,0 +1,94 @@
+.paper-register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 480px;
+  margin-bottom: 1rem;
+}
+
+.paper-register-form-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.paper-register-form input[type='text'],
+.paper-register-form-row input {
+  background: #22242e;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  flex: 1;
+}
+
+.paper-register-form button {
+  align-self: flex-start;
+  background: #3b5bdb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.paper-register-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.paper-message {
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  max-width: 640px;
+}
+
+.paper-message-success {
+  background: rgba(46, 160, 67, 0.15);
+  color: #7ee787;
+}
+
+.paper-message-warning {
+  background: rgba(210, 153, 34, 0.15);
+  color: #e3b341;
+}
+
+.paper-message-error {
+  background: rgba(248, 81, 73, 0.15);
+  color: #ff7b72;
+}
+
+.paper-row {
+  border: 1px solid #2e313d;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.paper-row-header {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #e6e6e6;
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.paper-row-meta {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0;
+}
+
+.paper-row-summary {
+  margin-top: 0.75rem;
+  border-top: 1px solid #2e313d;
+  padding-top: 0.75rem;
+}
+
+.paper-row-summary h4 {
+  margin: 0.5rem 0 0.25rem;
+}

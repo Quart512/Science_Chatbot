@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import { ChatPanel } from './ChatPanel'
 import './Layout.css'
 
@@ -11,6 +11,24 @@ export function Layout() {
     <div className="app-shell">
       <nav className="app-nav">
         <div className="app-nav-title">🔬 Science Chatbot</div>
+        <NavLink to="/" end className="app-nav-link">
+          홈
+        </NavLink>
+        <NavLink to="/research" className="app-nav-link">
+          🧬 연구 워크플로우
+        </NavLink>
+        <NavLink to="/papers" className="app-nav-link">
+          📄 논문
+        </NavLink>
+        <NavLink to="/interests" className="app-nav-link">
+          🔬 관심사
+        </NavLink>
+        <NavLink to="/equipment" className="app-nav-link">
+          🧪 실험도구
+        </NavLink>
+        <NavLink to="/notes" className="app-nav-link">
+          📝 지식 노트
+        </NavLink>
       </nav>
       <main className="app-main">
         <Outlet />

@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { streamQuery } from '../api/chat'
+import { getInterestDraft } from '../api/interests'
 import './ChatPanel.css'
 
 interface Message {
@@ -13,9 +15,9 @@ const EFFORTS = ['low', 'medium', 'high'] as const
 
 // 셸에 항상 떠 있는 챗 패널(08-04 설계 노트 "React 전환" 참고) — 연구 워크플로우 등
 // 다른 화면을 보면서 동시에 쓸 수 있게 하는 게 이 컴포넌트의 존재 이유. frontend/views/
-// chat.py와 기능은 같되(모델·effort 선택, 스트리밍, 판단 과정 expander) "관심사로
-// 등록" 버튼은 아직 안 옮김(라이브러리 화면이 아직 이관 전이라 다음 단계).
+// chat.py와 기능 동등(모델·effort 선택, 스트리밍, "관심사로 등록" 버튼).
 export function ChatPanel() {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(true)
   const [threadId] = useState(() => crypto.randomUUID())
   const [model, setModel] = useState<string>(MODELS[0])
@@ -24,6 +26,17 @@ export function ChatPanel() {
   const [input, setInput] = useState('')
   const [progress, setProgress] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [draftError, setDraftError] = useState('')
+
+  async function registerAsInterest() {
+    setDraftError('')
+    try {
+      const draft = await getInterestDraft(threadId)
+      navigate('/interests', { state: draft })
+    } catch (e) {
+      setDraftError(`초안 생성 실패: ${(e as Error).message}`)
+    }
+  }
 
   async function send() {
     const question = input.trim()
@@ -86,6 +99,10 @@ export function ChatPanel() {
         </select>
       </div>
       <p className="chat-panel-thread-id">thread_id: {threadId}</p>
+      <button className="chat-panel-register-interest" onClick={registerAsInterest}>
+        💡 이 대화를 관심사로 등록
+      </button>
+      {draftError && <p className="chat-panel-error">{draftError}</p>}
 
       <div className="chat-panel-messages">
         {messages.map((m, i) => (

@@ -61,6 +61,23 @@
   word-break: break-all;
 }
 
+.chat-panel-register-interest {
+  margin: 0 1rem 0.5rem;
+  background: #2e313d;
+  color: #e6e6e6;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chat-panel-error {
+  margin: 0 1rem 0.5rem;
+  color: #ff7b72;
+  font-size: 0.8rem;
+}
+
 .chat-panel-messages {
   flex: 1;
   overflow-y: auto;
