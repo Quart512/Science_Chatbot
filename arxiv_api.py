@@ -12,7 +12,7 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"  # http로 요청하면 htt
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 ARXIV_NS = "{http://arxiv.org/schemas/atom}"  # journal_ref/doi 등 arxiv 전용 확장 필드의 네임스페이스
 # arxiv는 정체를 알 수 없는 요청(기본 python-requests User-Agent 등)에 응답을 지연시키는 경우가 있어 명시
-HEADERS = {"User-Agent": "Science_Chatbot/0.1 (student project; contact: d3725gt@gmail.com)"}
+HEADERS = {"User-Agent": "AIsaac/0.1 (student project; contact: d3725gt@gmail.com)"}
 
 # arxiv 공식 가이드라인: 3초에 한 번 이상 요청하지 말 것 (실측: 짧은 간격 연속 호출 시 429 "Rate exceeded")
 MIN_INTERVAL_SEC = 3.0

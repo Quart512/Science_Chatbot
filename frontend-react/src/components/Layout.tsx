@@ -13,7 +13,7 @@ export function Layout() {
   return (
     <div className="app-shell">
       <nav className="app-nav">
-        <div className="app-nav-title">🔬 Science Chatbot</div>
+        <div className="app-nav-title">🔬 AIsaac</div>
 
         <div className="app-nav-group">
           <div className="app-nav-group-title">메인</div>

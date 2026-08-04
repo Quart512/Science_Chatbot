@@ -83,7 +83,7 @@ def arrow(p0, p1, color="#44506B", lw=1.8, rad=0.0, ls="solid"):
 
 
 # ── 제목 + 범례
-ax.text(80, 106.0, "Science Chatbot — 목표 아키텍처 (표면 / 능력 / 데이터 3층)",
+ax.text(80, 106.0, "AIsaac — 목표 아키텍처 (표면 / 능력 / 데이터 3층)",
         ha="center", va="center", fontsize=15, fontproperties=F_BOLD, color=C_TEXT)
 ax.text(80, 103.6, "굵은 테두리 = 구현 완료 · 얇은 테두리 = 계획",
         ha="center", va="center", fontsize=8.5, fontproperties=F_REG, color=C_SUB)
