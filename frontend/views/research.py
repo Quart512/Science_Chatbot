@@ -47,12 +47,19 @@ def _resolve_citations(text: str, references: list[dict]) -> str:
     return re.sub(r"\[CITE:([^\]]+)\]", _replace, text or "")
 
 
-def _advance(thread_id: str, stage: str, *, topic: str | None = None, experiment_results: str | None = None) -> bool:
+def _advance(
+    thread_id: str, stage: str, *, topic: str | None = None, experiment_results: str | None = None,
+    from_checkpoint_id: str | None = None, keep_reference_paper_ids: list[str] | None = None,
+) -> bool:
     payload = {"stage": stage}
     if topic is not None:
         payload["topic"] = topic
     if experiment_results is not None:
         payload["experiment_results"] = experiment_results
+    if from_checkpoint_id is not None:
+        payload["from_checkpoint_id"] = from_checkpoint_id
+    if keep_reference_paper_ids is not None:
+        payload["keep_reference_paper_ids"] = keep_reference_paper_ids
     try:
         resp = requests.post(f"{BACKEND_URL}/research/{thread_id}/advance", json=payload, timeout=120)
         resp.raise_for_status()
@@ -145,6 +152,49 @@ def _render_stage_content(state: dict) -> None:
                 st.caption(f"- [{r['source']}] {r['title']}{reasoning}")
 
 
+def _render_next_options(
+    thread_id: str, values: dict, tip_values: dict, from_checkpoint_id: str | None, view_key: str,
+) -> None:
+    # from_checkpoint_id가 있으면(=과거 탭에서 진행) 그 시점엔 없었지만 최신 tip에는
+    # 있는 참고문헌을 골라서 보여준다 — 기본은 전부 미체크(=버림), 논문 제작 단계에서
+    # 따로 참고문헌을 손볼 방법이 아직 없어서 이게 사실상 유일한 큐레이션 지점이다.
+    new_refs = []
+    if from_checkpoint_id is not None:
+        past_ids = {r["paper_id"] for r in values.get("references", [])}
+        new_refs = [r for r in tip_values.get("references", []) if r["paper_id"] not in past_ids]
+
+    for opt in _next_options(values):
+        label = opt["label"] + (" [추천]" if opt["recommended"] else "")
+        # 일반 낡은-값 경고는 tip에서 그대로 진행할 때만 의미가 있다(과거 탭 진행은
+        # 아래 참고문헌 diff로 이미 구체적으로 안내함) — RoadMap 설계 노트 §3.
+        if from_checkpoint_id is None and _has_stale_downstream(values, opt["target"]):
+            st.caption("⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)")
+
+        form_key = f"advance_form_{opt['target']}_{opt['label']}_{from_checkpoint_id or 'tip'}"
+        with st.form(form_key):
+            results_text = st.text_area("실험 결과", key=f"{form_key}_results") if opt["needs_results"] else None
+
+            keep_ids = []
+            if new_refs:
+                st.caption(f"⚠️ 이 시점 이후 새로 찾은 참고문헌 {len(new_refs)}편이 있습니다 — 이 갈래에 남길 것만 선택하세요(기본은 버림).")
+                for r in new_refs:
+                    reasoning = f" — {r['reasoning']}" if r.get("reasoning") else ""
+                    if st.checkbox(f"{r['title']}{reasoning}", value=False, key=f"{form_key}_keep_{r['paper_id']}"):
+                        keep_ids.append(r["paper_id"])
+
+            if st.form_submit_button(label):
+                if opt["needs_results"] and not results_text:
+                    st.warning("실험 결과를 입력해주세요.")
+                elif _advance(
+                    thread_id, opt["target"],
+                    experiment_results=results_text,
+                    from_checkpoint_id=from_checkpoint_id,
+                    keep_reference_paper_ids=keep_ids if from_checkpoint_id else None,
+                ):
+                    st.session_state.pop(view_key, None)  # 새로 생긴 tip으로 보기를 리셋
+                    st.rerun()
+
+
 with st.sidebar:
     st.subheader("연구 세션")
     try:
@@ -200,46 +250,69 @@ if not st.session_state.get("research_thread_id"):
 
 thread_id = st.session_state.research_thread_id
 try:
-    state_resp = requests.get(f"{BACKEND_URL}/research/{thread_id}", timeout=10)
-    state_resp.raise_for_status()
-    state = state_resp.json()
+    history_resp = requests.get(f"{BACKEND_URL}/research/{thread_id}/history", timeout=10)
+    history_resp.raise_for_status()
+    history = history_resp.json()["history"]  # 오래된 것부터
 except requests.RequestException as e:
-    st.error(f"상태 조회 실패: {e}")
+    st.error(f"히스토리 조회 실패: {e}")
     st.stop()
 
-# 타임라인 — 값이 채워진 단계만 체크, 현재 단계 강조(RoadMap "완료 체크로 단순화" 참고,
-# 재방문 순서까지 그리는 히스토리 뷰는 1차 범위 밖)
+if not history:
+    st.error("이 세션의 기록이 없습니다.")
+    st.stop()
+
+tip = history[-1]
+
+# 타임라인은 항상 최신(tip) 기준 — 값이 채워진 단계만 체크, 현재 단계 강조
 cols = st.columns(len(STAGES))
 for col, (stage_key, label) in zip(cols, STAGES):
-    marker = "✅" if state.get(STAGE_DONE_FIELD[stage_key]) else "⬜"
+    marker = "✅" if tip["values"].get(STAGE_DONE_FIELD[stage_key]) else "⬜"
     text = f"**{marker} {label}**"
-    if state["stage"] == stage_key:
+    if tip["values"]["stage"] == stage_key:
         text += " ← 현재"
     col.markdown(text)
 
 st.divider()
 
-if state.get("comment"):
-    st.info(state["comment"])
+# 히스토리를 탭으로 — "탭처럼 왔다갔다" 설계 그대로. 각 탭은 그 시점의 값을 읽기 전용으로
+# 보여주고, 그 탭에서 진행 버튼을 누르면 그 시점을 기준으로 새로 이어간다(과거 값은
+# 체크포인트로 남아있으니 사라지지 않는다 — RoadMap 설계 노트 참고).
+# st.tabs()는 재실행마다 첫 탭으로 초기화돼서(진행 직후에도 예전 탭에 머무름) 대신
+# 세션 상태로 직접 선택을 관리한다 — 기본은 항상 최신(tip), 진행 액션이 성공하면
+# _render_next_options()가 이 키를 지워서 다음 재실행에 자동으로 새 tip을 보여준다.
+view_key = f"research_view_checkpoint_{thread_id}"
+valid_ids = {e["checkpoint_id"] for e in history}
+if st.session_state.get(view_key) not in valid_ids:
+    st.session_state[view_key] = tip["checkpoint_id"]
 
-_render_stage_content(state)
+STAGE_LABELS = dict(STAGES)
+cols = st.columns(len(history))
+for col, entry in zip(cols, history):
+    ts = entry["created_at"][11:16] if entry.get("created_at") else ""
+    suffix = " (현재)" if entry["checkpoint_id"] == tip["checkpoint_id"] else ""
+    label = f"{STAGE_LABELS.get(entry['stage'], entry['stage'])} {ts}{suffix}"
+    is_selected = entry["checkpoint_id"] == st.session_state[view_key]
+    if col.button(label, key=f"tabbtn_{entry['checkpoint_id']}", type="primary" if is_selected else "secondary", use_container_width=True):
+        st.session_state[view_key] = entry["checkpoint_id"]
+        st.rerun()
+
+selected = next(e for e in history if e["checkpoint_id"] == st.session_state[view_key])
+values = selected["values"]
+is_tip = selected["checkpoint_id"] == tip["checkpoint_id"]
+
+st.divider()
+
+if not is_tip:
+    st.caption("과거 시점입니다 — 여기서 진행하면 이 시점을 기준으로 새로 이어집니다.")
+if values.get("comment"):
+    st.info(values["comment"])
+
+_render_stage_content(values)
 
 st.divider()
 st.subheader("다음으로 갈 수 있는 곳")
-for opt in _next_options(state):
-    label = opt["label"] + (" [추천]" if opt["recommended"] else "")
-    if _has_stale_downstream(state, opt["target"]):
-        st.caption("⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)")
-
-    if opt["needs_results"]:
-        with st.form(f"advance_form_{opt['target']}_{opt['label']}"):
-            results_text = st.text_area("실험 결과", key=f"results_{opt['target']}_{opt['label']}")
-            if st.form_submit_button(label):
-                if not results_text:
-                    st.warning("실험 결과를 입력해주세요.")
-                elif _advance(thread_id, opt["target"], experiment_results=results_text):
-                    st.rerun()
-    else:
-        if st.button(label, key=f"btn_{opt['target']}_{opt['label']}"):
-            if _advance(thread_id, opt["target"]):
-                st.rerun()
+_render_next_options(
+    thread_id, values, tip_values=tip["values"],
+    from_checkpoint_id=None if is_tip else selected["checkpoint_id"],
+    view_key=view_key,
+)
