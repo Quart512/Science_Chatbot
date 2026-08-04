@@ -29,7 +29,7 @@
 | 표면 | 형태 | 내용 |
 |---|---|---|
 | 메인 챗 | 상시 대화형 | 물리 QA(④)만 수행. 당초 얇은 라우터로 QA/문서 작성기 호출/추천 조회를 분기하려 했으나(08-10) 재검토 결과 등록·조회는 라우터가 아니라 각 표면의 버튼·폼이 직접 트리거하는 쪽으로 정리됨(07-24 "등록·조회는 폼+어시스트" 원칙과 일치) — 상세: [docs/RoadMap.md](docs/RoadMap.md) 설계 노트 "메인 챗 라우터 착수 보류" |
-| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면(`views/research.py`). **백엔드 그래프 5단계 전부(`research_workflow.py`, 체크포인트 영속화) + 세션 목록(`research_sessions.py`) + 화면까지 구현 완료**(08-04). 자체 버전 관리 필드 없이 LangGraph 체크포인터 히스토리를 그대로 활용해 과거 시점을 탭처럼 조회·복원 가능(`GET /research/{id}/history`, `POST /research/{id}/advance`의 `from_checkpoint_id`) |
+| 연구 워크플로우 | 단계형 (단계 전환은 사람이 트리거) | 가설 수립 → 실험 설계 → 실험 운영 → 실험 보고서 → 논문 초안(⑥⑦). 며칠씩 걸리는 상태 있는 작업이라 현 단계가 보이는 별도 화면(`views/research.py`). **백엔드 그래프 5단계 전부(`research_workflow.py`, 체크포인트 영속화) + 세션 목록(`research_sessions.py`) + 화면까지 구현 완료**(08-04). 자체 버전 관리 필드 없이 LangGraph 체크포인터 히스토리를 그대로 활용해 과거 시점을 탭처럼 조회·복원 가능(`GET /research/{id}/history`, `POST /research/{id}/advance`의 `from_checkpoint_id`). 논문 초안 텍스트는 `POST /research/{id}/draft`로 인앱 편집 가능(LLM 재호출 없이 값만 저장) |
 | 라이브러리 | 관리 UI (탭) | 관심사·논문·실험도구·지식 노트를 등록·조회·관리하는 통합 화면. 관심사 탭: 관심사 카드별 보유/추천/권위 논문 목록 + "지금 검색" 트리거(③). 논문 탭: PDF·DOI·arxiv id 등록 → 전문 인코딩, 요약은 요청 시 생성(②a) (등록의 주 경로 — 메인 챗 붙여넣기는 보조). 편집은 폼 + AI 어시스트(문서 작성기) |
 
 > **후순위 아이디어 — 피드 표면**: 관심사와 무관하게 hype 소식을 cron 크롤링 → 키워드 태깅 → 관심사와 일치하는 키워드를 강조·상단 정렬하는 화면. 방향은 유효하지만 지금 규모(혼자 사용)에 크롤링 인프라와 cron 스케줄러까지 얹는 건 과하다고 판단해 **후순위로 내렸다.** 착수한다면 라이브러리 표면·프론트 스택 전환과 묶어서 UI 작업으로 함께 진행한다. `docs/architecture.png`에는 아직 표면 4개로 그려져 있다 — 다음 아키텍처 변경 때 함께 갱신.
@@ -202,7 +202,7 @@ Science_Chatbot/
 ├── reference_recommender.py  # 참고문헌 추천기 — 텍스트→검색어 추출→보유 논문 VDB 우선→부족하면 검색+②b 스크리닝 (⑥ 각 단계·⑦·④ 공용 함수)
 ├── research_workflow.py  # 연구 워크플로우(⑥⑦) 그래프 — 가설 수립→실험 설계→실험 운영→실험 보고서→논문 초안. stage로 START 라우팅(단계 전환은 사람 트리거), 체크포인트 파일 별도
 ├── research_sessions.py  # 연구 세션 목록(⑥) RDB(SQLite) — data/app.db 공유, PK는 thread_id(호출자가 uuid4() 발급)
-├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD), /research/sessions(+CRUD)·/research/{id}/advance·/research/{id}
+├── main.py               # FastAPI: /query, /interests(+CRUD), /interests/{id}/search·/refresh, /papers, /equipment(+CRUD), /research/sessions(+CRUD)·/research/{id}/advance·/research/{id}(+/history)·/research/{id}/draft
 ├── frontend/             # Streamlit 별도 서브프로젝트(별도 이미지) — 메인 챗 + 연구 워크플로우 + 라이브러리(논문/관심사/실험도구/지식노트 탭)
 │   ├── app.py                # st.navigation()으로 페이지 라우팅만 담당
 │   ├── common.py             # BACKEND_URL 등 공용 설정

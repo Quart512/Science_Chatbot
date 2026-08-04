@@ -309,6 +309,27 @@ if values.get("comment"):
 
 _render_stage_content(values)
 
+if values.get("stage") == "writing" and values.get("abstract") and is_tip:
+    with st.expander("초안 수정"):
+        st.caption("`[CITE:논문id]` 표시는 인용 마커입니다 — 위 본문엔 서지 형식으로 바뀌어 보이지만 여기선 원문 그대로이니 지우지 마세요.")
+        with st.form(f"edit_draft_form_{selected['checkpoint_id']}"):
+            edited = {
+                "title": st.text_input("제목", value=values.get("title", "")),
+                "abstract": st.text_area("초록", value=values.get("abstract", ""), height=120),
+                "introduction": st.text_area("서론", value=values.get("introduction", ""), height=150),
+                "methods": st.text_area("방법", value=values.get("methods", ""), height=150),
+                "results": st.text_area("결과", value=values.get("results", ""), height=150),
+                "discussion": st.text_area("고찰", value=values.get("discussion", ""), height=150),
+            }
+            if st.form_submit_button("저장"):
+                try:
+                    resp = requests.post(f"{BACKEND_URL}/research/{thread_id}/draft", json=edited, timeout=30)
+                    resp.raise_for_status()
+                    st.session_state.pop(view_key, None)
+                    st.rerun()
+                except requests.RequestException as e:
+                    st.error(f"저장 실패: {e}")
+
 st.divider()
 st.subheader("다음으로 갈 수 있는 곳")
 _render_next_options(

@@ -654,11 +654,12 @@ def test_delete_equipment_404_when_not_found(monkeypatch):
 # 여기선 app.state.research_graph를 가짜로 바꿔치기해 배관(세션 생성·stage 갱신·
 # 에러 분기)만 본다 — 실제 그래프를 태우면 LLM 호출까지 물어와 톨게이트 원칙에 어긋난다.
 class _FakeSnapshot:
-    def __init__(self, checkpoint_id, values, next=(), created_at="2026-08-04T00:00:00+00:00"):
+    def __init__(self, checkpoint_id, values, next=(), created_at="2026-08-04T00:00:00+00:00", source="loop"):
         self.config = {"configurable": {"checkpoint_id": checkpoint_id}}
         self.values = values
         self.next = next
         self.created_at = created_at
+        self.metadata = {"source": source}
 
 
 class _FakeResearchGraph:
@@ -683,6 +684,7 @@ class _FakeResearchGraph:
 
     async def aupdate_state(self, config, values, as_node=None):
         self.updated_state = values
+        self.result = {**self.result, **values}  # /draft가 곧바로 aget_state로 재조회하는 것과 맞춰 병합 흉내
 
     async def aget_state_history(self, config):
         for snapshot in self.history:
@@ -937,3 +939,85 @@ def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monke
     assert resp.status_code == 200
     ids = [e["checkpoint_id"] for e in resp.json()["history"]]
     assert ids == ["c1", "c2", "c3"]  # c2b(진행 중 체크포인트)는 빠지고, 오래된 것부터
+
+
+def test_get_research_history_includes_latest_pure_edit_checkpoint(monkeypatch):
+    # /draft로 값만 주입한 체크포인트는 next가 안 비어있지만(toy 그래프로 실제 확인),
+    # 그게 최신(index 0)이면 사용자가 방금 저장한 편집본이라 탭에 보여야 한다.
+    history = [
+        _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
+        _FakeSnapshot("c1", {"stage": "writing"}, next=(), created_at="t1", source="loop"),
+    ]
+    fake_graph = _FakeResearchGraph({}, history=history)
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1/history")
+
+    ids = [e["checkpoint_id"] for e in resp.json()["history"]]
+    assert ids == ["c1", "c2edit"]
+
+
+def test_get_research_history_excludes_stale_edit_checkpoint(monkeypatch):
+    # 편집(update) 체크포인트가 최신이 아니면(그 뒤에 진짜 advance가 또 일어났으면)
+    # 이미 그 advance의 최종 결과가 next==()로 잡히니 굳이 또 보여줄 필요가 없다.
+    history = [
+        _FakeSnapshot("c3", {"stage": "writing"}, next=(), created_at="t3", source="loop"),
+        _FakeSnapshot("c2edit", {"stage": "writing"}, next=("draft_paper",), created_at="t2", source="update"),
+        _FakeSnapshot("c1", {"stage": "writing"}, next=(), created_at="t1", source="loop"),
+    ]
+    fake_graph = _FakeResearchGraph({}, history=history)
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1/history")
+
+    ids = [e["checkpoint_id"] for e in resp.json()["history"]]
+    assert ids == ["c1", "c3"]  # c2edit(더 이상 최신이 아닌 편집본)는 빠짐
+
+
+# --- 논문 초안 인앱 편집(08-04 후속) -----------------------------------------------
+
+def test_update_research_draft_merges_given_fields_only(monkeypatch):
+    fake_graph = _FakeResearchGraph({"stage": "writing", "title": "옛 제목", "abstract": "옛 초록"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+
+    assert resp.status_code == 200
+    assert fake_graph.updated_state == {"title": "새 제목"}  # abstract 등 안 보낸 필드는 안 실림
+    assert resp.json()["title"] == "새 제목"
+    assert resp.json()["abstract"] == "옛 초록"  # 안 건드린 필드는 그대로
+
+
+def test_update_research_draft_400_when_not_writing_stage(monkeypatch):
+    fake_graph = _FakeResearchGraph({"stage": "design"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+
+    assert resp.status_code == 400
+    assert fake_graph.updated_state is None
+
+
+def test_update_research_draft_404_when_no_state(monkeypatch):
+    fake_graph = _FakeResearchGraph({})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+
+    assert resp.status_code == 404
+
+
+def test_update_research_draft_skips_update_when_no_fields_given(monkeypatch):
+    fake_graph = _FakeResearchGraph({"stage": "writing", "title": "제목"})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/draft", json={})
+
+    assert resp.status_code == 200
+    assert fake_graph.updated_state is None  # 빈 요청으로 불필요한 체크포인트를 안 만듦

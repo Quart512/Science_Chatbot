@@ -436,15 +436,28 @@ async def get_research_state(request: Request, thread_id: str):
 # 체크포인트 히스토리(08-04 후속, "탭처럼 왔다갔다") — 그래프가 노드 하나 실행할 때마다
 # 체크포인트를 남겨서(가설 호출 하나에도 generate_hypothesis·find_hypothesis_references
 # 두 번) 전부 보여주면 노이즈가 많다. snapshot.next가 빈 튜플인 것만 그 turn(advance
-# 호출 하나)의 최종 결과라 그것만 추린다. 새로 진행 순(오래된 것부터)으로 뒤집어 반환 —
-# 화면이 타임라인처럼 왼쪽부터 그리기 편하도록.
+# 호출 하나)의 최종 결과라 그것만 추린다.
+#
+# 예외 하나: aupdate_state로 값만 주입한 체크포인트(예: /draft의 순수 편집 저장,
+# 노드를 안 태우니 LLM 재호출이 없다)는 next가 안 비어있다(실제로 toy 그래프로 재현·확인—
+# "다음에 route_by_stage가 이 stage를 다시 라우팅하면 실행될 노드"가 next에 남아서다).
+# 그래서 metadata["source"] == "update"인 것도 **가장 최신 것 하나에 한해** 포함한다 —
+# 최신이 아닌 update 체크포인트는 항상 그 직후에 실제 advance(loop)가 뒤따라와 already
+# next==()로 다시 잡히므로(복원 흐름이 aupdate_state 직후 꼭 ainvoke를 부르는 것과 같은
+# 이유) 제외해도 정보 손실이 없다.
+# 새로 진행 순(오래된 것부터)으로 뒤집어 반환 — 화면이 타임라인처럼 왼쪽부터 그리기 편하도록.
 @app.get("/research/{thread_id}/history")
 async def get_research_history(request: Request, thread_id: str):
+    snapshots = [
+        s async for s in request.app.state.research_graph.aget_state_history(
+            {"configurable": {"thread_id": thread_id}}
+        )
+    ]
     entries = []
-    async for snapshot in request.app.state.research_graph.aget_state_history(
-        {"configurable": {"thread_id": thread_id}}
-    ):
-        if snapshot.next:
+    for i, snapshot in enumerate(snapshots):
+        is_turn_final = not snapshot.next
+        is_latest_edit = i == 0 and snapshot.metadata.get("source") == "update"
+        if not (is_turn_final or is_latest_edit):
             continue
         entries.append({
             "checkpoint_id": snapshot.config["configurable"]["checkpoint_id"],
@@ -454,3 +467,33 @@ async def get_research_history(request: Request, thread_id: str):
         })
     entries.reverse()
     return {"history": entries}
+
+
+# 논문 초안 인앱 편집(08-04 후속) — draft_paper()가 채우는 텍스트 필드만 대상. PDF가
+# 아니라 평범한 문자열이라 편집 자체는 단순하다. equipment.py의 "None=명시 안 함" 패턴
+# 그대로 옵셔널 필드만 받아 넘긴 것만 바꾼다. LLM 재호출 없이 aupdate_state로 값만
+# 덮어쓴다(복원 기능과 같은 패턴) — 저장 한 번이 새 tip 체크포인트 하나(위 히스토리의
+# "가장 최신 update" 예외로 탭에도 잡힘).
+class ResearchDraftUpdate(BaseModel):
+    title: str | None = None
+    abstract: str | None = None
+    introduction: str | None = None
+    methods: str | None = None
+    results: str | None = None
+    discussion: str | None = None
+
+
+@app.post("/research/{thread_id}/draft")
+async def update_research_draft(request: Request, thread_id: str, body: ResearchDraftUpdate):
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await request.app.state.research_graph.aget_state(config)
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
+    if snapshot.values.get("stage") != "writing":
+        raise HTTPException(status_code=400, detail="논문 초안(writing) 단계에서만 수정할 수 있습니다")
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await request.app.state.research_graph.aupdate_state(config, updates, as_node="__start__")
+        snapshot = await request.app.state.research_graph.aget_state(config)
+    return snapshot.values
