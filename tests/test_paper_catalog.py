@@ -171,6 +171,22 @@ def test_list_papers_for_interest_returns_empty_when_none_screened(conn):
     assert paper_catalog.list_papers_for_interest(999, conn=conn) == []
 
 
+def test_delete_screenings_for_interest_removes_only_that_interests_rows(conn):
+    # 08-04 버그 수정 — 관심사 삭제 시 이 함수가 안 불리면 interest_paper가 고아로 남는다.
+    paper_catalog.upsert_recommended("arxiv:1", title="논문1", conn=conn)
+    paper_catalog.record_screening(1, "arxiv:1", is_relevant=True, reasoning="관심사1 근거", conn=conn)
+    paper_catalog.record_screening(2, "arxiv:1", is_relevant=True, reasoning="관심사2 근거", conn=conn)
+
+    paper_catalog.delete_screenings_for_interest(1, conn=conn)
+
+    assert paper_catalog.list_papers_for_interest(1, conn=conn) == []
+    assert len(paper_catalog.list_papers_for_interest(2, conn=conn)) == 1  # 다른 관심사 것은 안 건드림
+
+
+def test_delete_screenings_for_interest_no_error_when_none_exist(conn):
+    paper_catalog.delete_screenings_for_interest(999, conn=conn)  # 예외 없이 끝나야 함
+
+
 def test_doi_and_arxiv_id_uniqueness_allows_multiple_nulls(conn):
     # doi가 둘 다 없는(NULL) 논문 두 개를 등록해도 UNIQUE 제약에 안 걸려야 한다
     # (SQLite는 NULL끼리는 서로 다른 값으로 취급 — 표준 SQL 동작)

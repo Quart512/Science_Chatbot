@@ -166,6 +166,7 @@ def test_delete_interest_returns_deleted_action(monkeypatch):
         captured["id"] = interest_id
         return True
     monkeypatch.setattr(interests, "delete_interest", _fake_delete)
+    monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", lambda interest_id, **kw: None)
 
     with TestClient(main.app) as client:
         resp = client.delete("/interests/7")
@@ -175,8 +176,23 @@ def test_delete_interest_returns_deleted_action(monkeypatch):
     assert captured["id"] == 7
 
 
+def test_delete_interest_also_deletes_interest_paper_screenings(monkeypatch):
+    # 08-04 버그 수정 — 관심사를 지울 때 interest_paper 고아 행이 안 남게 같이 지워야 함.
+    monkeypatch.setattr(interests, "delete_interest", lambda interest_id, **kw: True)
+    captured = {}
+    def _fake_delete_screenings(interest_id, **kw):
+        captured["id"] = interest_id
+    monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", _fake_delete_screenings)
+
+    with TestClient(main.app) as client:
+        client.delete("/interests/7")
+
+    assert captured["id"] == 7
+
+
 def test_delete_interest_404_when_not_found(monkeypatch):
     monkeypatch.setattr(interests, "delete_interest", lambda interest_id, **kw: False)
+    monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", lambda interest_id, **kw: None)
 
     with TestClient(main.app) as client:
         resp = client.delete("/interests/999")

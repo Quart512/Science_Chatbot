@@ -1,5 +1,5 @@
 import type { ResearchState } from '../../api/research'
-import { resolveCitations } from './constants'
+import { formatNumberedList, resolveCitations } from './constants'
 
 // frontend/views/research.py의 _render_stage_content()와 같은 계약.
 export function StageContent({ values }: { values: ResearchState }) {
@@ -35,7 +35,7 @@ export function StageContent({ values }: { values: ResearchState }) {
           <p>
             <strong>절차</strong>
           </p>
-          <p className="research-pre">{values.procedure}</p>
+          <p className="research-pre">{formatNumberedList(values.procedure)}</p>
         </section>
       )}
 

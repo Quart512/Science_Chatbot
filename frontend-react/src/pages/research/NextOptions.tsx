@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { advanceResearch, type ResearchState } from '../../api/research'
-import { hasStaleDownstream, nextOptions } from './constants'
+import { nextOptions, stageIndex } from './constants'
 
 interface Props {
   threadId: string
@@ -11,9 +11,17 @@ interface Props {
   onAdvanced: () => void
 }
 
-// frontend/views/research.py의 _render_next_options()와 같은 계약.
+// frontend/views/research.py의 _render_next_options()에서 한 단계 더 나간 계약(08-04
+// 사용자 지적) — 옵션마다 낡은-값 경고가 반복돼서 거슬렸던 걸, "진행"(정방향, 경고
+// 없음)과 "재시도"(같은/이전 단계로, 경고는 그룹 전체에 한 번만)로 나눔. 목표 단계가
+// 현재 단계보다 뒤면 진행, 아니면(같거나 앞) 재시도 — 이 인덱스 비교가 예전의
+// hasStaleDownstream 판정과 동치다(각 단계 진입 노드가 자기보다 뒤 단계 필드를 항상
+// 리셋하므로, "재시도" 대상은 반드시 지금 값이 이미 채워져 있어 경고가 항상 뜬다).
 export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onAdvanced }: Props) {
   const options = nextOptions(values)
+  const currentIndex = stageIndex(values.stage)
+  const forwardOptions = options.filter((o) => stageIndex(o.target) > currentIndex)
+  const retryOptions = options.filter((o) => stageIndex(o.target) <= currentIndex)
 
   let newRefs: ResearchState['references'] = []
   if (fromCheckpointId !== null) {
@@ -23,17 +31,42 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
 
   return (
     <>
-      {options.map((opt) => (
-        <OptionForm
-          key={`${opt.target}_${opt.label}`}
-          threadId={threadId}
-          opt={opt}
-          values={values}
-          fromCheckpointId={fromCheckpointId}
-          newRefs={newRefs}
-          onAdvanced={onAdvanced}
-        />
-      ))}
+      {forwardOptions.length > 0 && (
+        <div className="research-option-group">
+          <h4>진행</h4>
+          {forwardOptions.map((opt) => (
+            <OptionForm
+              key={`${opt.target}_${opt.label}`}
+              threadId={threadId}
+              opt={opt}
+              fromCheckpointId={fromCheckpointId}
+              newRefs={newRefs}
+              onAdvanced={onAdvanced}
+            />
+          ))}
+        </div>
+      )}
+
+      {retryOptions.length > 0 && (
+        <div className="research-option-group">
+          <h4>재시도</h4>
+          {fromCheckpointId === null && (
+            <p className="research-warning">
+              ⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)
+            </p>
+          )}
+          {retryOptions.map((opt) => (
+            <OptionForm
+              key={`${opt.target}_${opt.label}`}
+              threadId={threadId}
+              opt={opt}
+              fromCheckpointId={fromCheckpointId}
+              newRefs={newRefs}
+              onAdvanced={onAdvanced}
+            />
+          ))}
+        </div>
+      )}
     </>
   )
 }
@@ -41,14 +74,12 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, onA
 function OptionForm({
   threadId,
   opt,
-  values,
   fromCheckpointId,
   newRefs,
   onAdvanced,
 }: {
   threadId: string
   opt: ReturnType<typeof nextOptions>[number]
-  values: ResearchState
   fromCheckpointId: string | null
   newRefs: ResearchState['references']
   onAdvanced: () => void
@@ -73,7 +104,6 @@ function OptionForm({
   })
 
   const label = opt.label + (opt.recommended ? ' [추천]' : '')
-  const showStaleWarning = fromCheckpointId === null && hasStaleDownstream(values, opt.target)
 
   function toggleKeep(paperId: string) {
     setKeepIds((prev) => {
@@ -86,11 +116,6 @@ function OptionForm({
 
   return (
     <div className="research-option">
-      {showStaleWarning && (
-        <p className="research-warning">
-          ⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)
-        </p>
-      )}
       <form
         onSubmit={(e) => {
           e.preventDefault()

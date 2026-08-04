@@ -248,6 +248,23 @@ def list_papers_for_interest(
             conn.close()
 
 
+def delete_screenings_for_interest(interest_id: int, *, conn: sqlite3.Connection | None = None) -> None:
+    """관심사 하나가 남긴 interest_paper 행을 전부 지운다 — 관심사를 삭제할 때
+    interests.delete_interest()와 같이 불러야 한다(08-04 실사용 중 발견한 버그: 이걸
+    안 부르면 지운 관심사가 남긴 스크리닝 기록이 고아로 남아 "관심사와 무관한데
+    recommended"로 혼란을 준다). interest_paper는 이 모듈이 스키마를 소유하므로
+    interests.py가 직접 지우지 않고 여기 함수를 통해서만 지운다(순환 import 방지 +
+    각 모듈이 자기 테이블만 아는 원칙)."""
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        conn.execute("DELETE FROM interest_paper WHERE interest_id = ?", (interest_id,))
+        conn.commit()
+    finally:
+        if owns_conn:
+            conn.close()
+
+
 if __name__ == "__main__":
     # 수동 스모크 테스트 — 실제 data/app.db에 씀
     added = upsert_recommended("arxiv:2401.12345", arxiv_id="2401.12345", title="테스트 논문")

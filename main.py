@@ -160,10 +160,13 @@ def register_interest(body: InterestRegistration):
     return {"interest_id": new_id, "action": "created"}
 
 
-# interest_paper 조인 테이블이 없어 관심사 삭제는 interests 행 하나만 지운다 —
-# 그 관심사가 추천한 카탈로그 행을 같이 지울지는 조인 테이블이 생길 때 정한다.
+# interest_paper(관심사가 스크리닝한 논문 기록)도 같이 지운다 — 08-04 실사용 중
+# 발견한 버그: 이 조인 행을 안 지우면 삭제한 관심사가 남긴 recommended 논문·스크리닝
+# 기록이 고아로 남아 "관심사와 무관한데 recommended"로 혼란을 준다. interest_paper는
+# paper_catalog.py가 스키마를 소유해서 그쪽 함수를 통해 지운다(순환 import 방지).
 @app.delete("/interests/{interest_id}")
 def delete_interest(interest_id: int):
+    paper_catalog.delete_screenings_for_interest(interest_id)
     deleted = interests.delete_interest(interest_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"관심사 id={interest_id}를 찾을 수 없습니다")

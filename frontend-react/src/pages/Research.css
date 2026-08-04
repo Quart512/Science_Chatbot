@@ -118,6 +118,18 @@
   font-size: 0.85rem;
 }
 
+.research-option-group {
+  margin-top: 1rem;
+}
+
+.research-option-group h4 {
+  margin: 0 0 0.25rem;
+  color: #a0a4b0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .research-option {
   border-top: 1px solid #2e313d;
   padding: 0.75rem 0;

@@ -32,6 +32,15 @@ export function hasStaleDownstream(values: ResearchState, targetStage: string): 
   return STAGES.slice(idx).some(([s]) => Boolean(values[STAGE_DONE_FIELD[s]]))
 }
 
+// design_experiment()가 만드는 procedure는 "1. ... 2. ... 3. ..."처럼 번호는 붙지만
+// 실제 줄바꿈이 없어 화면에 한 덩어리로 붙어 나온다(08-04 사용자 지적) — 백엔드
+// 프롬프트를 바꾸는 대신 화면에서 정규식으로 후처리(더 견고 — 어느 모델이 만들든
+// 항상 적용됨). 맨 앞 번호(문단 시작)는 그대로 두고, 그 뒤 "숫자. " 앞에만 줄바꿈 삽입.
+export function formatNumberedList(text: string): string {
+  if (!text) return text
+  return text.replace(/ (\d+\.\s)/g, '\n$1')
+}
+
 export function resolveCitations(text: string, references: ResearchReference[]): string {
   const mapping = new Map(references.map((r) => [r.paper_id, r.title]))
   return (text || '').replace(/\[CITE:([^\]]+)\]/g, (match, paperId) => {
@@ -57,7 +66,10 @@ export function nextOptions(values: ResearchState): NextOption[] {
     options = [{ label: '설계 진행', target: 'design', recommended: true, needsResults: false }]
   } else if (stage === 'design') {
     options = [
-      { label: '실험 시작', target: 'operation', recommended: true, needsResults: true },
+      // "실험 시작"은 클릭 즉시 결과 입력을 요구해서 "아직 시작도 안 했는데?" 혼란을
+      // 줬다(08-04 사용자 지적) — operation stage 자체가 analyze_results(결과 분석)라
+      // "실험 진행 중"이라는 중간 상태가 그래프에 없어서 생기는 문구 공백이었다.
+      { label: '실험 결과 입력하고 분석', target: 'operation', recommended: true, needsResults: true },
       { label: '설계 재생성', target: 'design', recommended: false, needsResults: false },
     ]
   } else if (stage === 'operation') {
