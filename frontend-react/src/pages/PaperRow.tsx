@@ -15,10 +15,17 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
   return (
     <div className="paper-row">
       <button className="paper-row-header" onClick={() => setExpanded((v) => !v)}>
-        <span>{paper.title || paper.paper_id}</span>
+        {/* 우선순위: title > filename > paper_id(해시) — 08-04 사용자 요청("해쉬값은
+            최후순위, 파일명이 그 앞"). arxiv/DOI로 등록된 논문은 title이 항상 있어
+            filename까지 갈 일이 드물고, 서지정보를 못 찾은 업로드만 filename을 보여준다. */}
+        <span>{paper.title || paper.filename || paper.paper_id}</span>
         <span>{expanded ? '▲' : '▼'}</span>
       </button>
       {paper.authors && <p className="paper-row-meta">{paper.authors} {paper.year && `(${paper.year})`}</p>}
+      <p className="paper-row-dates">
+        등록 {paper.created_at.slice(0, 10)}
+        {paper.updated_at !== paper.created_at && ` · 수정 ${paper.updated_at.slice(0, 10)}`}
+      </p>
 
       {expanded && (
         <div className="paper-row-summary">

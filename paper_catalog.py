@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS papers (
     status TEXT NOT NULL DEFAULT 'recommended' CHECK(status IN ('recommended', 'owned', 'dismissed')),
     journal_ref TEXT,
     citation_count INTEGER,
+    filename TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -52,9 +53,21 @@ CREATE TABLE IF NOT EXISTS interest_paper (
 );
 """
 
+# CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 새로 추가한 컬럼(filename)을 기존
+# DB에 안 만든다 — equipment.py가 precautions 컬럼에서 실제로 겪은 문제(§7.4 참고)와
+# 같은 함정이라 같은 패턴으로 막는다. 배포 환경(EC2 바인드 마운트)의 기존 papers
+# 테이블에 이 코드를 올리면 filename 없이 INSERT하다 "no such column"으로 터진다.
+_EXPECTED_COLUMNS = {
+    "filename": "TEXT NOT NULL DEFAULT ''",
+}
+
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(papers)")}
+    for name, ddl in _EXPECTED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {ddl}")
     conn.commit()
 
 
@@ -113,6 +126,9 @@ def upsert_recommended(
     보유든 기각이든) **손대지 않는다** — 특히 이미 owned/dismissed인 논문을 추천 검색이
     다시 찾아냈다고 recommended로 되돌리면 사용자가 이미 내린 결정(등록·기각)이 조용히
     뒤집힌다. 반환값은 "새로 추가됐는지" — 이미 있어서 스킵됐으면 False.
+
+    filename이 없는 이유: 추천 후보는 검색 결과(arxiv 등)에서 오므로 업로드 파일 자체가
+    없다 — 빈 문자열로 남고, 실제 파일명은 사용자가 나중에 등록(mark_owned)할 때 채워진다.
     """
     owns_conn = conn is None
     conn = conn or _get_connection()
@@ -140,24 +156,27 @@ def mark_owned(
     title: str = "",
     authors: str = "",
     year: str = "",
+    filename: str = "",
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """paper_id를 owned로 표시한다 — 있으면 status만 바꾸고, 없으면 새로 만든다.
-    register_paper()가 등록 성공 시 호출한다."""
+    register_paper()가 등록 성공 시 호출한다. filename(업로드 원본 파일명)은 title이
+    비어있는 논문(서지정보를 못 찾은 경우)을 화면에서 해시 대신 사람이 읽을 수 있는
+    이름으로 보여주는 차선책 — 08-04 사용자 요청("해쉬값은 최후순위, 파일명이 그 앞")."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
         now = _now()
         if conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone():
             conn.execute(
-                "UPDATE papers SET status = 'owned', updated_at = ? WHERE paper_id = ?",
-                (now, paper_id),
+                "UPDATE papers SET status = 'owned', filename = ?, updated_at = ? WHERE paper_id = ?",
+                (filename, now, paper_id),
             )
         else:
             conn.execute(
-                "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?)",
-                (paper_id, doi, arxiv_id, title, authors, year, now, now),
+                "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, filename, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?)",
+                (paper_id, doi, arxiv_id, title, authors, year, filename, now, now),
             )
         conn.commit()
     finally:

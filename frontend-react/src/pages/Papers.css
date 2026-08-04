@@ -83,6 +83,12 @@
   margin: 0.25rem 0 0;
 }
 
+.paper-row-dates {
+  color: #6b7080;
+  font-size: 0.75rem;
+  margin: 0.15rem 0 0;
+}
+
 .paper-row-summary {
   margin-top: 0.75rem;
   border-top: 1px solid #2e313d;

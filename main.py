@@ -266,7 +266,9 @@ def register_paper_endpoint(
         tmp.write(file_bytes)
         tmp.flush()
         try:
-            return paper_ingest.register_paper(tmp.name, doi=doi, arxiv_id=arxiv_id)
+            return paper_ingest.register_paper(
+                tmp.name, doi=doi, arxiv_id=arxiv_id, filename=file.filename or ""
+            )
         except fitz.FileDataError:
             raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
 

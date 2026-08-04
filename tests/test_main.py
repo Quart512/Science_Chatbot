@@ -394,10 +394,11 @@ def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
     # 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
     captured = {}
 
-    def _fake_register(pdf_path, *, doi=None, arxiv_id=None, **kw):
+    def _fake_register(pdf_path, *, doi=None, arxiv_id=None, filename="", **kw):
         captured["pdf_path"] = pdf_path
         captured["doi"] = doi
         captured["arxiv_id"] = arxiv_id
+        captured["filename"] = filename
         return {"paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1}
 
     monkeypatch.setattr(paper_ingest, "register_paper", _fake_register)
@@ -416,6 +417,7 @@ def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
     assert captured["arxiv_id"] == "2401.12345"
     assert captured["doi"] is None
     assert captured["pdf_path"]  # 임시 파일 경로(내용은 register_paper()가 몽키패치돼 안 쓰임)
+    assert captured["filename"] == "paper.pdf"  # 업로드 원본 파일명이 그대로 전달됨
 
 
 def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):

@@ -10,6 +10,10 @@ export interface PaperCatalogRow {
   status: 'recommended' | 'owned' | 'dismissed'
   journal_ref: string | null
   citation_count: number | null
+  // 업로드 원본 파일명(08-04 사용자 요청) — title이 비어있는 논문(서지정보를 못 찾은
+  // 경우)을 화면에서 해시 대신 사람이 읽을 수 있는 이름으로 보여줄 차선책.
+  // 추천(검색) 경로로 생긴 행은 업로드 파일이 없어 빈 문자열.
+  filename: string
   created_at: string
   updated_at: string
 }
