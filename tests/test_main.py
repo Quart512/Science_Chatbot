@@ -653,21 +653,40 @@ def test_delete_equipment_404_when_not_found(monkeypatch):
 # research_workflow.graph 자체(노드 로직)는 test_research_workflow.py가 이미 검증한다.
 # 여기선 app.state.research_graph를 가짜로 바꿔치기해 배관(세션 생성·stage 갱신·
 # 에러 분기)만 본다 — 실제 그래프를 태우면 LLM 호출까지 물어와 톨게이트 원칙에 어긋난다.
+class _FakeSnapshot:
+    def __init__(self, checkpoint_id, values, next=(), created_at="2026-08-04T00:00:00+00:00"):
+        self.config = {"configurable": {"checkpoint_id": checkpoint_id}}
+        self.values = values
+        self.next = next
+        self.created_at = created_at
+
+
 class _FakeResearchGraph:
-    def __init__(self, result):
-        self.result = result
+    def __init__(self, result, checkpoints=None, history=None):
+        self.result = result  # checkpoint_id 없이 조회하면(=tip) 이 값
+        self.checkpoints = checkpoints or {}  # checkpoint_id -> values (복원 테스트용)
+        self.history = history or []  # aget_state_history가 그대로 순서대로 내보낼 _FakeSnapshot 목록
         self.invoked_with = None
+        self.updated_state = None
 
     async def ainvoke(self, inputs, config):
         self.invoked_with = (inputs, config)
         return self.result
 
     async def aget_state(self, config):
+        checkpoint_id = config["configurable"].get("checkpoint_id")
         class _Snapshot:
             pass
         snapshot = _Snapshot()
-        snapshot.values = self.result
+        snapshot.values = self.checkpoints.get(checkpoint_id, {}) if checkpoint_id else self.result
         return snapshot
+
+    async def aupdate_state(self, config, values, as_node=None):
+        self.updated_state = values
+
+    async def aget_state_history(self, config):
+        for snapshot in self.history:
+            yield snapshot
 
 
 def test_advance_research_rejects_new_thread_without_topic(monkeypatch):
@@ -831,4 +850,90 @@ def test_close_research_session_404_when_not_found(monkeypatch):
 
     assert resp.status_code == 404
 
+
+# --- 체크포인트 히스토리·복원(08-04 후속, "탭처럼 왔다갔다") -----------------------
+
+def test_advance_research_from_checkpoint_restores_past_values(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+
+    past_values = {
+        "stage": "hypothesis", "hypothesis": "옛 가설",
+        "references": [{"paper_id": "p1", "title": "A", "source": "owned", "reasoning": ""}],
+    }
+    tip_values = {
+        "stage": "design",
+        "references": [
+            {"paper_id": "p1", "title": "A", "source": "owned", "reasoning": ""},
+            {"paper_id": "p2", "title": "B", "source": "external", "reasoning": "관련 있음"},
+        ],
+    }
+    fake_graph = _FakeResearchGraph(tip_values, checkpoints={"cp1": past_values})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post(
+            "/research/t1/advance",
+            json={"stage": "design", "from_checkpoint_id": "cp1", "keep_reference_paper_ids": ["p2"]},
+        )
+
+    assert resp.status_code == 200
+    # 과거 값(hypothesis)이 복원되고, references는 과거 것 + 남기기로 고른 p2만 합쳐짐
+    assert fake_graph.updated_state["hypothesis"] == "옛 가설"
+    assert [r["paper_id"] for r in fake_graph.updated_state["references"]] == ["p1", "p2"]
+    # 복원 후 이어지는 ainvoke는 checkpoint_id 없는 tip config로(새로 만든 tip에서 진행)
+    assert "checkpoint_id" not in fake_graph.invoked_with[1]["configurable"]
+
+
+def test_advance_research_from_checkpoint_defaults_to_dropping_new_references(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    monkeypatch.setattr(research_sessions, "update_stage", lambda thread_id, stage, **kw: True)
+
+    past_values = {"stage": "hypothesis", "references": [{"paper_id": "p1", "title": "A", "source": "owned", "reasoning": ""}]}
+    tip_values = {
+        "stage": "design",
+        "references": [
+            {"paper_id": "p1", "title": "A", "source": "owned", "reasoning": ""},
+            {"paper_id": "p2", "title": "B", "source": "external", "reasoning": ""},
+        ],
+    }
+    fake_graph = _FakeResearchGraph(tip_values, checkpoints={"cp1": past_values})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        # keep_reference_paper_ids를 안 보냄 — 기본값(빈 리스트)
+        client.post("/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "cp1"})
+
+    assert [r["paper_id"] for r in fake_graph.updated_state["references"]] == ["p1"]
+
+
+def test_advance_research_404_when_from_checkpoint_not_found(monkeypatch):
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+    fake_graph = _FakeResearchGraph({"stage": "design"}, checkpoints={})
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.post("/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "no-such-cp"})
+
     assert resp.status_code == 404
+
+
+def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monkeypatch):
+    history = [  # aget_state_history는 최신순으로 내놓음
+        _FakeSnapshot("c3", {"stage": "design"}, next=(), created_at="t3"),
+        _FakeSnapshot("c2b", {"stage": "hypothesis"}, next=("find_hypothesis_references",), created_at="t2b"),
+        _FakeSnapshot("c2", {"stage": "hypothesis"}, next=(), created_at="t2"),
+        _FakeSnapshot("c1", {"stage": "hypothesis"}, next=(), created_at="t1"),
+    ]
+    fake_graph = _FakeResearchGraph({}, history=history)
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = fake_graph
+        resp = client.get("/research/t1/history")
+
+    assert resp.status_code == 200
+    ids = [e["checkpoint_id"] for e in resp.json()["history"]]
+    assert ids == ["c1", "c2", "c3"]  # c2b(진행 중 체크포인트)는 빠지고, 오래된 것부터

@@ -363,6 +363,13 @@ class ResearchAdvanceRequest(BaseModel):
     stage: Literal["hypothesis", "design", "operation", "report", "writing"]
     topic: str | None = None
     experiment_results: str | None = None
+    # 과거 체크포인트에서 이어갈 때만 쓰는 필드(체크포인트 히스토리·복원, 08-04 후속) —
+    # from_checkpoint_id가 있으면 그 시점 값을 현재 tip으로 복원한 뒤 이 요청의 stage로
+    # 이어간다. references만은 예외로 항상 최신을 원칙으로 하되(RoadMap 설계 노트 참고),
+    # 그 시점 이후 새로 쌓인 것 중 사용자가 명시적으로 남기기로 고른 paper_id만 같이 살린다
+    # — 기본값(빈 리스트)은 "그 시점에 없던 참고문헌은 버린다"는 뜻.
+    from_checkpoint_id: str | None = None
+    keep_reference_paper_ids: list[str] = Field(default_factory=list)
 
 
 @app.post("/research/{thread_id}/advance")
@@ -379,13 +386,36 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
             )
         research_sessions.create_session(thread_id, title=body.topic, topic=body.topic, stage=body.stage)
 
+    config = {"configurable": {"thread_id": thread_id}}
+
+    if body.from_checkpoint_id is not None:
+        past_config = {"configurable": {"thread_id": thread_id, "checkpoint_id": body.from_checkpoint_id}}
+        past_snapshot = await request.app.state.research_graph.aget_state(past_config)
+        if not past_snapshot.values:
+            raise HTTPException(status_code=404, detail=f"checkpoint_id={body.from_checkpoint_id}를 찾을 수 없습니다")
+        tip_snapshot = await request.app.state.research_graph.aget_state(config)
+
+        past_references = past_snapshot.values.get("references", [])
+        past_paper_ids = {r["paper_id"] for r in past_references}
+        keep_ids = set(body.keep_reference_paper_ids)
+        kept_new_references = [
+            r for r in tip_snapshot.values.get("references", [])
+            if r["paper_id"] not in past_paper_ids and r["paper_id"] in keep_ids
+        ]
+        # 과거 값 전체를 새 tip으로 복사(LLM 호출 없음, main.py의 disabled_models 갱신과
+        # 같은 as_node="__start__" 패턴) — 복사 직전까지의 tip은 그 자체로 이미 하나의
+        # 체크포인트라 사라지지 않는다, 그쪽으로도 언제든 다시 이 방식으로 돌아올 수 있다.
+        await request.app.state.research_graph.aupdate_state(
+            config, {**past_snapshot.values, "references": past_references + kept_new_references},
+            as_node="__start__",
+        )
+
     inputs = {"stage": body.stage}
     if body.topic is not None:
         inputs["topic"] = body.topic
     if body.experiment_results is not None:
         inputs["experiment_results"] = body.experiment_results
 
-    config = {"configurable": {"thread_id": thread_id}}
     result = await request.app.state.research_graph.ainvoke(inputs, config=config)
     research_sessions.update_stage(thread_id, body.stage)
     return result
@@ -401,3 +431,26 @@ async def get_research_state(request: Request, thread_id: str):
     if not snapshot.values:
         raise HTTPException(status_code=404, detail=f"연구 세션 thread_id={thread_id}의 상태가 없습니다")
     return snapshot.values
+
+
+# 체크포인트 히스토리(08-04 후속, "탭처럼 왔다갔다") — 그래프가 노드 하나 실행할 때마다
+# 체크포인트를 남겨서(가설 호출 하나에도 generate_hypothesis·find_hypothesis_references
+# 두 번) 전부 보여주면 노이즈가 많다. snapshot.next가 빈 튜플인 것만 그 turn(advance
+# 호출 하나)의 최종 결과라 그것만 추린다. 새로 진행 순(오래된 것부터)으로 뒤집어 반환 —
+# 화면이 타임라인처럼 왼쪽부터 그리기 편하도록.
+@app.get("/research/{thread_id}/history")
+async def get_research_history(request: Request, thread_id: str):
+    entries = []
+    async for snapshot in request.app.state.research_graph.aget_state_history(
+        {"configurable": {"thread_id": thread_id}}
+    ):
+        if snapshot.next:
+            continue
+        entries.append({
+            "checkpoint_id": snapshot.config["configurable"]["checkpoint_id"],
+            "stage": snapshot.values.get("stage"),
+            "created_at": snapshot.created_at,
+            "values": snapshot.values,
+        })
+    entries.reverse()
+    return {"history": entries}

@@ -67,29 +67,31 @@ def _next_options(state: dict) -> list[dict]:
     if not state.get(STAGE_DONE_FIELD[stage]):
         return []  # 이 단계가 아직 안 끝났으면(진행 중 실패 등) 다음 단계 선택지도 없음
     if stage == "hypothesis":
-        return [{"label": "설계 진행", "target": "design", "recommended": True, "needs_results": False}]
-    if stage == "design":
-        return [
+        options = [{"label": "설계 진행", "target": "design", "recommended": True, "needs_results": False}]
+    elif stage == "design":
+        options = [
             {"label": "실험 시작", "target": "operation", "recommended": True, "needs_results": True},
             {"label": "설계 재생성", "target": "design", "recommended": False, "needs_results": False},
         ]
-    if stage == "operation":
+    elif stage == "operation":
         outcome = state.get("outcome", "")
-        return [
+        options = [
             {"label": "보고서 작성", "target": "report", "recommended": outcome == "supported", "needs_results": False},
             {"label": "가설부터 재수립", "target": "hypothesis", "recommended": outcome == "hypothesis_wrong", "needs_results": False},
             {"label": "재설계", "target": "design", "recommended": outcome == "design_flawed", "needs_results": False},
             {"label": "같은 설계로 재실험", "target": "operation", "recommended": outcome == "execution_error", "needs_results": True},
             {"label": "결과 다시 입력해 재분석", "target": "operation", "recommended": outcome == "analysis_error", "needs_results": True},
         ]
-    if stage == "report":
+    elif stage == "report":
         options = [{"label": "논문 작성", "target": "writing", "recommended": True, "needs_results": False}]
         for target, label in STAGES[:3]:
             options.append({"label": f"{label}로 돌아가 고치기", "target": target, "recommended": False, "needs_results": target == "operation"})
-        return options
-    if stage == "writing":
-        return [{"label": "초안 재생성", "target": "writing", "recommended": False, "needs_results": False}]
-    return []
+    elif stage == "writing":
+        options = [{"label": "초안 재생성", "target": "writing", "recommended": False, "needs_results": False}]
+    else:
+        options = []
+    # 추천 옵션을 맨 위로 — sorted()는 안정 정렬이라 recommended 안에서는 원래 순서 유지
+    return sorted(options, key=lambda o: not o["recommended"])
 
 
 def _render_stage_content(state: dict) -> None:
