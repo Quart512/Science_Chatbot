@@ -21,6 +21,7 @@
 # 가져옴 — 모듈 최상단 import 시 BAAI/bge-m3가 로딩되는 걸 피하려고). 테스트는 가짜
 # vectorstore를 주입하고 parse_pdf/invoke_with_fallback은 monkeypatch로 갈아끼운다.
 
+import hashlib
 import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -96,6 +97,7 @@ def register_paper(
     arxiv_id: str | None = None,
     bibliographic: dict | None = None,
     filename: str = "",
+    file_path: str | None = None,
     vectorstore=None,
 ) -> dict:
     """PDF를 파싱해 임베딩용 청크(doc_type=fulltext_chunk)로 등록한다. 요약은 lazy
@@ -106,6 +108,12 @@ def register_paper(
     fetch_by_id()로 자동 조회(title 등도 같이 채워짐, 호출자 값이 우선) — 조회 실패는
     등록을 막지 않는다. filename(업로드 원본 파일명)은 카탈로그에만 저장되고 파싱에는
     안 쓰인다 — title이 비어있는 논문을 화면에서 해시 대신 보여줄 차선책(08-04 참고).
+
+    file_path(08-05, ②-B — RoadMap "논문 파일 경로 추적 재설계" 참고)는 library/ 루트
+    기준 상대경로다 — library/ 경유("트래킹에 추가")로 호출될 때만 넘어오고, 기존 업로드
+    다이얼로그(tempfile 경유)는 None으로 둔다. content_sha256은 file_path 유무와
+    무관하게 항상 계산해 카탈로그에 남긴다 — DOI/arXiv 논문은 paper_id가 해시가 아니라서
+    (normalize_paper_id: DOI>arXiv>해시) 파일↔레코드를 내용으로 매칭할 별도 컬럼이 필요.
 
     반환: {"paper_id", "text_extractable", "chunk_count", "page_count", "title_check":
     {"status", "given_title", "pdf_title"}}. 스캔본은 chunk_count=0으로 정직하게 보고하고
@@ -119,6 +127,7 @@ def register_paper(
 
     parsed = parse_pdf(file_bytes)
     paper_id = normalize_paper_id(doi=doi, arxiv_id=arxiv_id, file_bytes=file_bytes)
+    content_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     if not parsed["text_extractable"]:
         # 스캔본은 저장할 청크가 없으므로 vectorstore를 아예 건드리지 않는다 —
@@ -218,6 +227,8 @@ def register_paper(
         authors=bib_meta.get("authors", ""),
         year=bib_meta.get("year", ""),
         filename=filename,
+        file_path=file_path,
+        content_sha256=content_sha256,
     )
 
     return {

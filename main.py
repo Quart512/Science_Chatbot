@@ -330,6 +330,29 @@ def list_library_files():
     return {"files": paper_catalog.scan_library_files()}
 
 
+# "트래킹에 추가" ②-B(08-05) — register_paper()가 이미 파싱→청킹→임베딩→mark_owned()
+# upsert까지 다 하므로(파일이 이미 디스크에 있어 /api/papers처럼 tempfile로 옮길 필요도
+# 없음), 여기서는 사용자가 준 상대경로를 검증해 절대경로로 바꾸는 것만 새로 한다.
+class LibraryTrackRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/library/track")
+def track_library_file(body: LibraryTrackRequest):
+    try:
+        abs_path = paper_catalog.resolve_library_path(body.path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="library/ 루트를 벗어난 경로입니다")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail=f"library/{body.path} 파일을 찾을 수 없습니다")
+    try:
+        return paper_ingest.register_paper(
+            abs_path, filename=os.path.basename(body.path), file_path=body.path
+        )
+    except fitz.FileDataError:
+        raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+
+
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
 # update_existing_id도 InterestRegistration과 같은 계약: None이면 새로 생성, 값이 있으면
 # 그 id를 수정.

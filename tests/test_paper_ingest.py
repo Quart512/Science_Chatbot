@@ -168,6 +168,46 @@ def test_register_paper_defaults_filename_to_empty_string(monkeypatch, tmp_path)
     assert calls[0]["filename"] == ""
 
 
+def test_register_paper_passes_file_path_to_catalog(monkeypatch, tmp_path):
+    # ②-B(08-05) — library/ 경유 등록("트래킹에 추가")이면 file_path가 그대로 mark_owned에
+    # 전달돼야 한다. 기존 업로드 다이얼로그 경로는 file_path를 안 넘기므로 기본값 None이
+    # 그대로 전달되는지는 아래 별도 테스트에서 확인.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: calls.append(kwargs)
+    )
+
+    paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.12347", file_path="quantum/paper.pdf", vectorstore=FakeVectorstore()
+    )
+
+    assert calls[0]["file_path"] == "quantum/paper.pdf"
+
+
+def test_register_paper_computes_content_sha256_even_without_file_path(monkeypatch, tmp_path):
+    # content_sha256(설계 노트 항목 C)은 file_path 유무와 무관하게 항상 계산된다 —
+    # DOI/arXiv 논문은 paper_id가 해시가 아니라 이 컬럼이 유일한 내용 매칭 수단이므로.
+    import hashlib
+
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: calls.append(kwargs)
+    )
+
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.12348", vectorstore=FakeVectorstore())
+
+    assert calls[0]["file_path"] is None
+    assert calls[0]["content_sha256"] == hashlib.sha256(b"dummy").hexdigest()
+
+
 def test_register_paper_scanned_pdf_skips_catalog(monkeypatch, tmp_path):
     # 스캔본은 VDB에 아무것도 저장하지 않는 것과 대칭으로 카탈로그도 안 건드린다 —
     # "파싱해서 실제로 확보된 논문"만 owned로 표시한다는 설계 그대로.

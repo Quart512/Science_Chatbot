@@ -489,6 +489,71 @@ def test_list_library_files_returns_scan_result(monkeypatch):
     assert resp.json() == {"files": fake_files}
 
 
+# --- POST /api/library/track (②-B, 08-05) ---------------------------------------
+# register_paper() 자체는 몽키패치로 갈아끼운다 — 여기서 보는 건 엔드포인트가 상대경로를
+# library/ 기준 절대경로로 바꿔 file_path와 함께 그대로 넘기는지, traversal·파일없음·
+# 잘못된 PDF를 각각 올바른 상태 코드로 거절하는지뿐이다.
+
+
+def test_track_library_file_forwards_relative_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 dummy")
+
+    captured = {}
+
+    def _fake_register(pdf_path, *, filename="", file_path=None, **kw):
+        captured["pdf_path"] = pdf_path
+        captured["filename"] = filename
+        captured["file_path"] = file_path
+        return {"paper_id": "hash:aaa", "text_extractable": True, "chunk_count": 1, "page_count": 1}
+
+    monkeypatch.setattr(paper_ingest, "register_paper", _fake_register)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "quantum/paper.pdf"})
+
+    assert resp.status_code == 200
+    assert captured["file_path"] == "quantum/paper.pdf"
+    assert captured["filename"] == "paper.pdf"
+    assert captured["pdf_path"] == str((tmp_path / "quantum" / "paper.pdf").resolve())
+
+
+def test_track_library_file_404_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "does-not-exist.pdf"})
+
+    assert resp.status_code == 404
+
+
+def test_track_library_file_400_on_traversal(monkeypatch, tmp_path):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "../outside.pdf"})
+
+    assert resp.status_code == 400
+
+
+def test_track_library_file_400_on_invalid_pdf(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "broken.pdf").write_bytes(b"not a real pdf")
+
+    def _boom(pdf_path, **kw):
+        raise fitz.FileDataError("cannot open broken document")
+
+    monkeypatch.setattr(paper_ingest, "register_paper", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "broken.pdf"})
+
+    assert resp.status_code == 400
+
+
 # --- GET /papers/{paper_id}/summary (08-03) -------------------------------------
 # get_paper_summary()는 6-3부터 있었지만 API로 노출된 적이 없었다(main.py 어디서도
 # 안 부름) — 여기서 처음 연결.

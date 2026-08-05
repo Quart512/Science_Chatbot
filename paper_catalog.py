@@ -132,6 +132,19 @@ def list_papers(*, status: str | None = None, conn: sqlite3.Connection | None = 
             conn.close()
 
 
+def resolve_library_path(rel_path: str) -> str:
+    """library/ 루트 기준 상대경로를 절대경로로 바꾸고 traversal을 막는다(②-B "트래킹에
+    추가" 엔드포인트 전용 — RoadMap 설계 노트 §A가 ③ PDF 뷰어에 대해 짚어둔 것과 같은
+    종류의 방어). scan_library_files()와 달리 여기 rel_path는 **사용자가 요청 본문으로
+    직접 주는 값**이라 "../../etc/passwd" 같은 입력이 실제로 올 수 있다 — os.path.realpath로
+    정규화한 뒤 LIBRARY_DIR 접두사를 확인해 벗어나면 ValueError."""
+    library_root = os.path.realpath(LIBRARY_DIR)
+    abs_path = os.path.realpath(os.path.join(library_root, rel_path))
+    if not abs_path.startswith(library_root + os.sep):
+        raise ValueError(f"library/ 루트를 벗어난 경로입니다: {rel_path}")
+    return abs_path
+
+
 def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     """library/ 밑의 PDF를 재귀로 나열하고 papers.file_path와 대조해 tracked 여부를
     붙인다(②-A, 서버측 파일 브라우저의 스캔 단계 — RoadMap 설계 노트 참고). 반환:
@@ -214,26 +227,35 @@ def mark_owned(
     authors: str = "",
     year: str = "",
     filename: str = "",
+    file_path: str | None = None,
+    content_sha256: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """paper_id를 owned로 표시한다 — 있으면 status만 바꾸고, 없으면 새로 만든다.
     register_paper()가 등록 성공 시 호출한다. filename(업로드 원본 파일명)은 title이
     비어있는 논문(서지정보를 못 찾은 경우)을 화면에서 해시 대신 사람이 읽을 수 있는
-    이름으로 보여주는 차선책 — 08-04 사용자 요청("해쉬값은 최후순위, 파일명이 그 앞")."""
+    이름으로 보여주는 차선책 — 08-04 사용자 요청("해쉬값은 최후순위, 파일명이 그 앞").
+
+    file_path·content_sha256(08-05, ②-B "트래킹에 추가" — RoadMap 설계 노트 참고)은
+    library/ 경유로 등록됐을 때만 채워진다(기존 업로드 다이얼로그 경로는 여전히 None) —
+    filename과 같은 방식으로 UPDATE·INSERT 양쪽에 반영해, 이미 recommended로 존재하던
+    논문을 library/에서 트래킹에 추가해도 경로가 누락되지 않게 한다."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
         now = _now()
         if conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone():
             conn.execute(
-                "UPDATE papers SET status = 'owned', filename = ?, updated_at = ? WHERE paper_id = ?",
-                (filename, now, paper_id),
+                "UPDATE papers SET status = 'owned', filename = ?, file_path = ?, content_sha256 = ?, "
+                "updated_at = ? WHERE paper_id = ?",
+                (filename, file_path, content_sha256, now, paper_id),
             )
         else:
             conn.execute(
-                "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, filename, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?)",
-                (paper_id, doi, arxiv_id, title, authors, year, filename, now, now),
+                "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, filename, "
+                "file_path, content_sha256, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?, ?, ?)",
+                (paper_id, doi, arxiv_id, title, authors, year, filename, file_path, content_sha256, now, now),
             )
         conn.commit()
     finally:

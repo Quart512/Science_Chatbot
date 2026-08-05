@@ -119,6 +119,31 @@ def test_mark_owned_backfills_filename_on_promoted_row(conn):
     assert row["filename"] == "업로드한파일.pdf"
 
 
+def test_mark_owned_stores_file_path_and_content_sha256_on_new_row(conn):
+    # ②-B(08-05) — library/ 경유 등록 시 file_path·content_sha256이 filename과 같은
+    # 방식으로 저장돼야 한다.
+    paper_catalog.mark_owned(
+        "hash:abcd", file_path="quantum/paper.pdf", content_sha256="deadbeef", conn=conn
+    )
+    row = paper_catalog.get_paper("hash:abcd", conn=conn)
+
+    assert row["file_path"] == "quantum/paper.pdf"
+    assert row["content_sha256"] == "deadbeef"
+
+
+def test_mark_owned_backfills_file_path_on_promoted_row(conn):
+    # filename과 같은 이유(추천 경로엔 파일이 없어 채울 기회가 없었음) — library/에서
+    # "트래킹에 추가"로 승격할 때도 file_path가 누락되지 않아야 한다.
+    paper_catalog.upsert_recommended("arxiv:2401.1", title="추천됨", conn=conn)
+    paper_catalog.mark_owned(
+        "arxiv:2401.1", file_path="quantum/paper.pdf", content_sha256="deadbeef", conn=conn
+    )
+
+    row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
+    assert row["file_path"] == "quantum/paper.pdf"
+    assert row["content_sha256"] == "deadbeef"
+
+
 def test_dismiss_marks_status_and_returns_true(conn):
     paper_catalog.upsert_recommended("arxiv:2401.1", title="기각될 논문", conn=conn)
     result = paper_catalog.dismiss("arxiv:2401.1", conn=conn)
@@ -277,3 +302,22 @@ def test_scan_library_files_empty_when_library_dir_missing(conn, tmp_path, monke
     monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path / "does-not-exist"))
 
     assert paper_catalog.scan_library_files(conn=conn) == []
+
+
+def test_resolve_library_path_returns_absolute_path_inside_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+
+    resolved = paper_catalog.resolve_library_path("quantum/paper.pdf")
+
+    assert resolved == str((tmp_path / "quantum" / "paper.pdf").resolve())
+
+
+def test_resolve_library_path_rejects_traversal_outside_root(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with pytest.raises(ValueError):
+        paper_catalog.resolve_library_path("../outside.pdf")
