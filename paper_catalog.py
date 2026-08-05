@@ -136,13 +136,22 @@ def resolve_library_path(rel_path: str) -> str:
     """library/ 루트 기준 상대경로를 절대경로로 바꾸고 traversal을 막는다(②-B "트래킹에
     추가" 엔드포인트 전용 — RoadMap 설계 노트 §A가 ③ PDF 뷰어에 대해 짚어둔 것과 같은
     종류의 방어). scan_library_files()와 달리 여기 rel_path는 **사용자가 요청 본문으로
-    직접 주는 값**이라 "../../etc/passwd" 같은 입력이 실제로 올 수 있다 — os.path.realpath로
-    정규화한 뒤 LIBRARY_DIR 접두사를 확인해 벗어나면 ValueError."""
+    직접 주는 값**이라 "../../etc/passwd" 같은 입력이 실제로 올 수 있다.
+
+    검사를 os.path.realpath가 아니라 os.path.normpath로 한다(08-05, "라이브러리 외부
+    경로 추적" — RoadMap 설계 노트 참고) — realpath는 심볼릭 링크까지 다 풀어버려서
+    "../"로 벗어나려는 시도(막아야 함)와 사용자가 library/ 안에 일부러 걸어둔 심볼릭
+    링크(허용해야 함 — portable 번들에서 library/ 밖 폴더를 원래 경로 그대로 추적하는
+    수단)를 구분하지 못했다. normpath는 심볼릭 링크를 안 건드리고 "../"·"." 같은 문자열
+    구조만 정규화하므로 — "../../etc/passwd"는 여전히 걸러지고, "external_link/foo.pdf"
+    (링크 자체는 library/ 안에 있으므로 문자열상 안 벗어남)는 통과한다. 실제 파일을 열
+    때는 OS가 알아서 링크를 따라간다(Docker에서는 컨테이너가 링크 target을 못 보므로
+    자연히 깨진 링크로 실패 — scan_library_files()가 이미 걸러줌)."""
     library_root = os.path.realpath(LIBRARY_DIR)
-    abs_path = os.path.realpath(os.path.join(library_root, rel_path))
-    if not abs_path.startswith(library_root + os.sep):
+    normalized = os.path.normpath(os.path.join(library_root, rel_path))
+    if normalized != library_root and not normalized.startswith(library_root + os.sep):
         raise ValueError(f"library/ 루트를 벗어난 경로입니다: {rel_path}")
-    return abs_path
+    return normalized
 
 
 def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
@@ -151,11 +160,16 @@ def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     [{"path": "quantum/foo.pdf", "tracked": bool}, ...], path는 LIBRARY_DIR 기준
     상대경로(os.sep과 무관하게 항상 "/" 구분자로 통일 — 프론트·API 응답은 플랫폼 중립이어야 함).
 
-    파일시스템 읽기 + DB 조회만 하는 순수 조회 함수(LLM·네트워크 없음). os.walk가
-    LIBRARY_DIR 밑만 순회하므로 사용자 입력에 의한 경로 traversal 위험은 없지만,
-    library/ 안의 심볼릭 링크가 루트 밖을 가리키는 경우까지 막는다 — 이 함수가
-    돌려주는 path가 ②-B(register_paper)에서 다시 디스크 경로로 조립되므로 여기서
-    걸러두는 게 안전하다.
+    파일시스템 읽기 + DB 조회만 하는 순수 조회 함수(LLM·네트워크 없음).
+
+    심볼릭 링크를 따라간다(followlinks=True, 08-05 "라이브러리 외부 경로 추적" —
+    RoadMap 설계 노트 참고) — portable 파이썬 번들(컨테이너 경계 없음)에서 사용자가
+    library/ 밖 폴더·파일을 원래 경로 그대로 추적하고 싶을 때, library/ 안에 심볼릭
+    링크만 걸어두면 되게 하기 위해서다. Docker 배포에서는 컨테이너가 바인드 마운트
+    밖의 호스트 경로를 애초에 못 보므로 그런 링크는 깨진 링크로 남고, os.path.isfile()이
+    깨진 링크에 False를 돌려줘 자연히 스캔에서 빠진다 — 코드 분기 없이 두 배포 방식
+    모두 안전하게 동작. 순환 심볼릭 링크(예: library/self -> library/)로 무한 루프에
+    빠지지 않게 실제 경로(realpath) 기준으로 이미 방문한 디렉터리는 다시 안 내려간다.
     """
     owns_conn = conn is None
     conn = conn or _get_connection()
@@ -166,14 +180,20 @@ def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
         }
         library_root = os.path.realpath(LIBRARY_DIR)
         files = []
-        for dirpath, _dirnames, filenames in os.walk(library_root):
+        seen_dirs = set()
+        for dirpath, dirnames, filenames in os.walk(library_root, followlinks=True):
+            real_dirpath = os.path.realpath(dirpath)
+            if real_dirpath in seen_dirs:
+                dirnames[:] = []  # 이미 방문한 실제 디렉터리 — 순환 방지, 더 안 내려감
+                continue
+            seen_dirs.add(real_dirpath)
             for name in filenames:
                 if not name.lower().endswith(".pdf"):
                     continue
-                abs_path = os.path.realpath(os.path.join(dirpath, name))
-                if not abs_path.startswith(library_root + os.sep):
-                    continue
-                rel_path = os.path.relpath(abs_path, library_root).replace(os.sep, "/")
+                full_path = os.path.join(dirpath, name)
+                if not os.path.isfile(full_path):
+                    continue  # 깨진 심볼릭 링크(Docker에서 컨테이너 밖 경로를 가리키는 경우 등) 무시
+                rel_path = os.path.relpath(full_path, library_root).replace(os.sep, "/")
                 files.append({"path": rel_path, "tracked": rel_path in tracked_paths})
         files.sort(key=lambda f: f["path"])
         return files

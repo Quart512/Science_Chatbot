@@ -323,6 +323,75 @@ def test_resolve_library_path_rejects_traversal_outside_root(tmp_path, monkeypat
         paper_catalog.resolve_library_path("../outside.pdf")
 
 
+# --- 심볼릭 링크로 library/ 외부 경로 추적 (④ 후속, 08-05) -----------------------
+# portable 번들(컨테이너 경계 없음)에서 library/ 밖 폴더·파일을 원래 경로 그대로
+# 추적하는 수단 — RoadMap 설계 노트 "라이브러리 외부 경로 추적" 참고. Docker에서는
+# 같은 심볼릭 링크가 컨테이너 밖 경로를 가리켜 깨진 링크가 되므로 별도 분기 없이도
+# 자연히 무해하다(아래 test_scan_library_files_ignores_broken_symlink가 그 상황을 흉내).
+
+
+def test_scan_library_files_follows_symlinked_directory(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "foo.pdf").write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    files = paper_catalog.scan_library_files()
+
+    assert files == [{"path": "linked/foo.pdf", "tracked": False}]
+
+
+def test_scan_library_files_follows_symlinked_file(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_file = tmp_path / "external.pdf"
+    external_file.write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked.pdf").symlink_to(external_file)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    files = paper_catalog.scan_library_files()
+
+    assert files == [{"path": "linked.pdf", "tracked": False}]
+
+
+def test_scan_library_files_ignores_broken_symlink(tmp_path, monkeypatch):
+    # Docker 배포에서 실제로 벌어지는 상황을 흉내 — 컨테이너가 못 보는 호스트 경로를
+    # 가리키는 심볼릭 링크는 존재하지 않는 대상을 가리키는 것과 동치.
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "broken.pdf").symlink_to(tmp_path / "does-not-exist.pdf")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    assert paper_catalog.scan_library_files() == []
+
+
+def test_scan_library_files_avoids_infinite_loop_on_cyclic_symlink(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "self").symlink_to(library_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    result = paper_catalog.scan_library_files()  # 순환을 못 막으면 여기서 무한 루프
+
+    assert result == []
+
+
+def test_resolve_library_path_allows_symlink_pointing_outside_root(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    resolved = paper_catalog.resolve_library_path("linked/foo.pdf")
+
+    assert resolved == str(library_dir / "linked" / "foo.pdf")
+
+
 def test_mark_owned_defaults_analysis_status_to_done(conn):
     # ④(08-05) — 기존 호출부(register_paper()가 분석을 이미 마친 뒤 호출)는 인자를
     # 안 줘도 done이 자동으로 찍혀야 기존 동작이 안 깨진다.
