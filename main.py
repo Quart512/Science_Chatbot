@@ -66,6 +66,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 설치판 실행 스크립트(.command/.bat, 08-05 Docker 패키징)가 폴링할 가벼운 대상 — DB나
+# 임베딩 모델을 안 건드리는 순수 응답. lifespan이 끝나야(bge-m3 로딩 완료 후) 이 라우트
+# 자체가 응답 가능해지므로, 200이 오는 순간 곧 "서버가 실제로 요청을 받을 준비가 됐다"는
+# 뜻이다 — 실측(08-05): 처음 받는 bge-m3 다운로드 포함 시 최대 2~3분까지 걸릴 수 있었다.
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
 # top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에 그대로는 안 뺌 — 대신 Claude의 reasoning
 # effort와 같은 패턴으로 low/medium/high 프로필만 노출. 실제 숫자 매핑은 graph.py(EFFORT_PROFILES)
 # 안에 있고, 여긴 그 이름만 그대로 통과시킨다.
