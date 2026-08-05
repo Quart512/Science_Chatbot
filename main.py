@@ -19,6 +19,7 @@ from uuid import uuid4
 from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+import api_keys
 import equipment
 import interests
 import knowledge_notes
@@ -65,6 +66,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# /api 응답에 브라우저가 캐싱하지 못하게 명시(08-05, 설정 화면 개발 중 실제로 겪은 버그).
+# FastAPI는 기본적으로 Cache-Control을 안 붙이는데, 그 상태에서 어떤 이유로든 /api
+# 경로가 한 번이라도 캐싱 가능한 응답(예: SPA 폴백의 FileResponse가 ETag/Last-Modified를
+# 자동으로 붙인 index.html)을 준 적이 있으면, 브라우저가 그 뒤로도 진짜 API 응답 대신
+# 캐싱된 옛 응답을 계속 재사용한다 — 실제로 이 경로 분리(/api) 작업 도중 재현: 서버
+# 코드를 고쳐 재시작해도 브라우저가 예전 응답을 계속 돌려줘서 원인 파악에 시간이 걸렸다.
+# REST API는 애초에 캐싱 대상이 아니므로(정적 자산 /assets/*는 Vite가 파일명에 해시를
+# 붙여 그대로 장기 캐싱돼도 안전 — 여긴 안 건드림) 아예 원천 차단한다.
+@app.middleware("http")
+async def no_cache_for_api(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 # 설치판 실행 스크립트(.command/.bat, 08-05 Docker 패키징)가 폴링할 가벼운 대상 — DB나
 # 임베딩 모델을 안 건드리는 순수 응답. lifespan이 끝나야(bge-m3 로딩 완료 후) 이 라우트
@@ -391,6 +408,35 @@ def delete_note(note_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"노트 id={note_id}를 찾을 수 없습니다")
     return {"note_id": note_id, "action": "deleted"}
+
+
+# 설정 화면(08-05) — 사용자 API 키 입력. RoadMap "싱글 유저 로컬 앱 확정" 결정("API 키는
+# 사용자 본인 입력") 참고. 조회는 마스킹된 상태만 돌려주고 평문 키를 다시 내려주지 않는다
+# — 저장된 키를 화면에 다시 보여줄 일이 없어서(있음/끝자리만 표시) 그럴 이유가 없다.
+class ApiKeyRegistration(BaseModel):
+    provider: Literal["gemini", "claude"]
+    api_key: str
+
+
+@app.get("/api/settings/keys")
+def list_api_key_status():
+    return {"keys": api_keys.list_key_status()}
+
+
+@app.post("/api/settings/keys")
+def save_api_key(body: ApiKeyRegistration):
+    if not body.api_key.strip():
+        raise HTTPException(status_code=400, detail="api_key는 빈 문자열일 수 없습니다")
+    api_keys.set_api_key(body.provider, body.api_key.strip())
+    return {"provider": body.provider, "action": "saved"}
+
+
+@app.delete("/api/settings/keys/{provider}")
+def delete_api_key(provider: Literal["gemini", "claude"]):
+    deleted = api_keys.delete_api_key(provider)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"저장된 {provider} 키가 없습니다")
+    return {"provider": provider, "action": "deleted"}
 
 
 # 연구 워크플로우(⑥) 세션 목록 — 챗 사이드바와 같은 패턴(thread_id는 프론트가 새 연구를

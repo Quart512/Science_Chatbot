@@ -11,6 +11,7 @@ import fitz
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
+import api_keys
 import equipment
 import interests
 import knowledge_notes
@@ -606,6 +607,72 @@ def test_delete_note_endpoint_404_when_not_found(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.delete("/api/notes/999")
+
+    assert resp.status_code == 404
+
+
+# --- /settings/keys (08-05 설정 화면 — 사용자 API 키 입력) --------------------
+
+
+def test_list_api_key_status_returns_masked_status(monkeypatch):
+    fake_status = [
+        {"provider": "gemini", "saved": True, "masked_key": "****5678", "updated_at": "2026-08-05T00:00:00+00:00"},
+        {"provider": "claude", "saved": False, "masked_key": None, "updated_at": None},
+    ]
+    monkeypatch.setattr(api_keys, "list_key_status", lambda **kw: fake_status)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/settings/keys")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"keys": fake_status}
+
+
+def test_save_api_key_calls_set_api_key_with_stripped_value(monkeypatch):
+    captured = {}
+    def _fake_set(provider, api_key, **kw):
+        captured.update(provider=provider, api_key=api_key)
+    monkeypatch.setattr(api_keys, "set_api_key", _fake_set)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/settings/keys", json={"provider": "gemini", "api_key": "  sk-test-1234  "})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"provider": "gemini", "action": "saved"}
+    assert captured == {"provider": "gemini", "api_key": "sk-test-1234"}  # 앞뒤 공백 제거 확인
+
+
+def test_save_api_key_rejects_blank_key(monkeypatch):
+    monkeypatch.setattr(api_keys, "set_api_key", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("호출되면 안 됨")))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/settings/keys", json={"provider": "gemini", "api_key": "   "})
+
+    assert resp.status_code == 400
+
+
+def test_save_api_key_rejects_unsupported_provider():
+    with TestClient(main.app) as client:
+        resp = client.post("/api/settings/keys", json={"provider": "qwen-tuned", "api_key": "irrelevant"})
+
+    assert resp.status_code == 422  # Literal["gemini", "claude"] 밖의 값 — FastAPI 검증에서 거부
+
+
+def test_delete_api_key_endpoint_returns_deleted_action(monkeypatch):
+    monkeypatch.setattr(api_keys, "delete_api_key", lambda provider: True)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/settings/keys/gemini")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"provider": "gemini", "action": "deleted"}
+
+
+def test_delete_api_key_endpoint_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(api_keys, "delete_api_key", lambda provider: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/settings/keys/claude")
 
     assert resp.status_code == 404
 

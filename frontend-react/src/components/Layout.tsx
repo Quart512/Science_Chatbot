@@ -20,6 +20,9 @@ export function Layout() {
           <NavLink to="/" end className="app-nav-link">
             홈
           </NavLink>
+          <NavLink to="/settings" className="app-nav-link">
+            ⚙️ 설정
+          </NavLink>
         </div>
 
         <div className="app-nav-group">

@@ -6,6 +6,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
+import api_keys
+
 from google.api_core.exceptions import ResourceExhausted, PermissionDenied  # 결제 계정 정지 등 403
 from google.genai.errors import APIError as GoogleGenAIAPIError  # ClientError/ServerError(예: 503) 공통 부모
 from anthropic import RateLimitError
@@ -33,21 +35,48 @@ def add_tokens(current: dict, new: dict) -> dict:
     return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
 
 
-model_map = {
+# model_map의 값은 클라이언트 "생성 함수"다(08-05, 설정 화면 착수 전까진 이미 만들어진
+# 클라이언트 객체였다) — 예전 방식은 모듈이 임포트되는 순간 그 시점의 환경변수로 API
+# 키가 영구히 고정돼서, 사용자가 설정 화면에서 키를 입력해도 서버를 재시작하기 전엔
+# 절대 반영이 안 됐다. invoke_with_fallback()이 매 호출마다 이 함수를 불러 클라이언트를
+# 새로 만든다 — 캐시는 안 둔다(LangChain 클라이언트 생성은 실제 연결 없이 설정 객체만
+# 만드는 거라 가볍고, 캐시를 두면 "키를 바꿨는데 이전 클라이언트가 남아있다"는 무효화
+# 버그가 새로 생길 뿐이다 — "단순 경로부터").
+def _gemini_client():
+    # api_keys(DB)에 저장된 값이 있으면 최우선, 없으면 인자를 아예 안 넘겨 라이브러리가
+    # 알아서 환경변수(GOOGLE_API_KEY)를 읽게 한다(.env 폴백 — os.getenv를 직접 안 읽고
+    # 위임하는 이유: 라이브러리가 이미 하는 일을 다시 구현하지 않기 위함).
+    saved_key = api_keys.get_api_key("gemini")
+    kwargs = {"google_api_key": saved_key} if saved_key else {}
     # flash-lite가 무료 티어 일일 한도가 훨씬 높음(구글 공식 문서 확인, 2026-07)
-    "gemini": ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite"),
-    "claude": ChatAnthropic(model="claude-haiku-4-5-20251001"),
+    return ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", **kwargs)
+
+
+def _claude_client():
+    saved_key = api_keys.get_api_key("claude")
+    kwargs = {"anthropic_api_key": saved_key} if saved_key else {}
+    return ChatAnthropic(model="claude-haiku-4-5-20251001", **kwargs)
+
+
+def _qwen_tuned_client():
     # 파인튜닝한 Qwen2.5-1.5B(Q4_K_M GGUF)를 로컬 llama-server(OpenAI 호환)로 서빙.
-    # 서버 꺼져 있어도 클라이언트 생성 자체는 안전(접속은 invoke 시점) —
+    # 서버 꺼져 있어도 클라이언트 생성 자체는 안전(접속은 invoke 시점) — 로컬 서버라
+    # api_keys 저장소를 안 거친다(SUPPORTED_PROVIDERS에도 없음).
     # 서버 실행: llama-server -m models/qwen_finetuned_Q4_K_M.gguf --port 8080
-    "Qwen-tuned": ChatOpenAI(
+    return ChatOpenAI(
         base_url=os.getenv("LOCAL_MODEL_URL", "http://localhost:8080/v1"),  # docker-compose면 llama-server:8080
         api_key="not-needed",  # 로컬 서버는 키 검사 안 함(필드가 필수라 더미값)
         max_tokens=10000,
         frequency_penalty=0.3,
         model=os.getenv("LOCAL_MODEL_NAME", "qwen-tuned"),
-    ),
-    }
+    )
+
+
+model_map = {
+    "gemini": _gemini_client,
+    "claude": _claude_client,
+    "Qwen-tuned": _qwen_tuned_client,
+}
 
 # 모델별 컨텍스트 예산(문자 수 기준 — ingest.py/paper_chunking.py의 길이 기준과 통일,
 # 토크나이저 단위 정밀도는 불필요). 논문 분석기(②a)가 LLM 호출 전 입력 길이를 미리
@@ -109,7 +138,7 @@ def invoke_with_fallback(model,
     
     primary_name = model
     secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in temp_models_skip),None) #다음 모델 없는데?
-    primary = model_map[primary_name]
+    primary = model_map[primary_name]()  # 팩토리 함수 호출 — 매번 최신 저장된 키로 새 클라이언트를 만든다
 
     if primary_name in temp_models_skip:
         if secondary_name is None:  #다 돌아서 없어!
