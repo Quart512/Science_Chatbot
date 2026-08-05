@@ -1,11 +1,48 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ANALYSIS_IN_PROGRESS, getPaperFileUrl, getPaperSummary, type PaperCatalogRow } from '../api/papers'
+import {
+  ANALYSIS_IN_PROGRESS,
+  getPaperFileUrl,
+  getPaperSummary,
+  type Evidence,
+  type PaperCatalogRow,
+} from '../api/papers'
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '대기 중',
   analyzing: '분석 중...',
   failed: '분석 실패',
+}
+
+const EVIDENCE_KIND_LABEL: Record<Evidence['kind'], string> = {
+  experimental: '실험적',
+  theoretical: '이론적',
+  simulation: '시뮬레이션 기반',
+}
+
+// 요약 표시 형식 — 산문 렌더링(08-05, RoadMap 예정 표 참고). 저장(extraction_json)은
+// 구조화된 그대로 두고, 화면 표시만 <ul> 목록 대신 문단으로 바꾼 파생 뷰 — LLM 재호출
+// 없이 순수 템플릿이라 실패해도 원본 구조가 안 깨진다. LLM이 추출한 문장(core_claims
+// 등)은 내용을 예측할 수 없어 그 뒤에 조사(을/를 등)를 직접 붙이지 않는다 — 대신
+// 항상 마침표로 문장을 맺고, 조사가 필요한 자리는 내가 직접 쓴 고정 문구에만 쓴다.
+function ensureSentence(text: string): string {
+  const trimmed = text.trim()
+  if (trimmed === '') return trimmed
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+function renderClaimsProse(claims: string[]): string {
+  return claims.map((c, i) => (i === 0 ? ensureSentence(c) : `또한 ${ensureSentence(c)}`)).join(' ')
+}
+
+function renderEvidenceProse(evidence: Evidence[]): string {
+  return evidence
+    .map((e) => `${EVIDENCE_KIND_LABEL[e.kind]} 근거: ${ensureSentence(e.detail || '세부사항 언급 없음')}`)
+    .join(' ')
+}
+
+function renderListProse(items: string[]): string {
+  return items.map(ensureSentence).join(' ')
 }
 
 // 요약은 lazy 생성이라(paper_ingest.get_paper_summary 참고) 펼칠 때만 조회한다
@@ -89,41 +126,23 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
           {!inProgress && data && (
             <>
               <h4>핵심 주장</h4>
-              <ul>
-                {data.extraction.core_claims.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
+              <p className="paper-row-prose">{renderClaimsProse(data.extraction.core_claims)}</p>
               {data.extraction.evidence.length > 0 && (
                 <>
                   <h4>근거</h4>
-                  <ul>
-                    {data.extraction.evidence.map((e, i) => (
-                      <li key={i}>
-                        [{e.kind}] {e.detail}
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="paper-row-prose">{renderEvidenceProse(data.extraction.evidence)}</p>
                 </>
               )}
               {data.extraction.author_stated_limitations.length > 0 && (
                 <>
                   <h4>저자가 밝힌 한계</h4>
-                  <ul>
-                    {data.extraction.author_stated_limitations.map((l, i) => (
-                      <li key={i}>{l}</li>
-                    ))}
-                  </ul>
+                  <p className="paper-row-prose">{renderListProse(data.extraction.author_stated_limitations)}</p>
                 </>
               )}
               {data.extraction.unresolved_questions.length > 0 && (
                 <>
                   <h4>미해결 지점</h4>
-                  <ul>
-                    {data.extraction.unresolved_questions.map((q, i) => (
-                      <li key={i}>{q}</li>
-                    ))}
-                  </ul>
+                  <p className="paper-row-prose">{renderListProse(data.extraction.unresolved_questions)}</p>
                 </>
               )}
               {data.extraction.code_data_availability && (
