@@ -19,6 +19,52 @@
 
 .app-nav-title {
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 화면 개선 ⑦(08-05, 왼쪽 패널 여닫기) — 오른쪽 챗 패널의 .chat-panel-toggle과
+   같은 위치 감각(구석에 고정된 작은 버튼)으로 맞춰 좌우 대칭을 이루게 했다. */
+.app-nav-toggle {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+.app-nav-close {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+/* 화면 개선 ⑨(08-05, 세션 목록 접기/펼치기) — NavLink(이동)와 토글 버튼(목록
+   접기/펼치기)이 같은 줄에서 서로 다른 클릭 영역을 갖게 분리 */
+.app-nav-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.app-nav-link-grow {
+  flex: 1;
+}
+
+.app-nav-session-toggle {
+  background: none;
+  border: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  padding: 0.4rem 0.3rem;
+  font-size: 0.75rem;
 }
 
 .app-nav-group {
