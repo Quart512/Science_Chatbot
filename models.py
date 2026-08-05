@@ -119,13 +119,80 @@ def check_context_budget(model: str, text: str) -> None:
         raise ContextBudgetExceeded(model, len(text), budget)
 
 
+# fallback을 태울 예외들. 세 갈래로 나눈 축은 "요청 오류냐 모델 장애냐"가 아니라
+# **"세션 내내 지속되는 장애냐, 이번 요청 한정 실패냐"**다(08-05에 축을 바꿈).
+#
+# 원래는 아래 세 튜플이 하나로 합쳐져 있었고, 무엇이 걸리든 실패한 모델을 곧장
+# disabled_models에 넣었다. 그래서 "이번 요청에서 실패했다"가 "이 세션에서 이 모델은
+# 죽었다"로 승격됐다 — 08-05 관심사 등록 버그의 실제 피해가 이것이다(gemini가 메시지
+# 형식을 거부했을 뿐인데 그 스레드의 이후 물리 QA 턴까지 gemini가 통째로 회피됐다).
+#
+# 처음엔 "요청 오류는 fallback도 하지 말고 그대로 올려보내자"고 봤는데 확인해보니 틀렸다.
+# fallback은 세 경우 다 실제로 맞는 복구다 — ① gemini의 INVALID_ARGUMENT("model 턴으로
+# 끝나는 메시지")는 claude가 허용하므로(prefill) 넘기면 성공하고, ② LengthFinishReasonError는
+# CONTEXT_BUDGET_CHARS가 모델마다 달라서(Qwen 6,000자 vs gemini 2,000,000자) 큰 모델로
+# 넘기는 게 정확한 복구이며, ③ anthropic 크레딧 부족과 잘못된 요청은 애초에 같은 클래스로
+# 온다. 그러니 바꿔야 할 건 fallback 여부가 아니라 **세션 상태를 오염시키느냐**뿐이다.
+SESSION_OUTAGE_EXCEPTIONS = (
+    ResourceExhausted,      # 429 쿼터 소진 — 리필 전까진 계속 실패
+    PermissionDenied,       # 403 결제 계정 정지 등
+    RateLimitError,         # anthropic 429
+    APIConnectionError,     # 로컬 llama-server가 안 떠 있음 — 세션 중에 켜질 일이 드묾
+)
+
+# fallback은 타되 세션 차단은 안 하는 것들 — 다음 턴엔 사용자가 고른 모델을 다시 시도한다.
+REQUEST_SCOPED_EXCEPTIONS = (
+    ChatGoogleGenerativeAIError,  # INVALID_ARGUMENT 등 이 요청의 형식 문제
+    BadRequestError,              # openai(=로컬 llama-server) 400
+    LengthFinishReasonError,      # 이 요청이 이 모델 컨텍스트에 안 들어감
+)
+
+# 클래스만으로는 못 가르는 것들 — _is_session_outage()가 내용을 보고 판정한다.
+AMBIGUOUS_EXCEPTIONS = (GoogleGenAIAPIError, AnthropicBadRequestError)
+
+FALLBACK_EXCEPTIONS = SESSION_OUTAGE_EXCEPTIONS + REQUEST_SCOPED_EXCEPTIONS + AMBIGUOUS_EXCEPTIONS
+
+
+def _is_session_outage(exc: BaseException) -> bool:
+    """이 실패가 '세션 내내 이 모델을 못 쓴다'는 뜻이면 True, '이번 요청만 실패했다'면 False.
+
+    판별이 애매하면 False(=세션 차단 안 함)로 기운다. 틀렸을 때의 대가가 비대칭이라서다 —
+    False로 잘못 보면 최악이 '턴마다 실패 호출 한 번 낭비'인데, True로 잘못 보면 사용자가
+    고른 모델이 그 세션 내내 조용히 사라진다(UI에 아무 표시도 없다). 저장소 원칙
+    '조용히 자르지 말고 정직하게 실패'와도 방향이 같다."""
+    if isinstance(exc, SESSION_OUTAGE_EXCEPTIONS):
+        return True
+    if isinstance(exc, GoogleGenAIAPIError):
+        # google-genai SDK는 4xx/5xx를 한 부모(APIError) 아래 두므로 HTTP 코드로 가른다.
+        # 429(쿼터)·403(권한/결제)만 지속이고, 503 과부하는 몇 초 뒤 풀리는 일시 장애라
+        # 세션 차단하면 한 번의 blip으로 그 세션 내내 gemini를 못 쓰게 된다.
+        return getattr(exc, "code", None) in (403, 429)
+    if isinstance(exc, AnthropicBadRequestError):
+        # anthropic은 크레딧 부족도 400으로 준다(docs/README_13.md §4 — 실제로 겪은 이중
+        # 장애). 잘못된 요청과 예외 클래스가 같아 메시지로만 구분된다. 문구가 바뀌면
+        # False로 떨어지는데, 그게 위 docstring이 말한 안전한 쪽이다.
+        return "credit balance" in str(exc).lower()
+    return False
+
+
+def _all_failed_error(attempted: list[str], errors: dict[str, str]) -> RuntimeError:
+    """모든 후보가 실패했을 때의 예외. 모델별 실패 사유를 메시지에 담는 이유는, 예전엔
+    'tried [...] but all failed'만 남아서 **진짜 원인이 통째로 사라졌기** 때문이다 —
+    요청 형식이 잘못돼 전 모델이 같은 이유로 실패한 경우와 정말 전 모델이 죽은 경우가
+    호출부에서 구분이 안 됐다."""
+    detail = "; ".join(f"{m}: {errors[m]}" for m in attempted if m in errors)
+    return RuntimeError(f"tried {attempted} but all failed — {detail or '시도할 수 있는 모델이 없음'}")
+
+
 # 지정된 모델을 우선 호출하고, rate limit 등 발생 시 다른 모델로 자동 전환해 재시도.
 def invoke_with_fallback(model,
-                         messages, 
-                         tools: list | None=None, 
-                         structured=None, 
+                         messages,
+                         tools: list | None=None,
+                         structured=None,
                          models_skip: list[str] | None=None, #임의로 일시정지한 모델
-                         disabled_models: list[str] | None=None): #사용량 제한 등으로 세션 내에서 사용 중지할 모델
+                         disabled_models: list[str] | None=None, #사용량 제한 등으로 세션 내에서 사용 중지할 모델
+                         _attempted: list[str] | None=None,  # 재귀 내부용 — 아래 주석 참고
+                         _errors: dict[str, str] | None=None):
     if models_skip is None:
         models_skip=[]
     if disabled_models is None:
@@ -133,18 +200,28 @@ def invoke_with_fallback(model,
 
     disabled_models = list(disabled_models)   # 방어적 복사 — 호출자의 원본은 절대 건드리지 않는 경계
 
-    temp_models_skip= models_skip+disabled_models
+    # _attempted는 "이번 호출에서 이미 시도해봤다"이고 disabled_models는 "이 세션 내내
+    # 못 쓴다"다. 예전엔 disabled_models 하나가 두 역할을 겸했다 — 실패한 모델을 무조건
+    # 거기 넣어야만 재귀가 그 모델을 건너뛰었기 때문이다. 그래서 "요청 한정 실패는 세션
+    # 차단 안 함"을 구현하려면 둘을 분리하는 게 먼저였다(안 그러면 같은 모델 무한 재시도).
+    # 언더스코어를 붙인 건 호출부가 넘길 인자가 아니라 재귀가 스스로 잇는 값이라는 표시.
+    attempted = list(_attempted) if _attempted else []
+    errors = dict(_errors) if _errors else {}
 
-    
+    temp_models_skip= models_skip+disabled_models+attempted
+
+
     primary_name = model
     secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in temp_models_skip),None) #다음 모델 없는데?
     primary = model_map[primary_name]()  # 팩토리 함수 호출 — 매번 최신 저장된 키로 새 클라이언트를 만든다
 
     if primary_name in temp_models_skip:
         if secondary_name is None:  #다 돌아서 없어!
-            raise RuntimeError(f"tried {temp_models_skip} but all failed")
+            raise _all_failed_error(attempted, errors)
         else:
-            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, models_skip=models_skip, disabled_models=disabled_models)
+            return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured,
+                                        models_skip=models_skip, disabled_models=disabled_models,
+                                        _attempted=attempted, _errors=errors)
 
     if tools:  # tool 객체 리스트(disabled 제외 목록)
         primary = primary.bind_tools(tools)
@@ -165,8 +242,7 @@ def invoke_with_fallback(model,
             response = result
             tokens_used = result.usage_metadata
         return response, primary_name, disabled_models, tokens_used
-    except (ResourceExhausted, PermissionDenied, RateLimitError, ChatGoogleGenerativeAIError, APIConnectionError,
-            BadRequestError, LengthFinishReasonError, GoogleGenAIAPIError, AnthropicBadRequestError):
+    except FALLBACK_EXCEPTIONS as exc:
         # GoogleGenAIAPIError/AnthropicBadRequestError: langchain_google_genai가 내부적으로
         # google-genai SDK로 갈아탄 뒤로 gemini 과부하(503)가 이 SDK의 원본 예외로 그대로
         # 올라오고, anthropic 크레딧 부족도 openai.BadRequestError와 이름만 같은 별개
@@ -174,9 +250,21 @@ def invoke_with_fallback(model,
         exc_type, exc_value, _ = sys.exc_info()
         error_msg = traceback.format_exception_only(exc_type, exc_value)[0].strip()
         print(error_msg)
-        print(f"모델 오류! fallback인 {secondary_name} 모델로 전환")
 
-        disabled_models.append(primary_name)
-        if secondary_name is None:    #다 돌아서 없어!                   
-            raise RuntimeError(f"tried {temp_models_skip} but all failed")
-        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured, models_skip=models_skip, disabled_models=disabled_models)
+        attempted.append(primary_name)
+        errors[primary_name] = error_msg
+
+        # 여기가 08-05에 바뀐 지점 — 예전엔 조건 없이 disabled_models.append()였다.
+        if _is_session_outage(exc):
+            disabled_models.append(primary_name)
+            print(f"모델 장애! '{primary_name}' 세션 내 사용 중지 → fallback인 {secondary_name} 모델로 전환")
+        else:
+            # 이번 요청만 실패한 것이라 세션 차단 목록은 안 건드린다. 다음 턴엔 사용자가
+            # 고른 모델을 정상적으로 다시 시도한다.
+            print(f"이번 요청 실패(세션 차단 안 함) → fallback인 {secondary_name} 모델로 전환")
+
+        if secondary_name is None:    #다 돌아서 없어!
+            raise _all_failed_error(attempted, errors) from exc
+        return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured,
+                                    models_skip=models_skip, disabled_models=disabled_models,
+                                    _attempted=attempted, _errors=errors)

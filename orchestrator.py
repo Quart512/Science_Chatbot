@@ -152,7 +152,9 @@ def draft_interest_from_messages(
     # 매번 이 이유로 죽어 fallback으로 새는 데다, invoke_with_fallback이 예외 종류를
     # 구분 안 하고 disabled_models에 추가해버려 이 호출 한 번으로 gemini가 그 스레드의
     # 이후 물리 QA 턴까지 전부 disabled 처리되는 부작용이 있었다(disabled_models가
-    # physics_qa_node와 공유되므로). 대화 끝에 사용자 턴을 하나 더 붙여 항상 사용자
+    # physics_qa_node와 공유되므로). 그 부작용 쪽은 08-05에 근본 원인을 따로 고쳤지만
+    # (models.py의 _is_session_outage — 요청 한정 실패는 세션 차단을 안 한다), 그렇다고
+    # 여기서 gemini를 매 호출 죽이는 게 괜찮아진 건 아니다. 대화 끝에 사용자 턴을 하나 더 붙여 항상 사용자
     # 턴으로 끝나게 한다 — 새 정보를 추가하는 게 아니라 시스템 프롬프트의 지시를
     # 반복하는 것뿐이라 추출 결과에는 영향이 없다.
     llm_messages = (
