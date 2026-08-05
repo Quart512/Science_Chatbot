@@ -15,6 +15,7 @@
 | 문서 | 담는 내용 | 업데이트 시점 |
 |---|---|---|
 | **README.md** (이 문서) | 현황 — 무엇을 하는 앱인가, 구조, 실행법, API. **"왜 이렇게 됐는지"는 안 적는다** | 사실이 바뀔 때만 (API·명령어·구조 변경) |
+| **[docs/USAGE.md](docs/USAGE.md)** | 사용법 가이드 — 화면별로 무엇을 누르면 무엇이 되는가(제3자·최종 사용자용) | 화면 UI가 바뀔 때 |
 | **[docs/DEPLOY.md](docs/DEPLOY.md)** | 배포 방법 (설치·운영 절차) | 배포 절차·환경이 바뀔 때 |
 | **[docs/RoadMap.md](docs/RoadMap.md)** | 개발 이력(완료)·**🧪 라이브 검증 체크리스트**·예정 + 설계 노트·열린 질문·방향성 메모 (날짜별 이력의 단일 진실 소스) | 상시 — 진행 상황이 바뀔 때마다. **pytest로 못 잡아 미뤄둔 확인이 생기면 체크리스트에 추가** |
 | **To Do List** (Obsidian 칸반) | 실행 순서만 (한 줄 요약 — **세부 내용의 정본은 RoadMap**) | 상시 — RoadMap과 짝으로 동기화 |
@@ -88,6 +89,7 @@ Science_Chatbot/
 │   ├── architecture.png     # 구조도 (draw_architecture.py로 생성)
 │   ├── draw_architecture.py # 구조도 생성 스크립트
 │   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
+│   ├── USAGE.md             # 사용법 가이드 (화면별 사용법, 최종 사용자용)
 │   ├── RoadMap.md           # 개발 이력·계획 (완료/예정 + 설계 노트)
 │   ├── DEPLOY.md            # 배포 가이드 (빅뱅/Docker 방식)
 │   ├── README_08.md         # 개발 회고 (8주차: LangGraph 에이전트)
