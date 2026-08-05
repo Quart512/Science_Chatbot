@@ -1,4 +1,14 @@
-# uv 공식 이미지 안의 컴파일된 바이너리를 그대로 복사 — 별도 설치 과정 없이 uv 사용 가능
+# 1단계: 프론트 빌드(08-05, Docker 패키징 — RoadMap "설치 앱의 UI 실행 방식" 참고) —
+# node_modules(89MB)가 최종 이미지에 전혀 안 들어가게 별도 스테이지로 분리한다.
+# 이 스테이지의 결과물(dist/)만 아래에서 COPY --from으로 가져간다.
+FROM node:20-slim AS frontend-build
+WORKDIR /app/frontend-react
+COPY frontend-react/package.json frontend-react/package-lock.json ./
+RUN npm ci
+COPY frontend-react/ ./
+RUN npm run build
+
+# 2단계: 백엔드 — uv 공식 이미지 안의 컴파일된 바이너리를 그대로 복사(별도 설치 과정 없이 uv 사용 가능)
 FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -20,6 +30,10 @@ RUN uv sync --no-install-project --frozen --no-dev
 #         여기서부터만 다시 실행됨(전체 재설치 안 함)
 COPY ./ ./
 RUN uv sync --frozen --no-dev
+
+# 위 frontend-build 스테이지가 만든 산출물만 가져온다 — node_modules·소스는 안 남고
+# dist만 들어가서 main.py의 StaticFiles가 이걸 서빙한다.
+COPY --from=frontend-build /app/frontend-react/dist ./frontend-react/dist
 
 EXPOSE 8000
 

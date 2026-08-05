@@ -19,8 +19,14 @@ export class ApiError extends Error {
 // 모든 API 함수가 공유하는 저수준 fetch 래퍼 — 에러 응답(4xx/5xx)을 ApiError로
 // 통일해서 던진다. FastAPI의 HTTPException은 {"detail": "..."} 형태로 오므로
 // 그 필드를 우선 메시지로 쓴다.
+//
+// 경로에 /api를 여기서 한 번만 붙인다(08-05) — main.py의 모든 API 라우트가 /api
+// 프리픽스를 쓰므로(리액트 페이지 경로 /papers 등과 겹치는 걸 막기 위해, RoadMap
+// "Docker 패키징" 참고), 호출부마다 반복해서 안 붙여도 되게 여기 한 곳에서 처리한다.
+// apiFetch를 안 쓰고 fetch()를 직접 부르는 곳(chat.ts의 스트리밍, papers.ts의 파일
+// 업로드)은 이 헬퍼를 안 거치므로 각자 /api를 직접 붙여야 한다.
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
+  const res = await fetch(`${BACKEND_URL}/api${path}`, {
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });

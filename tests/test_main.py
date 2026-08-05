@@ -39,7 +39,7 @@ def test_get_query_messages_returns_role_and_content(monkeypatch):
             {"question": "테스트", "messages": [HumanMessage(content="질문"), AIMessage(content="답변")]},
             as_node="__start__",
         ))
-        resp = client.get(f"/query/{thread_id}/messages")
+        resp = client.get(f"/api/query/{thread_id}/messages")
 
     assert resp.status_code == 200
     body = resp.json()["messages"]
@@ -52,7 +52,7 @@ def test_get_query_messages_empty_for_fresh_thread(monkeypatch):
     thread_id = str(uuid.uuid4())
 
     with TestClient(main.app) as client:
-        resp = client.get(f"/query/{thread_id}/messages")
+        resp = client.get(f"/api/query/{thread_id}/messages")
 
     assert resp.status_code == 200
     assert resp.json()["messages"] == []
@@ -69,11 +69,11 @@ def test_delete_query_message_removes_only_target(monkeypatch):
                           HumanMessage(content="둘째 질문"), AIMessage(content="둘째 답변")]},
             as_node="__start__",
         ))
-        before = client.get(f"/query/{thread_id}/messages").json()["messages"]
+        before = client.get(f"/api/query/{thread_id}/messages").json()["messages"]
         target_id = before[0]["id"]  # "첫 질문"
 
-        del_resp = client.delete(f"/query/{thread_id}/messages/{target_id}")
-        after = client.get(f"/query/{thread_id}/messages").json()["messages"]
+        del_resp = client.delete(f"/api/query/{thread_id}/messages/{target_id}")
+        after = client.get(f"/api/query/{thread_id}/messages").json()["messages"]
 
     assert del_resp.status_code == 200
     assert del_resp.json() == {"deleted_id": target_id}
@@ -96,7 +96,7 @@ def test_draft_interest_returns_draft_from_orchestrator(monkeypatch):
     )
 
     with TestClient(main.app) as client:
-        resp = client.get("/interests/draft", params={"thread_id": str(uuid.uuid4())})
+        resp = client.get("/api/interests/draft", params={"thread_id": str(uuid.uuid4())})
 
     assert resp.status_code == 200
     assert resp.json() == fake_draft
@@ -111,7 +111,7 @@ def test_draft_interest_passes_thread_messages_to_orchestrator(monkeypatch):
     monkeypatch.setattr(orchestrator, "draft_interest_from_messages", _fake_draft)
 
     with TestClient(main.app) as client:
-        client.get("/interests/draft", params={"thread_id": str(uuid.uuid4())})
+        client.get("/api/interests/draft", params={"thread_id": str(uuid.uuid4())})
 
     # 한 번도 실행 안 된(새로 발급한) thread_id라 체크포인트가 비어있음 — messages=[]로 전달돼야 함
     assert captured["messages"] == []
@@ -139,8 +139,8 @@ def test_draft_interest_persists_updated_disabled_models(monkeypatch):
         # test_draft_interest_skips_persist_on_fresh_thread)로 다룬다.
         asyncio.run(main.app.state.graph.aupdate_state(config, {"question": "테스트"}, as_node="__start__"))
 
-        client.get("/interests/draft", params={"thread_id": thread_id})
-        client.get("/interests/draft", params={"thread_id": thread_id})
+        client.get("/api/interests/draft", params={"thread_id": thread_id})
+        client.get("/api/interests/draft", params={"thread_id": thread_id})
 
     assert seen[0] == []
     assert seen[1] == ["gemini"]
@@ -157,8 +157,8 @@ def test_draft_interest_skips_persist_on_fresh_thread(monkeypatch):
 
     thread_id = str(uuid.uuid4())
     with TestClient(main.app) as client:
-        first = client.get("/interests/draft", params={"thread_id": thread_id})
-        second = client.get("/interests/draft", params={"thread_id": thread_id})
+        first = client.get("/api/interests/draft", params={"thread_id": thread_id})
+        second = client.get("/api/interests/draft", params={"thread_id": thread_id})
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -169,7 +169,7 @@ def test_list_interests_returns_all(monkeypatch):
     monkeypatch.setattr(interests, "list_interests", lambda **kw: fake_rows)
 
     with TestClient(main.app) as client:
-        resp = client.get("/interests")
+        resp = client.get("/api/interests")
 
     assert resp.status_code == 200
     assert resp.json() == {"interests": fake_rows}
@@ -183,7 +183,7 @@ def test_register_interest_creates_new_when_no_update_id(monkeypatch):
     monkeypatch.setattr(interests, "create_interest", _fake_create)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests", json={"title": "제목", "looking_for": "찾는것"})
+        resp = client.post("/api/interests", json={"title": "제목", "looking_for": "찾는것"})
 
     assert resp.status_code == 200
     assert resp.json() == {"interest_id": 42, "action": "created"}
@@ -200,7 +200,7 @@ def test_register_interest_updates_existing_when_update_id_given(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post(
-            "/interests",
+            "/api/interests",
             json={"title": "고친 제목", "looking_for": "", "update_existing_id": 7},
         )
 
@@ -214,7 +214,7 @@ def test_register_interest_404_when_update_id_not_found(monkeypatch):
     monkeypatch.setattr(interests, "update_interest", lambda interest_id, **fields: False)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests", json={"title": "제목", "update_existing_id": 999})
+        resp = client.post("/api/interests", json={"title": "제목", "update_existing_id": 999})
 
     assert resp.status_code == 404
 
@@ -228,7 +228,7 @@ def test_delete_interest_returns_deleted_action(monkeypatch):
     monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", lambda interest_id, **kw: None)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/interests/7")
+        resp = client.delete("/api/interests/7")
 
     assert resp.status_code == 200
     assert resp.json() == {"interest_id": 7, "action": "deleted"}
@@ -244,7 +244,7 @@ def test_delete_interest_also_deletes_interest_paper_screenings(monkeypatch):
     monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", _fake_delete_screenings)
 
     with TestClient(main.app) as client:
-        client.delete("/interests/7")
+        client.delete("/api/interests/7")
 
     assert captured["id"] == 7
 
@@ -254,7 +254,7 @@ def test_delete_interest_404_when_not_found(monkeypatch):
     monkeypatch.setattr(paper_catalog, "delete_screenings_for_interest", lambda interest_id, **kw: None)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/interests/999")
+        resp = client.delete("/api/interests/999")
 
     assert resp.status_code == 404
 
@@ -267,7 +267,7 @@ def test_trigger_recommend_search_returns_results(monkeypatch):
     monkeypatch.setattr(paper_recommend, "recommend_for_interest", lambda interest_id, **kw: fake_results)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests/1/search")
+        resp = client.post("/api/interests/1/search")
 
     assert resp.status_code == 200
     assert resp.json() == {"recommended": fake_results}
@@ -282,7 +282,7 @@ def test_trigger_recommend_search_forwards_start_query_param(monkeypatch):
     monkeypatch.setattr(paper_recommend, "recommend_for_interest", _fake_recommend)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests/1/search", params={"start": 5})
+        resp = client.post("/api/interests/1/search", params={"start": 5})
 
     assert resp.status_code == 200
     assert captured["start"] == 5
@@ -294,7 +294,7 @@ def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
     monkeypatch.setattr(paper_recommend, "recommend_for_interest", _boom)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests/999/search")
+        resp = client.post("/api/interests/999/search")
 
     assert resp.status_code == 404
 
@@ -313,7 +313,7 @@ def test_refresh_recommend_search_forwards_existing_candidates(monkeypatch):
 
     existing = [{"paper_id": "arxiv:old", "abstract": "초록"}]
     with TestClient(main.app) as client:
-        resp = client.post("/interests/1/refresh", json={"existing_candidates": existing})
+        resp = client.post("/api/interests/1/refresh", json={"existing_candidates": existing})
 
     assert resp.status_code == 200
     assert resp.json() == {"recommended": fake_results}
@@ -329,7 +329,7 @@ def test_refresh_recommend_search_defaults_to_empty_candidates(monkeypatch):
     monkeypatch.setattr(paper_recommend, "refresh_for_interest", _fake_refresh)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests/1/refresh", json={})
+        resp = client.post("/api/interests/1/refresh", json={})
 
     assert resp.status_code == 200
     assert captured["existing_candidates"] == []
@@ -341,7 +341,7 @@ def test_refresh_recommend_search_404_when_interest_not_found(monkeypatch):
     monkeypatch.setattr(paper_recommend, "refresh_for_interest", _boom)
 
     with TestClient(main.app) as client:
-        resp = client.post("/interests/999/refresh", json={})
+        resp = client.post("/api/interests/999/refresh", json={})
 
     assert resp.status_code == 404
 
@@ -355,7 +355,7 @@ def test_list_interest_papers_returns_results(monkeypatch):
     monkeypatch.setattr(paper_catalog, "list_papers_for_interest", lambda interest_id, **kw: fake_papers)
 
     with TestClient(main.app) as client:
-        resp = client.get("/interests/1/papers")
+        resp = client.get("/api/interests/1/papers")
 
     assert resp.status_code == 200
     assert resp.json() == {"papers": fake_papers}
@@ -370,7 +370,7 @@ def test_list_interest_papers_forwards_only_relevant_query_param(monkeypatch):
     monkeypatch.setattr(paper_catalog, "list_papers_for_interest", _fake_list)
 
     with TestClient(main.app) as client:
-        resp = client.get("/interests/1/papers", params={"only_relevant": True})
+        resp = client.get("/api/interests/1/papers", params={"only_relevant": True})
 
     assert resp.status_code == 200
     assert captured["only_relevant"] is True
@@ -380,7 +380,7 @@ def test_list_interest_papers_404_when_interest_not_found(monkeypatch):
     monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: None)
 
     with TestClient(main.app) as client:
-        resp = client.get("/interests/999/papers")
+        resp = client.get("/api/interests/999/papers")
 
     assert resp.status_code == 404
 
@@ -405,7 +405,7 @@ def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post(
-            "/papers",
+            "/api/papers",
             files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")},
             data={"arxiv_id": "2401.12345"},
         )
@@ -428,7 +428,7 @@ def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post(
-            "/papers", files={"file": ("bad.pdf", b"not a pdf at all", "application/pdf")}
+            "/api/papers", files={"file": ("bad.pdf", b"not a pdf at all", "application/pdf")}
         )
 
     assert resp.status_code == 400
@@ -448,7 +448,7 @@ def test_list_papers_forwards_status_filter(monkeypatch):
     monkeypatch.setattr(paper_catalog, "list_papers", _fake_list)
 
     with TestClient(main.app) as client:
-        resp = client.get("/papers", params={"status": "recommended"})
+        resp = client.get("/api/papers", params={"status": "recommended"})
 
     assert resp.status_code == 200
     assert resp.json() == {"papers": fake_rows}
@@ -459,7 +459,7 @@ def test_list_papers_no_filter_returns_all(monkeypatch):
     monkeypatch.setattr(paper_catalog, "list_papers", lambda *, status=None, **kw: [])
 
     with TestClient(main.app) as client:
-        resp = client.get("/papers")
+        resp = client.get("/api/papers")
 
     assert resp.status_code == 200
     assert resp.json() == {"papers": []}
@@ -467,7 +467,7 @@ def test_list_papers_no_filter_returns_all(monkeypatch):
 
 def test_list_papers_rejects_invalid_status():
     with TestClient(main.app) as client:
-        resp = client.get("/papers", params={"status": "bogus"})
+        resp = client.get("/api/papers", params={"status": "bogus"})
 
     assert resp.status_code == 422
 
@@ -491,7 +491,7 @@ def test_get_paper_summary_endpoint_returns_extraction(monkeypatch):
     )
 
     with TestClient(main.app) as client:
-        resp = client.get("/papers/arxiv:1/summary")
+        resp = client.get("/api/papers/arxiv:1/summary")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -505,7 +505,7 @@ def test_get_paper_summary_endpoint_404_when_not_registered(monkeypatch):
     monkeypatch.setattr(paper_ingest, "get_paper_summary", _boom)
 
     with TestClient(main.app) as client:
-        resp = client.get("/papers/arxiv:없음/summary")
+        resp = client.get("/api/papers/arxiv:없음/summary")
 
     assert resp.status_code == 404
 
@@ -518,7 +518,7 @@ def test_get_paper_summary_endpoint_422_when_context_budget_exceeded(monkeypatch
     monkeypatch.setattr(paper_ingest, "get_paper_summary", _boom)
 
     with TestClient(main.app) as client:
-        resp = client.get("/papers/arxiv:1/summary")
+        resp = client.get("/api/papers/arxiv:1/summary")
 
     assert resp.status_code == 422
 
@@ -531,7 +531,7 @@ def test_list_notes_returns_all(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "list_notes", lambda: fake_notes)
 
     with TestClient(main.app) as client:
-        resp = client.get("/notes")
+        resp = client.get("/api/notes")
 
     assert resp.status_code == 200
     assert resp.json() == {"notes": fake_notes}
@@ -545,7 +545,7 @@ def test_register_note_creates_new_when_no_update_id(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "create_note", _fake_create)
 
     with TestClient(main.app) as client:
-        resp = client.post("/notes", json={"title": "제목", "text": "본문"})
+        resp = client.post("/api/notes", json={"title": "제목", "text": "본문"})
 
     assert resp.status_code == 200
     assert resp.json() == {"note_id": 42, "action": "created"}
@@ -561,7 +561,7 @@ def test_register_note_updates_existing_when_update_id_given(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "update_note", _fake_update)
 
     with TestClient(main.app) as client:
-        resp = client.post("/notes", json={"text": "고친 본문", "update_existing_id": 7})
+        resp = client.post("/api/notes", json={"text": "고친 본문", "update_existing_id": 7})
 
     assert resp.status_code == 200
     assert resp.json() == {"note_id": 7, "action": "updated"}
@@ -577,7 +577,7 @@ def test_register_note_update_omits_fields_not_sent(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "update_note", _fake_update)
 
     with TestClient(main.app) as client:
-        client.post("/notes", json={"title": "제목만 수정", "update_existing_id": 7})
+        client.post("/api/notes", json={"title": "제목만 수정", "update_existing_id": 7})
 
     assert captured["fields"] == {"title": "제목만 수정"}  # text는 안 보냈으니 안 넘어감
 
@@ -586,7 +586,7 @@ def test_register_note_404_when_update_id_not_found(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "update_note", lambda note_id, **fields: False)
 
     with TestClient(main.app) as client:
-        resp = client.post("/notes", json={"title": "이름", "update_existing_id": 999})
+        resp = client.post("/api/notes", json={"title": "이름", "update_existing_id": 999})
 
     assert resp.status_code == 404
 
@@ -595,7 +595,7 @@ def test_delete_note_endpoint_returns_deleted_action(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "delete_note", lambda note_id: True)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/notes/1")
+        resp = client.delete("/api/notes/1")
 
     assert resp.status_code == 200
     assert resp.json() == {"note_id": 1, "action": "deleted"}
@@ -605,7 +605,7 @@ def test_delete_note_endpoint_404_when_not_found(monkeypatch):
     monkeypatch.setattr(knowledge_notes, "delete_note", lambda note_id: False)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/notes/999")
+        resp = client.delete("/api/notes/999")
 
     assert resp.status_code == 404
 
@@ -618,7 +618,7 @@ def test_list_equipment_returns_all(monkeypatch):
     monkeypatch.setattr(equipment, "list_equipment", lambda **kw: fake_rows)
 
     with TestClient(main.app) as client:
-        resp = client.get("/equipment")
+        resp = client.get("/api/equipment")
 
     assert resp.status_code == 200
     assert resp.json() == {"equipment": fake_rows}
@@ -633,7 +633,7 @@ def test_register_equipment_creates_new_when_no_update_id(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post(
-            "/equipment",
+            "/api/equipment",
             json={"name": "오실로스코프", "purpose": "파형 관찰", "precautions": "정격 초과 금지"},
         )
 
@@ -654,7 +654,7 @@ def test_register_equipment_updates_existing_when_update_id_given(monkeypatch):
 
     with TestClient(main.app) as client:
         resp = client.post(
-            "/equipment",
+            "/api/equipment",
             json={"name": "고친 이름", "purpose": "", "update_existing_id": 7},
         )
 
@@ -674,7 +674,7 @@ def test_register_equipment_update_omits_fields_not_sent(monkeypatch):
     monkeypatch.setattr(equipment, "update_equipment", _fake_update)
 
     with TestClient(main.app) as client:
-        resp = client.post("/equipment", json={"name": "고친 이름", "update_existing_id": 7})
+        resp = client.post("/api/equipment", json={"name": "고친 이름", "update_existing_id": 7})
 
     assert resp.status_code == 200
     assert captured["fields"] == {"name": "고친 이름"}  # purpose/detail/precautions는 없음
@@ -690,7 +690,7 @@ def test_register_equipment_update_can_clear_field_when_explicitly_empty(monkeyp
     monkeypatch.setattr(equipment, "update_equipment", _fake_update)
 
     with TestClient(main.app) as client:
-        client.post("/equipment", json={"name": "이름", "precautions": "", "update_existing_id": 7})
+        client.post("/api/equipment", json={"name": "이름", "precautions": "", "update_existing_id": 7})
 
     assert captured["fields"]["precautions"] == ""
 
@@ -699,7 +699,7 @@ def test_register_equipment_404_when_update_id_not_found(monkeypatch):
     monkeypatch.setattr(equipment, "update_equipment", lambda equipment_id, **fields: False)
 
     with TestClient(main.app) as client:
-        resp = client.post("/equipment", json={"name": "이름", "update_existing_id": 999})
+        resp = client.post("/api/equipment", json={"name": "이름", "update_existing_id": 999})
 
     assert resp.status_code == 404
 
@@ -712,7 +712,7 @@ def test_delete_equipment_returns_deleted_action(monkeypatch):
     monkeypatch.setattr(equipment, "delete_equipment", _fake_delete)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/equipment/7")
+        resp = client.delete("/api/equipment/7")
 
     assert resp.status_code == 200
     assert resp.json() == {"equipment_id": 7, "action": "deleted"}
@@ -723,7 +723,7 @@ def test_delete_equipment_404_when_not_found(monkeypatch):
     monkeypatch.setattr(equipment, "delete_equipment", lambda equipment_id, **kw: False)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/equipment/999")
+        resp = client.delete("/api/equipment/999")
 
 
 # --- 연구 워크플로우(⑥) 세션·advance 엔드포인트 ------------------------------------
@@ -775,7 +775,7 @@ def test_advance_research_rejects_new_thread_without_topic(monkeypatch):
     monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: None)
 
     with TestClient(main.app) as client:
-        resp = client.post(f"/research/{uuid.uuid4()}/advance", json={"stage": "hypothesis"})
+        resp = client.post(f"/api/research/{uuid.uuid4()}/advance", json={"stage": "hypothesis"})
 
     assert resp.status_code == 400
 
@@ -785,7 +785,7 @@ def test_advance_research_rejects_new_thread_with_non_hypothesis_stage(monkeypat
 
     with TestClient(main.app) as client:
         resp = client.post(
-            f"/research/{uuid.uuid4()}/advance", json={"stage": "design", "topic": "주제"}
+            f"/api/research/{uuid.uuid4()}/advance", json={"stage": "design", "topic": "주제"}
         )
 
     assert resp.status_code == 400
@@ -807,7 +807,7 @@ def test_advance_research_creates_session_on_first_call(monkeypatch):
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph  # lifespan이 컴파일한 진짜 그래프를 가짜로 교체
         resp = client.post(
-            f"/research/{thread_id}/advance",
+            f"/api/research/{thread_id}/advance",
             json={"stage": "hypothesis", "topic": "그래핀 전도도"},
         )
 
@@ -829,7 +829,7 @@ def test_advance_research_passes_user_guidance_through(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/advance", json={"stage": "design", "user_guidance": "더 간단한 장비로"})
+        resp = client.post("/api/research/t1/advance", json={"stage": "design", "user_guidance": "더 간단한 장비로"})
 
     assert resp.status_code == 200
     assert fake_graph.invoked_with[0] == {"stage": "design", "user_guidance": "더 간단한 장비로"}
@@ -843,7 +843,7 @@ def test_advance_research_omits_user_guidance_when_not_given(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/advance", json={"stage": "design"})
+        resp = client.post("/api/research/t1/advance", json={"stage": "design"})
 
     assert "user_guidance" not in fake_graph.invoked_with[0]
 
@@ -858,7 +858,7 @@ def test_advance_research_does_not_recreate_existing_session(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/advance", json={"stage": "design"})
+        resp = client.post("/api/research/t1/advance", json={"stage": "design"})
 
     assert resp.status_code == 200
     assert create_calls == []
@@ -878,7 +878,7 @@ def test_advance_research_updates_session_stage_after_invoke(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        client.post("/research/t1/advance", json={"stage": "design"})
+        client.post("/api/research/t1/advance", json={"stage": "design"})
 
     assert stage_updates == [("t1", "design")]
 
@@ -888,7 +888,7 @@ def test_get_research_state_returns_snapshot_values(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1")
+        resp = client.get("/api/research/t1")
 
     assert resp.status_code == 200
     assert resp.json() == {"stage": "design", "hypothesis": "가설"}
@@ -899,7 +899,7 @@ def test_get_research_state_404_when_no_checkpoint(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/no-such-thread")
+        resp = client.get("/api/research/no-such-thread")
 
     assert resp.status_code == 404
 
@@ -909,7 +909,7 @@ def test_list_research_sessions_returns_all(monkeypatch):
     monkeypatch.setattr(research_sessions, "list_sessions", lambda **kw: fake_rows)
 
     with TestClient(main.app) as client:
-        resp = client.get("/research/sessions")
+        resp = client.get("/api/research/sessions")
 
     assert resp.status_code == 200
     assert resp.json() == {"sessions": fake_rows}
@@ -923,7 +923,7 @@ def test_rename_research_session_updates_title(monkeypatch):
     monkeypatch.setattr(research_sessions, "update_title", _fake_update)
 
     with TestClient(main.app) as client:
-        resp = client.post("/research/sessions/t1/title", json={"title": "새 제목"})
+        resp = client.post("/api/research/sessions/t1/title", json={"title": "새 제목"})
 
     assert resp.status_code == 200
     assert captured["args"] == ("t1", "새 제목")
@@ -933,7 +933,7 @@ def test_rename_research_session_404_when_not_found(monkeypatch):
     monkeypatch.setattr(research_sessions, "update_title", lambda thread_id, title, **kw: False)
 
     with TestClient(main.app) as client:
-        resp = client.post("/research/sessions/no-such-thread/title", json={"title": "새 제목"})
+        resp = client.post("/api/research/sessions/no-such-thread/title", json={"title": "새 제목"})
 
     assert resp.status_code == 404
 
@@ -946,7 +946,7 @@ def test_close_research_session_deletes_row(monkeypatch):
     monkeypatch.setattr(research_sessions, "delete_session", _fake_delete)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/research/sessions/t1")
+        resp = client.delete("/api/research/sessions/t1")
 
     assert resp.status_code == 200
     assert resp.json() == {"thread_id": "t1", "action": "deleted"}
@@ -957,7 +957,7 @@ def test_close_research_session_404_when_not_found(monkeypatch):
     monkeypatch.setattr(research_sessions, "delete_session", lambda thread_id, **kw: False)
 
     with TestClient(main.app) as client:
-        resp = client.delete("/research/sessions/no-such-thread")
+        resp = client.delete("/api/research/sessions/no-such-thread")
 
     assert resp.status_code == 404
 
@@ -992,7 +992,7 @@ def test_advance_research_from_checkpoint_restores_past_values(monkeypatch):
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
         resp = client.post(
-            "/research/t1/advance",
+            "/api/research/t1/advance",
             json={"stage": "design", "from_checkpoint_id": "cp1", "keep_reference_paper_ids": ["p2"]},
         )
 
@@ -1026,7 +1026,7 @@ def test_advance_research_from_checkpoint_defaults_to_dropping_new_references(mo
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
         # keep_reference_paper_ids를 안 보냄 — 기본값(빈 리스트)
-        client.post("/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "cp1"})
+        client.post("/api/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "cp1"})
 
     assert [r["paper_id"] for r in fake_graph.updated_state["references"]] == ["p1"]
 
@@ -1038,7 +1038,7 @@ def test_advance_research_404_when_from_checkpoint_not_found(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "no-such-cp"})
+        resp = client.post("/api/research/t1/advance", json={"stage": "design", "from_checkpoint_id": "no-such-cp"})
 
     assert resp.status_code == 404
 
@@ -1056,7 +1056,7 @@ def test_get_research_history_keeps_only_turn_final_snapshots_oldest_first(monke
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1/history")
+        resp = client.get("/api/research/t1/history")
 
     assert resp.status_code == 200
     ids = [e["checkpoint_id"] for e in resp.json()["history"]]
@@ -1076,7 +1076,7 @@ def test_get_research_history_includes_latest_pure_edit_checkpoint(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1/history")
+        resp = client.get("/api/research/t1/history")
 
     ids = [e["checkpoint_id"] for e in resp.json()["history"]]
     assert ids == ["c1", "c2edit"]
@@ -1098,7 +1098,7 @@ def test_get_research_history_attaches_branch_source(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1/history")
+        resp = client.get("/api/research/t1/history")
 
     entries = {e["checkpoint_id"]: e["branched_from_checkpoint_id"] for e in resp.json()["history"]}
     assert entries == {"c1": None, "c2": "c1"}
@@ -1117,7 +1117,7 @@ def test_get_research_history_attaches_notes(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1/history")
+        resp = client.get("/api/research/t1/history")
 
     notes = {e["checkpoint_id"]: e["note"] for e in resp.json()["history"]}
     assert notes == {"c1": "장비 다시 확인", "c2": ""}  # 메모 없으면 빈 문자열
@@ -1137,7 +1137,7 @@ def test_get_research_history_excludes_stale_edit_checkpoint(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.get("/research/t1/history")
+        resp = client.get("/api/research/t1/history")
 
     ids = [e["checkpoint_id"] for e in resp.json()["history"]]
     assert ids == ["c1", "c3"]  # c2edit(더 이상 최신이 아닌 편집본)는 빠짐
@@ -1150,7 +1150,7 @@ def test_update_research_draft_merges_given_fields_only(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+        resp = client.post("/api/research/t1/draft", json={"title": "새 제목"})
 
     assert resp.status_code == 200
     assert fake_graph.updated_state == {"title": "새 제목"}  # abstract 등 안 보낸 필드는 안 실림
@@ -1163,7 +1163,7 @@ def test_update_research_draft_400_when_not_writing_stage(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+        resp = client.post("/api/research/t1/draft", json={"title": "새 제목"})
 
     assert resp.status_code == 400
     assert fake_graph.updated_state is None
@@ -1174,7 +1174,7 @@ def test_update_research_draft_404_when_no_state(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/draft", json={"title": "새 제목"})
+        resp = client.post("/api/research/t1/draft", json={"title": "새 제목"})
 
     assert resp.status_code == 404
 
@@ -1184,7 +1184,7 @@ def test_update_research_draft_skips_update_when_no_fields_given(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/draft", json={})
+        resp = client.post("/api/research/t1/draft", json={})
 
     assert resp.status_code == 200
     assert fake_graph.updated_state is None  # 빈 요청으로 불필요한 체크포인트를 안 만듦
@@ -1197,7 +1197,7 @@ def test_retry_research_references_404_when_no_state(monkeypatch):
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/references/retry")
+        resp = client.post("/api/research/t1/references/retry")
 
     assert resp.status_code == 404
 
@@ -1209,7 +1209,7 @@ def test_retry_research_references_400_for_stage_without_reference_node(monkeypa
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/references/retry")
+        resp = client.post("/api/research/t1/references/retry")
 
     assert resp.status_code == 400
 
@@ -1236,7 +1236,7 @@ def test_retry_research_references_calls_matching_node_and_persists(monkeypatch)
 
     with TestClient(main.app) as client:
         main.app.state.research_graph = fake_graph
-        resp = client.post("/research/t1/references/retry")
+        resp = client.post("/api/research/t1/references/retry")
 
     assert resp.status_code == 200
     assert captured["procedure"] == "1. 실험한다"  # tip 값으로 WorkflowState가 재구성됨
@@ -1263,7 +1263,7 @@ def test_save_research_note_calls_set_note(monkeypatch):
     )
 
     with TestClient(main.app) as client:
-        resp = client.post("/research/t1/notes/c1", json={"note": "장비 다시 확인"})
+        resp = client.post("/api/research/t1/notes/c1", json={"note": "장비 다시 확인"})
 
     assert resp.status_code == 200
     assert captured == {"checkpoint_id": "c1", "thread_id": "t1", "note": "장비 다시 확인"}
@@ -1280,7 +1280,7 @@ def test_save_research_note_with_empty_string_clears_it(monkeypatch):
     )
 
     with TestClient(main.app) as client:
-        resp = client.post("/research/t1/notes/c1", json={"note": ""})
+        resp = client.post("/api/research/t1/notes/c1", json={"note": ""})
 
     assert resp.status_code == 200
     assert captured["note"] == ""
