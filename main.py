@@ -321,6 +321,15 @@ def get_paper_summary_endpoint(paper_id: str):
     return {**result, "extraction": result["extraction"].model_dump()}
 
 
+# 서버측 파일 브라우저 ②-A(08-05) — library/를 스캔만 한다. 브라우저가 파일의 전체
+# 경로를 안 줘서 업로드 다이얼로그로 library/를 열 방법이 없다는 게 이 방식으로 간
+# 이유(RoadMap 설계 노트 항목 A). "트래킹에 추가"(②-B)는 아직 없고 이 엔드포인트는
+# 목록만 보여준다.
+@app.get("/api/library/files")
+def list_library_files():
+    return {"files": paper_catalog.scan_library_files()}
+
+
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
 # update_existing_id도 InterestRegistration과 같은 계약: None이면 새로 생성, 값이 있으면
 # 그 id를 수정.

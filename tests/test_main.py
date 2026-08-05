@@ -473,6 +473,22 @@ def test_list_papers_rejects_invalid_status():
     assert resp.status_code == 422
 
 
+# --- GET /api/library/files (②-A, 08-05) ----------------------------------------
+# 얇은 통로 — scan_library_files()가 실제 스캔·traversal 방어를 맡고(test_paper_catalog.py),
+# 여기서는 엔드포인트가 그 반환값을 그대로 넘기는지만 확인.
+
+
+def test_list_library_files_returns_scan_result(monkeypatch):
+    fake_files = [{"path": "quantum/foo.pdf", "tracked": True}]
+    monkeypatch.setattr(paper_catalog, "scan_library_files", lambda **kw: fake_files)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/library/files")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"files": fake_files}
+
+
 # --- GET /papers/{paper_id}/summary (08-03) -------------------------------------
 # get_paper_summary()는 6-3부터 있었지만 API로 노출된 적이 없었다(main.py 어디서도
 # 안 부름) — 여기서 처음 연결.

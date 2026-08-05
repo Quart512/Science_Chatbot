@@ -27,6 +27,11 @@ import interests
 
 APP_DB_PATH = interests.APP_DB_PATH
 
+# library/ 루트(저장소·배포 루트에 나란히, docker-compose.yml이 여기로 바인드 마운트) —
+# 08-05 설계 노트 "논문·노트 저장 방식 재설계" 참고. file_path 컬럼은 이 루트 기준
+# 상대경로만 담으므로, 절대경로 조립·traversal 방어가 필요한 곳은 전부 이 상수를 기준점으로 쓴다.
+LIBRARY_DIR = "library"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
     paper_id TEXT PRIMARY KEY,
@@ -122,6 +127,43 @@ def list_papers(*, status: str | None = None, conn: sqlite3.Connection | None = 
                 "SELECT * FROM papers WHERE status = ? ORDER BY paper_id", (status,)
             ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
+    """library/ 밑의 PDF를 재귀로 나열하고 papers.file_path와 대조해 tracked 여부를
+    붙인다(②-A, 서버측 파일 브라우저의 스캔 단계 — RoadMap 설계 노트 참고). 반환:
+    [{"path": "quantum/foo.pdf", "tracked": bool}, ...], path는 LIBRARY_DIR 기준
+    상대경로(os.sep과 무관하게 항상 "/" 구분자로 통일 — 프론트·API 응답은 플랫폼 중립이어야 함).
+
+    파일시스템 읽기 + DB 조회만 하는 순수 조회 함수(LLM·네트워크 없음). os.walk가
+    LIBRARY_DIR 밑만 순회하므로 사용자 입력에 의한 경로 traversal 위험은 없지만,
+    library/ 안의 심볼릭 링크가 루트 밖을 가리키는 경우까지 막는다 — 이 함수가
+    돌려주는 path가 ②-B(register_paper)에서 다시 디스크 경로로 조립되므로 여기서
+    걸러두는 게 안전하다.
+    """
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        tracked_paths = {
+            row[0]
+            for row in conn.execute("SELECT file_path FROM papers WHERE file_path IS NOT NULL").fetchall()
+        }
+        library_root = os.path.realpath(LIBRARY_DIR)
+        files = []
+        for dirpath, _dirnames, filenames in os.walk(library_root):
+            for name in filenames:
+                if not name.lower().endswith(".pdf"):
+                    continue
+                abs_path = os.path.realpath(os.path.join(dirpath, name))
+                if not abs_path.startswith(library_root + os.sep):
+                    continue
+                rel_path = os.path.relpath(abs_path, library_root).replace(os.sep, "/")
+                files.append({"path": rel_path, "tracked": rel_path in tracked_paths})
+        files.sort(key=lambda f: f["path"])
+        return files
     finally:
         if owns_conn:
             conn.close()

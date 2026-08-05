@@ -246,3 +246,34 @@ def test_doi_and_arxiv_id_uniqueness_allows_multiple_nulls(conn):
     paper_catalog.upsert_recommended("hash:bbb", title="해시 기반 2", conn=conn)
 
     assert len(paper_catalog.list_papers(conn=conn)) == 2
+
+
+def test_scan_library_files_marks_tracked_by_file_path(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "tracked.pdf").write_bytes(b"%PDF-1.4 fake")
+    (tmp_path / "untracked.pdf").write_bytes(b"%PDF-1.4 fake")
+    conn.execute(
+        "INSERT INTO papers (paper_id, file_path, created_at, updated_at) VALUES (?, ?, 'x', 'x')",
+        ("hash:aaa", "quantum/tracked.pdf"),
+    )
+
+    files = paper_catalog.scan_library_files(conn=conn)
+
+    assert files == [
+        {"path": "quantum/tracked.pdf", "tracked": True},
+        {"path": "untracked.pdf", "tracked": False},
+    ]
+
+
+def test_scan_library_files_ignores_non_pdf(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "notes.txt").write_bytes(b"not a pdf")
+
+    assert paper_catalog.scan_library_files(conn=conn) == []
+
+
+def test_scan_library_files_empty_when_library_dir_missing(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path / "does-not-exist"))
+
+    assert paper_catalog.scan_library_files(conn=conn) == []
