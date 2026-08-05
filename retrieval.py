@@ -1,5 +1,6 @@
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+
+from embeddings import BGEM3OnnxEmbeddings
 
 persist_directory="./chroma_db"
 
@@ -7,7 +8,12 @@ persist_directory="./chroma_db"
 #chromadb 불러오기
 # 로컬 임베딩 모델 사용 (BAAI/bge-m3, 다국어) — ingest.py와 반드시 같은 모델이어야 함
 # (모델이 다르면 벡터 공간이 달라져서 유사도 검색이 무의미해짐)
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3") # 이건 모델 선택 불가-이미 임베딩함
+# 08-05에 백엔드를 sentence-transformers(torch) → onnxruntime으로 교체했다. **모델은
+# 그대로 bge-m3**이고 가중치도 같아 벡터가 1e-07 수준으로 일치하므로 위 제약을 그대로
+# 만족한다(재색인 불필요 — 근거는 embeddings.py 모듈 docstring 참고). 여기서 객체를
+# 만드는 시점도 예전과 같은 import 시점으로 유지했다 — main.py의 /api/health가
+# "lifespan이 끝나야(임베딩 모델 로딩 완료 후) 라우트가 뜬다"를 전제하고 있어서다.
+embeddings = BGEM3OnnxEmbeddings() # 이건 모델 선택 불가-이미 임베딩함
 
 collection_name="feynman"
 vectorstore = Chroma(
