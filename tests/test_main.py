@@ -605,6 +605,77 @@ def test_get_paper_summary_endpoint_422_when_context_budget_exceeded(monkeypatch
     assert resp.status_code == 422
 
 
+# --- GET /api/papers/{id}/file (③, 08-05) ---------------------------------------
+# resolve_library_path()의 traversal 방어 자체는 test_paper_catalog.py가 이미 검증
+# 했으므로 여기선 엔드포인트 조립(조회→404 분기→파일 스트리밍)만 본다.
+
+
+def test_get_paper_file_streams_pdf_bytes(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 dummy bytes")
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "quantum/paper.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 200
+    assert resp.content == b"%PDF-1.4 dummy bytes"
+    assert resp.headers["content-type"] == "application/pdf"
+    assert 'inline; filename="paper.pdf"' in resp.headers["content-disposition"]
+
+
+def test_get_paper_file_404_when_paper_not_found(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "get_paper", lambda paper_id: None)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:없음/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_404_when_file_path_not_tracked(monkeypatch):
+    monkeypatch.setattr(
+        paper_catalog, "get_paper", lambda paper_id: {"paper_id": paper_id, "file_path": None}
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_404_when_file_missing_from_disk(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "quantum/gone.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_400_on_traversal(monkeypatch, tmp_path):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "../outside.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 400
+
+
 # --- /notes (지식 노트, 08-03) — /equipment와 완전히 같은 패턴 -------------------
 
 

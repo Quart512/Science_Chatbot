@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getPaperSummary, type PaperCatalogRow } from '../api/papers'
+import { getPaperFileUrl, getPaperSummary, type PaperCatalogRow } from '../api/papers'
 
 // 요약은 lazy 생성이라(paper_ingest.get_paper_summary 참고) 펼칠 때만 조회한다
 // (enabled: expanded) — 목록에 논문이 많아져도 안 펼친 것까지 미리 부르지 않음.
 export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
   const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['paper-summary', paper.paper_id],
     queryFn: () => getPaperSummary(paper.paper_id),
@@ -26,6 +27,36 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
         등록 {paper.created_at.slice(0, 10)}
         {paper.updated_at !== paper.created_at && ` · 수정 ${paper.updated_at.slice(0, 10)}`}
       </p>
+
+      {/* 원본 조회 ③(08-05) — file_path가 있는 논문만(②-B "트래킹에 추가"로 등록된
+          것). 기존 업로드 다이얼로그로 등록된 논문은 원본을 애초에 안 남겨서 이
+          섹션을 아예 안 보여준다. iframe은 <details> 안에 둬 실제로 열 때만
+          PDF를 내려받게 함 — 요약(enabled: expanded)과 같은 lazy 원칙. */}
+      {expanded && paper.file_path && (
+        <div className="paper-row-file">
+          <p className="paper-row-meta">
+            <code>{paper.file_path}</code>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(paper.file_path!)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+            >
+              {copied ? '복사됨' : '경로 복사'}
+            </button>
+          </p>
+          <details>
+            <summary>원본 PDF 보기</summary>
+            <iframe
+              className="paper-row-pdf-frame"
+              src={getPaperFileUrl(paper.paper_id)}
+              title={`${paper.title || paper.filename || paper.paper_id} 원본`}
+            />
+          </details>
+        </div>
+      )}
 
       {expanded && (
         <div className="paper-row-summary">

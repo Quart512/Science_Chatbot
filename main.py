@@ -321,6 +321,33 @@ def get_paper_summary_endpoint(paper_id: str):
     return {**result, "extraction": result["extraction"].model_dump()}
 
 
+# 원본 조회 ③(08-05) — 화면에 [CITE:...] 마커·재청킹된 조각 대신 원문 그대로를 보여준다
+# (설계 노트 "논문·노트 저장 방식 재설계" 참고). file_path는 ②-B "트래킹에 추가"로
+# 등록된 논문에만 있다 — 기존 업로드 다이얼로그 경로(tempfile만 쓰고 버림)로 등록된
+# 논문은 원본이 아예 없으므로 404. resolve_library_path()는 file_path가 DB에서 온
+# 값이라 신뢰할 수 있는 입력이지만, ②-B가 쓰는 것과 같은 함수를 그대로 재사용해
+# 방어를 이중으로 겹치는 값이 크다("경로 검증은 한 곳"이 깨질 위험 없이 공짜로 붙음).
+@app.get("/api/papers/{paper_id}/file")
+def get_paper_file(paper_id: str):
+    paper = paper_catalog.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail=f"paper_id={paper_id}가 등록돼 있지 않습니다")
+    if not paper["file_path"]:
+        raise HTTPException(status_code=404, detail="이 논문은 원본 파일이 추적되어 있지 않습니다")
+    try:
+        abs_path = paper_catalog.resolve_library_path(paper["file_path"])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="library/ 루트를 벗어난 경로입니다")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="원본 파일을 찾을 수 없습니다 — 이동되었거나 삭제되었을 수 있습니다")
+    return FileResponse(
+        abs_path,
+        media_type="application/pdf",
+        filename=os.path.basename(paper["file_path"]),
+        content_disposition_type="inline",
+    )
+
+
 # 서버측 파일 브라우저 ②-A(08-05) — library/를 스캔만 한다. 브라우저가 파일의 전체
 # 경로를 안 줘서 업로드 다이얼로그로 library/를 열 방법이 없다는 게 이 방식으로 간
 # 이유(RoadMap 설계 노트 항목 A). "트래킹에 추가"(②-B)는 아직 없고 이 엔드포인트는

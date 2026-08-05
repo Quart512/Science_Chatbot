@@ -14,6 +14,10 @@ export interface PaperCatalogRow {
   // 경우)을 화면에서 해시 대신 사람이 읽을 수 있는 이름으로 보여줄 차선책.
   // 추천(검색) 경로로 생긴 행은 업로드 파일이 없어 빈 문자열.
   filename: string
+  // library/ 루트 기준 상대경로(③, 08-05) — ②-B "트래킹에 추가"로 등록된 논문만 값이
+  // 있다. 기존 업로드 다이얼로그 경로(tempfile만 쓰고 버림)로 등록된 논문은 원본이
+  // 아예 없어 null — PaperRow가 이 값으로 PDF 뷰어 섹션을 보여줄지 결정한다.
+  file_path: string | null
   created_at: string
   updated_at: string
 }
@@ -76,4 +80,10 @@ export interface PaperSummary {
 
 export function getPaperSummary(paperId: string) {
   return apiFetch<PaperSummary>(`/papers/${encodeURIComponent(paperId)}/summary`)
+}
+
+// JSON이 아니라 PDF 바이트를 그대로 스트리밍하는 엔드포인트라 apiFetch를 안 쓴다 —
+// registerPaper()와 같은 이유. <iframe src>에 직접 박아 브라우저 내장 뷰어로 렌더.
+export function getPaperFileUrl(paperId: string) {
+  return `${BACKEND_URL}/api/papers/${encodeURIComponent(paperId)}/file`
 }
