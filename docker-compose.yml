@@ -1,11 +1,22 @@
+# 이 파일은 **배포판(릴리즈 zip)용 베이스**다 — 최종 사용자가 받는 건 이 파일 하나뿐이라
+# Dockerfile도 소스도 .env도 없는 폴더에서 `docker compose up -d`만으로 떠야 한다.
+# 개발용 설정(로컬 빌드·.env)은 docker-compose.override.yml에 분리했다 — Compose가
+# 그 파일명을 규약으로 자동 인식해 같은 디렉터리에 있으면 -f 없이도 이 파일 위에
+# 덮어씌운다. 그래서 저장소를 클론한 개발 기계에서는 예전과 완전히 똑같이 동작하고,
+# override를 안 담은 릴리즈 zip에서는 pull만 하는 배포 설정이 된다.
+#
+# 08-05 배포 재검토에서 실제로 겪은 것 두 가지가 이 분리의 이유다:
+#  ① env_file은 기본이 required라 .env 없는 폴더에서는 `env file ... not found`로 즉사했다
+#     (스크립트가 감지도 못 해 영문 에러만 뜨고 창이 닫힘). 배포판은 API 키를 설정 화면
+#     (api_keys.py → data/app.db)에서 받으므로 .env가 아예 필요 없다 — 그래서 required:false
+#     같은 신문법(Compose 2.24+, 구버전 Docker Desktop에서 오히려 깨짐) 대신 통째로 뺐다.
+#  ② compose는 pull에 실패하면 build로 폴백한다(실측 확인). 릴리즈 zip엔 Dockerfile이
+#     없으니 build:를 남겨두면 그 폴백이 반드시 "Dockerfile not found"로 죽는다.
 services:
   science-chatbot:
-    build: .                              # 로컬에서 빌드할 때 씀 (Dockerfile 기반)
-    image: quart512/science-chatbot:latest # 서버에서는 이 이름으로 Docker Hub에서 pull만 함
+    image: quart512/science-chatbot:latest # Docker Hub에서 pull만 함 (build는 override에만)
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       # LOCAL_MODEL_URL이 models.py의 os.getenv 기본값(localhost:8080)을 덮어씀.
       # 컨테이너 안에서 localhost는 "자기 자신"이라 llama-server를 못 찾음 —

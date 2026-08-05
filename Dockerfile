@@ -39,4 +39,13 @@ EXPOSE 8000
 
 # --host 0.0.0.0 필수 — 기본값 127.0.0.1은 컨테이너 내부에서만 보이는 주소라
 # 포트 매핑을 해도 외부(호스트/인터넷)에서 접속 불가
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# `uv run uvicorn ...`이 아니라 venv 바이너리를 직접 부른다(08-05 배포 검증 중 발견).
+# `uv run`은 실행 **전에** lockfile 기준으로 환경을 동기화하는데 그 기본값이 dev 그룹
+# 포함이라, 위 `uv sync --no-dev`로 애써 뺀 pytest·matplotlib을 컨테이너가 뜰 때마다
+# 다시 설치했다(실제 로그에서 matplotlib·pillow·fonttools 다운로드 확인). 부작용이 두
+# 가지였다 — ① 매 기동마다 네트워크가 필요해 오프라인이면 아예 못 뜬다 ② 그만큼 시작이
+# 느려진다. 배포판은 남의 컴퓨터에서 도는 것이라 둘 다 그냥 넘길 수 없다.
+# 빌드 단계에서 venv가 이미 완성돼 있으므로 동기화 자체가 불필요하고, .venv/bin의
+# 실행 파일은 shebang이 venv 파이썬을 가리켜 import 경로도 알아서 맞는다.
+CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
