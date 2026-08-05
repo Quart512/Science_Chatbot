@@ -673,6 +673,110 @@ def test_export_library_avoids_infinite_loop_on_cyclic_symlink(monkeypatch, tmp_
     assert resp.status_code == 200
 
 
+# --- POST /api/library/import (⑥-B, 08-05) ---------------------------------------
+# 병합은 안 만든다(사용자 결정) — papers/interests/equipment/notes 중 하나라도 있으면
+# 거부. extractall(path=".")이 실제 CWD 기준으로 파일을 쓰므로 monkeypatch.chdir()로
+# 격리(pytest가 테스트 종료 시 자동으로 원래 cwd로 되돌림 — 저장소를 안 건드림).
+
+
+def _build_zip(entries: dict) -> bytes:
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _stub_empty_catalog(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "list_papers", lambda **kw: [])
+    monkeypatch.setattr(interests, "list_interests", lambda **kw: [])
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda **kw: [])
+
+
+def test_import_library_rejects_when_papers_exist(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "list_papers", lambda **kw: [{"paper_id": "hash:x"}])
+    monkeypatch.setattr(interests, "list_interests", lambda **kw: [])
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda **kw: [])
+
+    zip_bytes = _build_zip({"data/app.db": b"fake"})
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 400
+
+
+def test_import_library_rejects_invalid_zip(monkeypatch):
+    _stub_empty_catalog(monkeypatch)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("bad.zip", b"not a zip file", "application/zip")}
+        )
+
+    assert resp.status_code == 400
+
+
+def test_import_library_rejects_unexpected_paths_in_zip(monkeypatch, tmp_path):
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({"../outside.txt": b"malicious"})
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("evil.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 400
+    assert not (tmp_path.parent / "outside.txt").exists()
+
+
+def test_import_library_extracts_zip_when_empty(monkeypatch, tmp_path):
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({
+        "data/app.db": b"fake app db bytes",
+        "library/quantum/paper.pdf": b"%PDF-1.4 fake",
+    })
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "papers": 0, "interests": 0, "equipment": 0, "notes": 0, "restart_required": False,
+    }
+    assert (tmp_path / "data" / "app.db").read_bytes() == b"fake app db bytes"
+    assert (tmp_path / "library" / "quantum" / "paper.pdf").read_bytes() == b"%PDF-1.4 fake"
+
+
+def test_import_library_flags_restart_required_when_index_included(monkeypatch, tmp_path):
+    # retrieval.py의 Chroma 클라이언트가 프로세스 시작 시점에 한 번만 만들어져 여러
+    # 모듈이 그 객체를 그대로 들고 있으므로, chroma_db를 갈아치워도 재시작 전까지는
+    # 검색·요약이 깨진다(실제 재현 확인 — RoadMap 완료 표 참고). 이 신호가 응답에
+    # 정직하게 실리는지만 본다.
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({
+        "data/app.db": b"fake app db bytes",
+        "chroma_db/chroma.sqlite3": b"fake index bytes",
+    })
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["restart_required"] is True
+
+
 # --- GET /papers/{paper_id}/summary (08-03) -------------------------------------
 # get_paper_summary()는 6-3부터 있었지만 API로 노출된 적이 없었다(main.py 어디서도
 # 안 부름) — 여기서 처음 연결.

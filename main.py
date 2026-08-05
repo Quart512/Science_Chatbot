@@ -398,7 +398,13 @@ def _add_dir_to_zip(zf: zipfile.ZipFile, root_dir: str) -> None:
     """root_dir 밑의 모든 파일을 root_dir 자체를 포함한 상대경로(arcname)로 zip에 담는다.
     library/의 심볼릭 링크(포터블 번들 "라이브러리 외부 경로 추적" 기능)도 따라간다 —
     완전 백업(본인용)이라면 그렇게 연결해둔 원본도 같이 담기는 게 맞다. scan_library_files()
-    와 같은 순환 방지(실제 경로 기준 이미 방문한 디렉터리는 다시 안 내려감)."""
+    와 같은 순환 방지(실제 경로 기준 이미 방문한 디렉터리는 다시 안 내려감).
+
+    arcname은 "/"로 강제 통일한다 — os.path.join의 구분자는 플랫폼마다 다른데(Windows는
+    "\\"), zip 표준 관례는 "/"뿐이다. Windows에서 만든 백업을 그대로 두면(실제 최대
+    사용자층이 Windows — RoadMap 참고) 항목 이름에 "\\"가 그대로 박혀 다른 플랫폼은
+    물론 같은 Windows에서도 zipfile.extractall()이 폴더로 안 풀고 "chroma_db\\chroma.
+    sqlite3"라는 이름의 파일 하나로 잘못 풀 수 있다."""
     if not os.path.isdir(root_dir):
         return
     seen_dirs = set()
@@ -411,7 +417,7 @@ def _add_dir_to_zip(zf: zipfile.ZipFile, root_dir: str) -> None:
         for name in filenames:
             full_path = os.path.join(dirpath, name)
             if os.path.isfile(full_path):  # 깨진 심볼릭 링크(Docker 등) 무시
-                zf.write(full_path, arcname=full_path)
+                zf.write(full_path, arcname=full_path.replace(os.sep, "/"))
 
 
 class LibraryExportRequest(BaseModel):
@@ -434,6 +440,81 @@ def export_library(body: LibraryExportRequest):
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="library_export.zip"'},
     )
+
+
+# 라이브러리 import ⑥-B(08-05) — 병합은 안 만든다(사용자 결정, RoadMap "라이브러리
+# import" 행 참고). papers/interests/equipment/notes 중 하나라도 있으면 거부하고,
+# 그래서 paper_id 충돌 처리 자체가 필요 없다(빈 상태로 풀리므로 충돌할 게 없음) —
+# 병합이 실제로 필요해지면 그때 별도 설계.
+_IMPORT_ALLOWED_ROOTS = ("data", "chroma_db", "library")
+
+
+def _is_existing_data_present() -> bool:
+    return bool(
+        paper_catalog.list_papers()
+        or interests.list_interests()
+        or equipment.list_equipment()
+        or knowledge_notes.list_notes()
+    )
+
+
+def _safe_import_entries(zf: zipfile.ZipFile) -> list[str]:
+    """ZIP 안 모든 항목이 export가 실제로 만드는 구조("data/"·"chroma_db/"·"library/"
+    밑)인지 확인한다 — 조작된 zip이 "../../etc/passwd" 같은 경로로 임의 파일을 덮어쓰지
+    못하게. resolve_library_path()가 realpath 대신 normpath를 쓰는 것과 같은 이유로
+    문자열 구조만 정규화해서 본다(심볼릭 링크 여부와 무관하게 ".." 탈출만 판별하면 됨 —
+    여기선 애초에 심볼릭 링크를 만들 상황이 아니라 단순화해도 안전). 하나라도 안전하지
+    않으면 빈 리스트를 돌려줘 호출자가 통째로 거부하게 한다("일부만 거르고 계속"이 아니라
+    전부 거절 — 조작된 zip을 부분적으로라도 신뢰하지 않는다)."""
+    names = zf.namelist()
+    for name in names:
+        normalized = os.path.normpath(name)
+        if os.path.isabs(normalized) or normalized.startswith(".."):
+            return []
+        top = normalized.split(os.sep)[0]
+        if top not in _IMPORT_ALLOWED_ROOTS:
+            return []
+    return names
+
+
+@app.post("/api/library/import")
+async def import_library(file: UploadFile = File(...)):
+    if _is_existing_data_present():
+        raise HTTPException(
+            status_code=400,
+            detail="기존 논문·관심사·실험도구·노트가 있어 가져올 수 없습니다 — 새로 설치한 상태에서만 가능합니다",
+        )
+
+    file_bytes = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(file_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="올바른 백업 파일(.zip)이 아닙니다")
+
+    with zf:
+        entries = _safe_import_entries(zf)
+        if not entries:
+            raise HTTPException(status_code=400, detail="백업 파일 안에 예상 밖의 경로가 있어 가져올 수 없습니다")
+        # chroma_db 포함 여부만 별도로 남긴다 — extractall() 전에 확인해야 entries가
+        # 아직 원본 zip 이름(항상 "/" 구분자, _add_dir_to_zip 참고) 그대로다.
+        includes_index = any(name.startswith("chroma_db/") for name in entries)
+        zf.extractall(path=".", members=entries)
+
+    return {
+        "papers": len(paper_catalog.list_papers()),
+        "interests": len(interests.list_interests()),
+        "equipment": len(equipment.list_equipment()),
+        "notes": len(knowledge_notes.list_notes()),
+        # retrieval.py의 Chroma 클라이언트는 프로세스 시작 시점에 한 번만 만들어져
+        # graph.py·paper_ingest.py 등 여러 모듈이 `from retrieval import ...`로 그
+        # 객체를 그대로 들고 있다(재할당해도 이미 import한 다른 모듈엔 안 퍼짐 — 파이썬
+        # import 의미론). chroma_db 파일을 방금 갈아치웠어도 그 객체들이 들고 있는
+        # 컬렉션 참조는 여전히 옛 파일 기준이라, 재시작 전까지는 검색·요약이 "Collection
+        # ... does not exist"로 깨진다(실제 재현·확인함) — 그래서 이 신호를 정직하게
+        # 알린다. RDB(data/app.db)는 매 요청마다 새 sqlite3 연결을 여는 구조라 이
+        # 문제가 없다(같은 이유로 재시작 불필요).
+        "restart_required": includes_index,
+    }
 
 
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).

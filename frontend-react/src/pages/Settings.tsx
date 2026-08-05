@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteApiKey, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
-import { exportLibrary } from '../api/library'
+import { exportLibrary, importLibrary } from '../api/library'
 import './Settings.css'
 
 const PROVIDER_LABELS: Record<ApiKeyStatus['provider'], string> = {
@@ -162,6 +162,78 @@ function LibraryExportCard() {
   )
 }
 
+// ⑥-B(08-05) — 병합은 없다(사용자 결정, RoadMap "라이브러리 import" 행 참고). 서버가
+// 기존 데이터가 있으면 400으로 거부하지만, 눌러보기 전에 미리 알려주는 게 사용자 요청
+// ("기존 데이터 있으면 안된다는 안내도 추가하자") — 실패하고 나서야 이유를 아는 것보다
+// 먼저 조건을 밝혀두는 쪽이 낫다.
+function LibraryImportCard() {
+  const queryClient = useQueryClient()
+  const [file, setFile] = useState<File | null>(null)
+
+  const importMutation = useMutation({
+    mutationFn: () => {
+      if (!file) throw new Error('가져올 ZIP 파일을 선택해주세요.')
+      return importLibrary(file)
+    },
+    onSuccess: () => {
+      setFile(null)
+      // 내보내기가 앱의 거의 모든 데이터(논문·관심사·실험도구·노트)를 건드리므로,
+      // 각 화면이 쓰는 쿼리 키를 전부 무효화해야 방금 들어온 데이터가 바로 보인다.
+      queryClient.invalidateQueries({ queryKey: ['papers'] })
+      queryClient.invalidateQueries({ queryKey: ['library', 'files'] })
+      queryClient.invalidateQueries({ queryKey: ['interests'] })
+      queryClient.invalidateQueries({ queryKey: ['equipment'] })
+      queryClient.invalidateQueries({ queryKey: ['notes'] })
+    },
+  })
+
+  const result = importMutation.data
+
+  return (
+    <div className="settings-card">
+      <h3>라이브러리 가져오기</h3>
+      <p className="settings-card-meta">
+        위에서 내보낸 ZIP을 복원합니다. <strong>새로 설치한 상태(논문·관심사·실험도구·노트가 전부 비어있을 때)에서만
+        가능합니다</strong> — 기존 데이터가 하나라도 있으면 가져오기가 거부됩니다(병합 없음, 덮어쓰기 방지).
+      </p>
+      <form
+        className="settings-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          importMutation.mutate()
+        }}
+      >
+        <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <div className="settings-card-actions">
+          <button type="submit" disabled={importMutation.isPending || !file}>
+            {importMutation.isPending ? '가져오는 중...' : '가져오기'}
+          </button>
+        </div>
+      </form>
+      {importMutation.isError && (
+        <p className="settings-error">가져오기 실패: {(importMutation.error as Error).message}</p>
+      )}
+      {result && (
+        <>
+          <p className="settings-card-meta">
+            가져오기 완료 — 논문 {result.papers}편, 관심사 {result.interests}건, 실험도구 {result.equipment}건, 노트{' '}
+            {result.notes}건
+          </p>
+          {/* 검색 인덱스(chroma_db)를 같이 가져왔으면 재시작 전까지 검색·요약이 깨진다
+              (main.py import_library() 주석 — 실제로 재현·확인한 근거). 논문·관심사·
+              실험도구·노트 목록 자체는 재시작 없이 바로 반영된다(RDB는 매 요청마다
+              새 연결이라 이 문제가 없음). */}
+          {result.restart_required && (
+            <p className="settings-warning">
+              검색 인덱스를 같이 가져왔습니다 — 논문 검색·요약이 정상 동작하려면 앱을 재시작해주세요.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['api-key-status'],
@@ -182,6 +254,7 @@ export function Settings() {
       {data && data.keys.map((status) => <ApiKeyCard key={status.provider} status={status} />)}
 
       <LibraryExportCard />
+      <LibraryImportCard />
     </div>
   )
 }
