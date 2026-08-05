@@ -45,10 +45,10 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
         {paper.updated_at !== paper.created_at && ` · 수정 ${paper.updated_at.slice(0, 10)}`}
       </p>
 
-      {/* 원본 조회 ③(08-05) — file_path가 있는 논문만(②-B "트래킹에 추가"로 등록된
-          것). 기존 업로드 다이얼로그로 등록된 논문은 원본을 애초에 안 남겨서 이
-          섹션을 아예 안 보여준다. iframe은 <details> 안에 둬 실제로 열 때만
-          PDF를 내려받게 함 — 요약(enabled: expanded)과 같은 lazy 원칙. */}
+      {/* 원본 조회 ③(08-05) — file_path가 있는 논문만. ⑤ 이전(tempfile만 쓰고
+          버리던 시절)에 등록된 옛 논문만 원본이 없어 이 섹션을 안 보여준다.
+          iframe은 <details> 안에 둬 실제로 열 때만 PDF를 내려받게 함 —
+          요약(enabled: expanded)과 같은 lazy 원칙. */}
       {expanded && paper.file_path && (
         <div className="paper-row-file">
           <p className="paper-row-meta">

@@ -25,47 +25,6 @@ def _looks_scanned(doc: fitz.Document) -> bool:
     return avg_chars_per_page < SCANNED_CHAR_THRESHOLD_PER_PAGE
 
 
-def _extract_pdf_title(doc: fitz.Document, markdown: str) -> str | None:
-    """제목 후보를 뽑는다(title_check.py용) — PDF 메타데이터(`doc.metadata["title"]`)를
-    우선 쓰고(헤더 오탐지보다 안정적), 제목처럼 안 보이거나 없으면 마크다운으로 폴백한다.
-    메타데이터는 텍스트 레이어와 무관하게 항상 읽을 수 있어 스캔본에도 시도할 가치가 있다.
-
-    "제목처럼 안 보임" 판정은 공백 유무 하나만 본다 — 실제로 겪은 사례(08-05 라이브
-    검증): 논문 유통 플랫폼이 심어놓은 슬러그성 값('DBPIA-NURIMEDIA', 공백 없는 한
-    단어)이 메타데이터에 들어있어 폴백이 전혀 안 걸리고, 정확한 제목을 줘도
-    classify_title_match()가 최악 등급을 냈다. 학술 논문 제목은 거의 항상 여러 단어라
-    공백이 있으면 진짜 제목일 가능성이 높다 — 그 이상의 정교한 판별(블록리스트 등)은
-    다른 사례가 실제로 나오기 전엔 안 만든다("단순 경로부터").
-
-    마크다운 폴백은 첫 줄이 아니라 최상위(h1, '# ') 헤딩을 우선 찾는다 —
-    pymupdf4llm은 폰트 크기로 헤딩 레벨을 매기므로 h1이 보통 실제 제목이고, 그 앞에
-    저널명·발행 정보가 h3 등 더 얕은 레벨로 먼저 나오는 경우가 실제로 있었다(같은
-    라이브 검증에서 재현: 첫 줄이 "### New Physics: Sae Mulli, Vol. 76..."라는 저널
-    정보였고 진짜 제목은 그 뒤의 "# A performance comparison..."였음). h1을 못 찾으면
-    기존처럼 첫 비어있지 않은 줄로 폴백한다(h1 탐지 자체가 실패하는 PDF도 있을 수
-    있으므로 — RoadMap "헤더 탐지 폴백 2단" 참고). 그래도 없으면 공백 없는 메타데이터
-    라도 최후 수단으로 쓴다(스캔본처럼 마크다운이 아예 없는 경우 아무것도 안 주는 것보다
-    낫다)."""
-    meta_title = (doc.metadata.get("title") or "").strip()
-    if meta_title and " " in meta_title:
-        return meta_title
-
-    h1_title = None
-    first_line = None
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        candidate = stripped.lstrip("#").strip("* ").strip()
-        if not candidate:
-            continue
-        if first_line is None:
-            first_line = candidate
-        if h1_title is None and stripped.startswith("#") and not stripped.startswith("##"):
-            h1_title = candidate
-            break  # h1을 찾으면 더 볼 필요 없음
-
-    return h1_title or first_line or meta_title or None
-
-
 def parse_pdf(file_bytes: bytes) -> dict:
     """PDF 파일을 파싱해 마크다운 텍스트와 메타데이터를 반환한다.
 
@@ -73,7 +32,7 @@ def parse_pdf(file_bytes: bytes) -> dict:
     계산(파일 해시)에도 같은 바이트가 필요해 이미 읽어둔 걸 그대로 재사용, 중복 I/O 방지.
 
     반환 키: text_extractable(False면 스캔본, markdown 빈 문자열) / markdown(헤딩은 폰트
-    크기 휴리스틱이라 인식률 편차 있음, 폴백은 호출하는 쪽 몫) / page_count / pdf_title.
+    크기 휴리스틱이라 인식률 편차 있음, 폴백은 호출하는 쪽 몫) / page_count.
 
     수식은 폰트 인코딩에 따라 깨진 유니코드로 나올 수 있어 신뢰하지 않는다 — 필요한 곳에서
     "수식 신뢰 불가"로 별도 표기할 것.
@@ -89,7 +48,6 @@ def parse_pdf(file_bytes: bytes) -> dict:
                 "text_extractable": False,
                 "markdown": "",
                 "page_count": page_count,
-                "pdf_title": _extract_pdf_title(doc, ""),  # 메타데이터만 시도(마크다운 없음)
             }
 
         # doc(이미 열린 fitz.Document)을 그대로 넘겨 파일을 두 번 열지 않는다.
@@ -99,7 +57,6 @@ def parse_pdf(file_bytes: bytes) -> dict:
             "text_extractable": True,
             "markdown": markdown,
             "page_count": page_count,
-            "pdf_title": _extract_pdf_title(doc, markdown),
         }
 
 

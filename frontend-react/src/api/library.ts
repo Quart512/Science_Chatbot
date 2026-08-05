@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import type { TrackResult } from './papers'
 
 export interface LibraryFile {
   path: string
@@ -13,7 +14,7 @@ export function listLibraryFiles() {
 // 항상 "pending"), 무거운 파싱·청킹·임베딩은 서버가 백그라운드로 돌린다. 완료 여부는
 // papers 목록을 다시 불러와 analysis_status로 확인한다(Papers.tsx의 폴링).
 export function trackLibraryFile(path: string) {
-  return apiFetch<{ paper_id: string; analysis_status: string }>('/library/track', {
+  return apiFetch<TrackResult>('/library/track', {
     method: 'POST',
     body: JSON.stringify({ path }),
   })

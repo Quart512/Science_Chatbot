@@ -7,7 +7,6 @@ TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query�
 import asyncio
 import uuid
 
-import fitz
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -389,20 +388,25 @@ def test_list_interest_papers_404_when_interest_not_found(monkeypatch):
 # --- POST /papers (08-11① 호출 경로) -----------------------------------------
 
 
-def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
-    # register_paper() 자체(파싱·임베딩)는 몽키패치로 갈아끼운다 — 여기서 보는 건
-    # 엔드포인트가 업로드 바이트를 임시 파일 경로로 바꿔 doi/arxiv_id와 함께 그대로
-    # 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
+def test_register_paper_endpoint_writes_to_library_and_forwards_to_track(monkeypatch, tmp_path):
+    # ⑤(08-05) — 업로드가 library/에 파일을 남기고 track_in_background()로 넘어간다.
+    # track_in_background() 자체(파싱·임베딩)는 몽키패치로 갈아끼운다 — 여기서 보는 건
+    # 엔드포인트가 업로드 바이트를 실제로 library/에 써넣고, doi/arxiv_id·filename·
+    # file_path를 그대로 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
     captured = {}
 
-    def _fake_register(pdf_path, *, doi=None, arxiv_id=None, filename="", **kw):
+    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, **kw):
         captured["pdf_path"] = pdf_path
+        captured["file_path"] = file_path
+        captured["filename"] = filename
         captured["doi"] = doi
         captured["arxiv_id"] = arxiv_id
-        captured["filename"] = filename
-        return {"paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1}
+        with open(pdf_path, "rb") as f:
+            captured["bytes_on_disk"] = f.read()
+        return {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
 
-    monkeypatch.setattr(paper_ingest, "register_paper", _fake_register)
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
 
     with TestClient(main.app) as client:
         resp = client.post(
@@ -412,20 +416,43 @@ def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {
-        "paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1
-    }
+    assert resp.json() == {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
     assert captured["arxiv_id"] == "2401.12345"
     assert captured["doi"] is None
-    assert captured["pdf_path"]  # 임시 파일 경로(내용은 register_paper()가 몽키패치돼 안 쓰임)
-    assert captured["filename"] == "paper.pdf"  # 업로드 원본 파일명이 그대로 전달됨
+    assert captured["filename"] == "paper.pdf"
+    assert captured["file_path"] == "paper.pdf"  # library/ 루트 기준 상대경로(충돌 없음)
+    assert captured["bytes_on_disk"] == b"%PDF-1.4 dummy"  # 실제로 library/에 써짐
 
 
-def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
+def test_register_paper_endpoint_avoids_filename_collision(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "paper.pdf").write_bytes(b"already here")  # 같은 이름의 기존 파일
+
+    captured = {}
+
+    def _fake_track(pdf_path, *, file_path=None, **kw):
+        captured["file_path"] = file_path
+        return {"paper_id": "hash:x", "analysis_status": "pending"}
+
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/papers", files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")})
+
+    assert resp.status_code == 200
+    assert captured["file_path"] == "paper_2.pdf"  # 기존 paper.pdf를 안 덮어씀
+    assert (tmp_path / "paper.pdf").read_bytes() == b"already here"  # 기존 파일 그대로
+
+
+def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch, tmp_path):
+    # 매직바이트(%PDF-) 검증만으로 즉시 거절 — track_in_background까지 안 감(파싱은
+    # 이제 백그라운드에서만 검증되므로 여기서 걸러지는 건 매직바이트 수준뿐).
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+
     def _boom(pdf_path, **kw):
-        raise fitz.FileDataError("cannot open broken document")
+        raise AssertionError("매직바이트 검증에서 걸러졌어야 함 — track_in_background까지 오면 안 됨")
 
-    monkeypatch.setattr(paper_ingest, "register_paper", _boom)
+    monkeypatch.setattr(paper_ingest, "track_in_background", _boom)
 
     with TestClient(main.app) as client:
         resp = client.post(
@@ -433,6 +460,7 @@ def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
         )
 
     assert resp.status_code == 400
+    assert list(tmp_path.iterdir()) == []  # 거절된 파일은 library/에 안 남음
 
 
 # --- GET /papers (08-11③ 호출 경로) -------------------------------------------

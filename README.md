@@ -104,9 +104,7 @@ Science_Chatbot/
 │   ├── test_context_budget.py       # check_context_budget / ContextBudgetExceeded
 │   ├── test_paper_id.py             # paper_id 정규화 (DOI/arXiv/해시 우선순위)
 │   ├── test_paper_chunking.py       # 헤더 분할·References/Abstract 태깅·임베딩용 청킹
-│   ├── test_pdf_parse.py            # PDF 제목 후보 추출(_extract_pdf_title, 가짜 문서 객체)
-│   ├── test_title_check.py          # 제목 정규화·유사도 등급 분류 (difflib, 결정론적)
-│   ├── test_paper_ingest.py         # register_paper/get_paper_summary (가짜 vectorstore 주입)
+│   ├── test_paper_ingest.py         # register_paper/get_paper_summary/track_in_background (가짜 vectorstore 주입)
 │   ├── test_describe_context_sources.py  # QA 답변 근거 표시(graph.py, 메타데이터만으로 포매팅)
 │   ├── test_retrieve.py             # retrieve()의 feynman+papers 컬렉션 병합
 │   ├── test_interests.py            # 관심사 RDB CRUD (실제 sqlite3 :memory: 연결, 가짜 불필요)
@@ -141,8 +139,7 @@ Science_Chatbot/
 │   ├── paper_chunking.py     # 헤더 기반 섹션 분할(추출용)·임베딩용 청킹·References 태깅
 │   ├── paper_id.py           # 논문 불변 식별자 정규화 (DOI > arXiv > 파일 해시)
 │   ├── paper_extraction.py   # 논문 구조화 추출 Pydantic 스키마 (품질 판정 아님)
-│   ├── title_check.py        # 제목 검증 (arxiv 제목 vs PDF 추출 제목, 결정론적 비교 — 등록을 막지 않음)
-│   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary
+│   └── paper_ingest.py       # 논문 요약기(②a) 오케스트레이션 — register_paper/get_paper_summary/track_in_background
 ├── retrieval.py          # 임베딩 + 벡터스토어(feynman, papers) — ingest/paper_ingest와 공유해 임베딩 모델 불일치 방지
 ├── ingest.py             # 인덱싱: 청킹 → 로컬 임베딩 → ChromaDB
 ├── interests.py          # 관심사 저장소(①) RDB(SQLite) — data/app.db, ORM 없이 표준 라이브러리 sqlite3
@@ -285,12 +282,12 @@ GET /interests/{interest_id}/papers?only_relevant=false   → {"papers": [...]}
 
 ```
 POST /papers  (multipart/form-data: file, doi?, arxiv_id?)
-→ {"paper_id", "text_extractable", "chunk_count", "page_count", "title_check"}
+→ {"paper_id", "analysis_status"}
 
 GET /papers?status=recommended|owned|dismissed   → {"papers": [...]}
 ```
 
-- `POST /papers`는 `register_paper()`를 그대로 호출 — 잘못된 PDF는 400. `GET /papers`는 카탈로그 전역 조회 — 관심사별로 보려면 위 `GET /interests/{id}/papers`를 쓴다.
+- `POST /papers`(⑤ 업로드 재정의, 08-05)는 업로드 바이트를 `library/`에 써넣고(이름 겹치면 `_2`, `_3`... 접미사) `track_in_background()`로 넘긴다 — 매직바이트(`%PDF-`) 검증만 즉시(아니면 400), 실제 파싱·청킹·임베딩은 백그라운드. 진행 상태는 `GET /papers`가 반환하는 각 행의 `analysis_status`(`pending`/`analyzing`/`done`/`failed`)로 폴링해 확인한다. `GET /papers`는 카탈로그 전역 조회 — 관심사별로 보려면 위 `GET /interests/{id}/papers`를 쓴다.
 
 ```
 GET /papers/{paper_id}/summary   → {"paper_id", "extraction": {...}, "from_cache", "generated_by", "tokens_used"}

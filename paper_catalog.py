@@ -202,6 +202,23 @@ def scan_library_files(*, conn: sqlite3.Connection | None = None) -> list[dict]:
             conn.close()
 
 
+def unique_library_filename(filename: str) -> str:
+    """filename을 library/ 루트에 저장할 때 기존 파일과 안 겹치는 이름을 고른다(⑤ 업로드
+    재정의, 08-05 — 기존 업로드 다이얼로그를 "고른 파일을 library/에 복사해 넣기"로
+    재정의하면서 필요해짐, RoadMap 설계 노트 참고). 겹치면 파일명 스템에 `_2`, `_3`...를
+    붙인다. `os.path.basename`으로 먼저 정리한다 — 브라우저가 주는 `UploadFile.filename`은
+    보통 파일명뿐이지만, 방어적으로 경로 구분자가 섞여 들어와도 library/ 루트 밖에 안 쓰게."""
+    library_root = os.path.realpath(LIBRARY_DIR)
+    safe_name = os.path.basename(filename) or "업로드.pdf"
+    stem, ext = os.path.splitext(safe_name)
+    candidate = safe_name
+    n = 2
+    while os.path.exists(os.path.join(library_root, candidate)):
+        candidate = f"{stem}_{n}{ext}"
+        n += 1
+    return candidate
+
+
 def upsert_recommended(
     paper_id: str,
     *,

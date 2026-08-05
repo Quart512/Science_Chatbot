@@ -37,6 +37,10 @@ export function Papers() {
       setDoi('')
       setArxivId('')
       queryClient.invalidateQueries({ queryKey: ['papers'] })
+      // ⑤(08-05)부터 업로드도 library/에 파일을 남기므로, trackMutation과 같은 이유로
+      // library/files도 같이 무효화해야 "library/ 폴더" 섹션이 방금 올린 파일을
+      // 곧바로 "추적 중"으로 보여준다(안 그러면 "다시 스캔"을 눌러야만 반영됨).
+      queryClient.invalidateQueries({ queryKey: ['library', 'files'] })
     },
   })
 
@@ -74,7 +78,6 @@ export function Papers() {
   })
 
   const result = registerMutation.data
-  const titleWarning = result?.title_check?.status === 'different_paper' ? result.title_check : null
   const trackResult = trackMutation.data
 
   return (
@@ -98,27 +101,20 @@ export function Papers() {
           <input placeholder="arXiv id (선택)" value={arxivId} onChange={(e) => setArxivId(e.target.value)} />
         </div>
         <button type="submit" disabled={registerMutation.isPending}>
-          {registerMutation.isPending ? '등록 중... (PDF 파싱 + 임베딩이라 시간이 걸릴 수 있습니다)' : '등록'}
+          {registerMutation.isPending ? '등록 중...' : '등록'}
         </button>
       </form>
 
       {registerMutation.isError && (
         <p className="paper-message paper-message-error">등록 실패: {(registerMutation.error as Error).message}</p>
       )}
-      {result && !result.text_extractable && (
-        <p className="paper-message paper-message-warning">
-          스캔본으로 판단되어 저장하지 않았습니다 (페이지 {result.page_count}쪽, 텍스트 레이어 없음).
-        </p>
-      )}
-      {result && result.text_extractable && (
+      {/* ⑤(08-05)부터 업로드도 library/에 파일을 남기고 트래킹과 같은 경로(비동기)를
+          탄다 — "시작됐다"만 알리고 진행 상태는 아래 "보유 논문" 목록의 PaperRow
+          배지가 보여준다(trackResult 메시지와 같은 패턴). */}
+      {result && (
         <p className="paper-message paper-message-success">
-          등록 완료 — paper_id=`{result.paper_id}`, 청크 {result.chunk_count}개, {result.page_count}쪽
-        </p>
-      )}
-      {titleWarning && (
-        <p className="paper-message paper-message-warning">
-          제목이 크게 달라 다른 논문일 수 있습니다 — 입력한 제목 '{titleWarning.given_title}' vs PDF 제목 '
-          {titleWarning.pdf_title}'
+          등록됨 — paper_id=`{result.paper_id}`, 분석이 백그라운드에서 진행됩니다. 아래 "보유 논문" 목록에서 진행
+          상태를 확인하세요.
         </p>
       )}
 

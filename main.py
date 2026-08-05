@@ -1,12 +1,10 @@
 import asyncio
 import json
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import os
 
-import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -280,8 +278,11 @@ def list_interest_papers(interest_id: int, only_relevant: bool = False):
     return {"papers": paper_catalog.list_papers_for_interest(interest_id, only_relevant=only_relevant)}
 
 
-# register_paper()가 pdf_path(디스크 경로)를 받으므로 업로드 바이트를 임시 파일에
-# 써서 넘긴다. fitz.FileDataError(유효하지 않은 PDF)는 사용자 입력 검증 경계라 400으로.
+# ⑤ 업로드 재정의(08-05, RoadMap 설계 노트 참고) — 예전엔 tempfile에 썼다가 버렸지만,
+# 이제 "앱 내부로 복제하지 않는다" 원칙을 지키면서(library/가 곧 사용자 폴더) 업로드
+# 바이트를 library/ 안에 그대로 남긴다. 이름이 겹치면 unique_library_filename()이
+# _2, _3...을 붙인다. 매직바이트(%PDF-)만 즉시 확인하고 나머지 검증(파싱 가능 여부)은
+# track_in_background()의 백그라운드 스레드로 넘긴다 — ②-B/④와 동일한 경계.
 @app.post("/api/papers")
 def register_paper_endpoint(
     file: UploadFile = File(...),
@@ -289,15 +290,18 @@ def register_paper_endpoint(
     arxiv_id: str | None = Form(None),
 ):
     file_bytes = file.file.read()
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
-        tmp.write(file_bytes)
-        tmp.flush()
-        try:
-            return paper_ingest.register_paper(
-                tmp.name, doi=doi, arxiv_id=arxiv_id, filename=file.filename or ""
-            )
-        except fitz.FileDataError:
-            raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+    if not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+
+    dest_rel_path = paper_catalog.unique_library_filename(file.filename or "업로드.pdf")
+    dest_abs_path = paper_catalog.resolve_library_path(dest_rel_path)
+    os.makedirs(os.path.dirname(dest_abs_path), exist_ok=True)
+    with open(dest_abs_path, "wb") as f:
+        f.write(file_bytes)
+
+    return paper_ingest.track_in_background(
+        dest_abs_path, file_path=dest_rel_path, filename=file.filename or "", doi=doi, arxiv_id=arxiv_id
+    )
 
 
 # status로 필터링(recommended/owned/dismissed) — 관심사별 필터는 interest_paper 조인
@@ -322,11 +326,12 @@ def get_paper_summary_endpoint(paper_id: str):
 
 
 # 원본 조회 ③(08-05) — 화면에 [CITE:...] 마커·재청킹된 조각 대신 원문 그대로를 보여준다
-# (설계 노트 "논문·노트 저장 방식 재설계" 참고). file_path는 ②-B "트래킹에 추가"로
-# 등록된 논문에만 있다 — 기존 업로드 다이얼로그 경로(tempfile만 쓰고 버림)로 등록된
-# 논문은 원본이 아예 없으므로 404. resolve_library_path()는 file_path가 DB에서 온
-# 값이라 신뢰할 수 있는 입력이지만, ②-B가 쓰는 것과 같은 함수를 그대로 재사용해
-# 방어를 이중으로 겹치는 값이 크다("경로 검증은 한 곳"이 깨질 위험 없이 공짜로 붙음).
+# (설계 노트 "논문·노트 저장 방식 재설계" 참고). ⑤(업로드 재정의) 이후로는 /api/papers·
+# /api/library/track 둘 다 library/에 파일을 남기므로 file_path가 거의 항상 있다 —
+# None인 경우는 그 전에(⑤ 이전, tempfile만 쓰고 버리던 시절) 등록된 옛 레코드뿐이라
+# 그런 논문만 원본이 없어 404. resolve_library_path()는 file_path가 DB에서 온 값이라
+# 신뢰할 수 있는 입력이지만, ②-B가 쓰는 것과 같은 함수를 그대로 재사용해 방어를
+# 이중으로 겹치는 값이 크다("경로 검증은 한 곳"이 깨질 위험 없이 공짜로 붙음).
 @app.get("/api/papers/{paper_id}/file")
 def get_paper_file(paper_id: str):
     paper = paper_catalog.get_paper(paper_id)

@@ -14,13 +14,13 @@ export interface PaperCatalogRow {
   // 경우)을 화면에서 해시 대신 사람이 읽을 수 있는 이름으로 보여줄 차선책.
   // 추천(검색) 경로로 생긴 행은 업로드 파일이 없어 빈 문자열.
   filename: string
-  // library/ 루트 기준 상대경로(③, 08-05) — ②-B "트래킹에 추가"로 등록된 논문만 값이
-  // 있다. 기존 업로드 다이얼로그 경로(tempfile만 쓰고 버림)로 등록된 논문은 원본이
-  // 아예 없어 null — PaperRow가 이 값으로 PDF 뷰어 섹션을 보여줄지 결정한다.
+  // library/ 루트 기준 상대경로(③, 08-05) — ⑤ 업로드 재정의 이후로는 업로드·트래킹
+  // 둘 다 library/에 파일을 남기므로 거의 항상 값이 있다. null인 건 ⑤ 이전(tempfile만
+  // 쓰고 버리던 시절)에 등록된 옛 레코드뿐 — PaperRow가 이 값으로 PDF 뷰어 섹션을
+  // 보여줄지 결정한다.
   file_path: string | null
-  // 분석(파싱·청킹·임베딩) 진행 상태(④, 08-05 — RoadMap 설계 노트 항목 G). library/
-  // 경유로 등록된 논문만 pending/analyzing을 실제로 거친다 — 기존 업로드 다이얼로그로
-  // 등록된 논문(①에서 스키마만 먼저 추가됐을 때 만들어진 행)은 이 컬럼이 여전히
+  // 분석(파싱·청킹·임베딩) 진행 상태(④, 08-05 — RoadMap 설계 노트 항목 G). ⑤ 이전에
+  // 등록된 옛 레코드(①에서 스키마만 먼저 추가됐을 때 만들어진 행)는 이 컬럼이 여전히
   // "untracked"로 남아있을 수 있지만 실제로는 이미 분석이 끝난 상태다(등록 자체가
   // 동기·전체 완료였으므로) — PaperRow가 pending/analyzing일 때만 별도 배지를 보여주고
   // 그 외(untracked 포함)는 기존과 똑같이 요약을 시도하는 이유.
@@ -32,18 +32,11 @@ export interface PaperCatalogRow {
 // analysis_status가 이 안에 있으면 아직 분석 중 — 요약 조회를 시도하면 안 됨.
 export const ANALYSIS_IN_PROGRESS = ['pending', 'analyzing']
 
-export interface TitleCheck {
-  status: string
-  given_title: string
-  pdf_title: string
-}
-
-export interface RegisterPaperResult {
+// ⑤(08-05) 업로드 재정의 이후 공용 — 등록(track_in_background 경유)은 항상 즉시
+// 반환되고 분석은 백그라운드에서 돈다. library.ts의 trackLibraryFile()도 같은 모양.
+export interface TrackResult {
   paper_id: string
-  text_extractable: boolean
-  chunk_count: number
-  page_count: number
-  title_check?: TitleCheck
+  analysis_status: string
 }
 
 export function listPapers(status?: string) {
@@ -53,7 +46,7 @@ export function listPapers(status?: string) {
 
 // multipart/form-data라 apiFetch(JSON 전용)를 못 쓴다 — Content-Type을 직접 안 정해야
 // 브라우저가 boundary를 붙여서 알아서 채운다.
-export async function registerPaper(file: File, doi?: string, arxivId?: string): Promise<RegisterPaperResult> {
+export async function registerPaper(file: File, doi?: string, arxivId?: string): Promise<TrackResult> {
   const form = new FormData()
   form.append('file', file)
   if (doi) form.append('doi', doi)
