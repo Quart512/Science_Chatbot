@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- PWA 설치("앱으로 설치") 지원 — 08-05 Docker 패키징, RoadMap "설치 앱의 UI 실행
+         방식" 설계 노트 참고. 서비스 워커는 안 넣음(오프라인 캐싱이 목적인데 서버가
+         어차피 로컬이라 의미 없음, 같은 설계 노트에 근거). -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0e0f13" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIsaac</title>
   </head>
