@@ -57,6 +57,79 @@
   color: #ff7b72;
 }
 
+/* 서버측 파일 브라우저 ②-C(08-05) — library/ 폴더 목록 */
+.library-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.library-section-header button {
+  background: none;
+  color: #a0a4b0;
+  border: 1px solid #40434f;
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.library-section-header button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.library-hint {
+  color: #a0a4b0;
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0.75rem;
+  max-width: 640px;
+}
+
+.library-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #2e313d;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.35rem;
+  max-width: 640px;
+}
+
+/* 경로가 길면 줄바꿈 없이 넘치는 대신 잘라서 보여준다 — 목록 행 높이를 일정하게
+   유지하려는 것. 전체 경로는 title 속성(마우스 올리면 보임)으로 남긴다. */
+.library-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.library-file-tracked {
+  color: #7ee787;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.library-file button {
+  background: #3b5bdb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.library-file button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .paper-row {
   border: 1px solid #2e313d;
   border-radius: 6px;
