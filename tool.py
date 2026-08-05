@@ -1,30 +1,22 @@
 from langchain_community.tools import DuckDuckGoSearchRun
-# wikipedia 패키지는 신뢰성 문제로 배제(RoadMap "tool 정비" 참고) — wikipedia-api 기반 커스텀 tool 예정
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.tools import StructuredTool
 
-from typing import NamedTuple
-
 from arxiv_api import arxiv_search  # langchain_community의 ArxivQueryRun 대신 직접 구현(arxiv_api.py 참고)
+from wikipedia_api import wikipedia_search  # DDG site 제한 검색(스니펫만 주던 임시방편) 대신 직접 구현
 
-class SiteConfig(NamedTuple): # 수정 불가능하게+3개 변수 딕셔너리에
-    domain: str
-    description: str
 
-ddg_sites_map = {
-    "wikipedia": SiteConfig("en.wikipedia.org", "위키피디아에서 검색"),
-}
-# 팩토리 — 딱 한 번만 정의
-def make_search_tool(name: str, config: SiteConfig):
-    def search(query: str) -> str:
-        return DuckDuckGoSearchAPIWrapper().run(f"site:{config.domain} {query}")
-    return StructuredTool.from_function(
-        func=search,
-        name=f"search_{name}",
-        description=config.description,
-    )
-# .items()로 name과 config를 같이 꺼냄
-site_tools = [make_search_tool(name, config) for name, config in ddg_sites_map.items()]
+# wikipedia_search()의 구조화된 결과를 ToolMessage용 문자열로 펼친다 — search_arxiv와 같은 패턴.
+def search_wikipedia(query: str) -> str:
+    pages = wikipedia_search(query, max_results=3)
+    if not pages:
+        return "[결과 없음] 위키피디아에서 관련 문서를 찾지 못했다."
+    return "\n\n".join(f"제목: {p['title']}\nURL: {p['url']}\n요약: {p['summary']}" for p in pages)
+
+wikipedia_tool = StructuredTool.from_function(
+    func=search_wikipedia,
+    name="search_wikipedia",
+    description="위키피디아에서 검색 — 제목/URL/요약을 구조화해서 반환",
+)
 
 
 # arxiv_search()의 구조화된 결과를 ToolMessage용 문자열로 펼친다(dict 원본은 논문
@@ -49,6 +41,6 @@ arxiv_tool = StructuredTool.from_function(
 
 tools_list = [DuckDuckGoSearchRun(description="일반 범용성 검색"),
         arxiv_tool,
-        *site_tools
+        wikipedia_tool,
         ]
 tool_map = {tool.name: tool for tool in tools_list} #이름으로 검색할 수 있게
