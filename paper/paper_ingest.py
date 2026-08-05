@@ -450,6 +450,51 @@ def ensure_summary_in_background(paper_id: str, *, model: str = BACKGROUND_SUMMA
     return True
 
 
+def track_in_background(pdf_path: str, *, file_path: str, filename: str, vectorstore=None) -> dict:
+    """②-B "트래킹에 추가"가 부르는 진입점(④ 파싱 분리, 08-05 — RoadMap 설계 노트
+    항목 G). 무거운 파싱·청킹·임베딩(register_paper() 전체)을 동기로 안 기다리고,
+    해시 계산 + papers 행 생성(analysis_status="pending")만 동기로 끝낸 뒤 나머지는
+    ensure_summary_in_background()와 같은 daemon thread 패턴으로 넘긴다. 다른 점은
+    진행 상태를 프로세스 메모리(_IN_FLIGHT)가 아니라 papers.analysis_status(DB)에
+    두는 것 — 그래야 서버 재시작에도 "분석 중" 표시가 안 증발한다.
+
+    library/ 경유 트래킹은 doi/arxiv_id를 안 받으므로(②-B부터 그랬음, 파일 선택만으로
+    호출) paper_id는 항상 파일 해시 기반이다. 반환: {"paper_id", "analysis_status"} —
+    이미 pending/analyzing 중이면 새로 스폰하지 않고 그 상태를 그대로 돌려준다(같은
+    파일을 중복 클릭해도 안전).
+    """
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+    content_sha256 = hashlib.sha256(file_bytes).hexdigest()
+    paper_id = normalize_paper_id(file_bytes=file_bytes)
+
+    existing = paper_catalog.get_paper(paper_id)
+    if existing and existing["analysis_status"] in ("pending", "analyzing"):
+        return {"paper_id": paper_id, "analysis_status": existing["analysis_status"]}
+
+    paper_catalog.mark_owned(
+        paper_id, filename=filename, file_path=file_path,
+        content_sha256=content_sha256, analysis_status="pending",
+    )
+
+    def _run():
+        paper_catalog.set_analysis_status(paper_id, "analyzing")
+        try:
+            result = register_paper(pdf_path, filename=filename, file_path=file_path, vectorstore=vectorstore)
+            if not result["text_extractable"]:
+                # 스캔본 — register_paper()가 mark_owned()를 안 타서 "done"이 자동으로
+                # 안 찍힌다(②-B에서 "④가 다룰 문제"로 미뤄뒀던 그 간극). file_path는 위에서
+                # 이미 채웠으니 tracked 목록엔 정상 노출되고, analysis_status만 failed로
+                # 남겨 "분석은 못 했다"를 정직하게 알린다.
+                paper_catalog.set_analysis_status(paper_id, "failed")
+        except Exception as e:
+            paper_catalog.set_analysis_status(paper_id, "failed")
+            print(f"백그라운드 분석 실패 (paper_id={paper_id}): {type(e).__name__}: {e}")
+
+    _spawn_background(_run)
+    return {"paper_id": paper_id, "analysis_status": "pending"}
+
+
 if __name__ == "__main__":
     # 수동 스모크 테스트용 — pytest는 vectorstore/parse_pdf를 전부 가짜로 갈아끼운
     # 순수 로직 검증이라, 진짜 PyMuPDF+Chroma+LLM이 실제로 맞물려 도는지는 이 경로로 확인.

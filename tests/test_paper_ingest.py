@@ -939,3 +939,131 @@ def test_ensure_summary_in_background_context_budget_exceeded_is_not_retried(mon
     second = paper_ingest.ensure_summary_in_background("arxiv:budget", model="Qwen-tuned", vectorstore=vs)
     assert second is False  # 영구 실패로 기록됐으므로 다시 스레드를 안 띄움
     assert len(spawn_calls) == 1  # 두 번째 호출에서 _spawn_background가 다시 불리지 않음
+
+
+# --- track_in_background() (④ 파싱 분리, 08-05) ----------------------------
+
+
+def test_track_in_background_creates_pending_row_and_returns_immediately(monkeypatch, tmp_path):
+    import hashlib
+
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    expected_hash = hashlib.sha256(b"dummy content").hexdigest()
+
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append((paper_id, kwargs)),
+    )
+    # 스레드를 아예 안 돌린다 — 이 테스트는 "빠른 등록" 단계만 본다.
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: None)
+
+    result = paper_ingest.track_in_background(str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf")
+
+    assert result == {"paper_id": f"hash:{expected_hash}", "analysis_status": "pending"}
+    assert len(calls) == 1
+    paper_id, kwargs = calls[0]
+    assert paper_id == f"hash:{expected_hash}"
+    assert kwargs["file_path"] == "quantum/paper.pdf"
+    assert kwargs["content_sha256"] == expected_hash
+    assert kwargs["analysis_status"] == "pending"
+    assert kwargs["filename"] == "paper.pdf"
+
+
+def test_track_in_background_skips_spawn_when_already_in_progress(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "analysis_status": "analyzing"},
+    )
+
+    def _boom_mark_owned(*a, **kw):
+        raise AssertionError("이미 진행 중이면 mark_owned를 다시 부르면 안 됨")
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", _boom_mark_owned)
+
+    def _boom_spawn(fn):
+        raise AssertionError("이미 진행 중이면 스레드를 새로 띄우면 안 됨")
+    monkeypatch.setattr(paper_ingest, "_spawn_background", _boom_spawn)
+
+    result = paper_ingest.track_in_background(str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf")
+
+    assert result["analysis_status"] == "analyzing"  # 기존 상태를 그대로 돌려줌(재시도 아님)
+
+
+def test_track_in_background_completes_full_pipeline_synchronously(monkeypatch, tmp_path):
+    # _spawn_background를 동기 실행으로 갈아끼워 register_paper() 전체(파싱만 몽키패치,
+    # 나머지는 진짜)가 끝까지 돌고 analysis_status가 pending → analyzing → (register_paper의
+    # mark_owned 기본값)done 순서로 찍히는지 확인한다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append(("mark_owned", paper_id, kwargs)),
+    )
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: calls.append(("set_analysis_status", paper_id, status)),
+    )
+
+    result = paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf", vectorstore=FakeVectorstore()
+    )
+
+    assert result["analysis_status"] == "pending"
+    kinds = [c[0] for c in calls]
+    assert kinds == ["mark_owned", "set_analysis_status", "mark_owned"]
+    assert calls[0][2]["analysis_status"] == "pending"
+    assert calls[1][2] == "analyzing"
+    assert "analysis_status" not in calls[2][2]  # register_paper()는 mark_owned 기본값(done)에 맡김
+
+
+def test_track_in_background_marks_failed_on_scanned_pdf(monkeypatch, tmp_path):
+    # ②-B에서 "④가 다룰 문제"로 미뤄뒀던 간극 — 스캔본은 register_paper()가 mark_owned()를
+    # 안 타서 done이 자동으로 안 찍히므로, track_in_background()가 명시적으로 failed 처리한다.
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(scanned=True))
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+
+    statuses = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: statuses.append(status),
+    )
+
+    paper_ingest.track_in_background(str(pdf_path), file_path="quantum/scanned.pdf", filename="scanned.pdf")
+
+    assert statuses == ["analyzing", "failed"]
+
+
+def test_track_in_background_marks_failed_on_exception(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "broken.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    def _boom_parse(file_bytes):
+        raise RuntimeError("파싱 실패")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", _boom_parse)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+
+    statuses = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: statuses.append(status),
+    )
+
+    paper_ingest.track_in_background(str(pdf_path), file_path="quantum/broken.pdf", filename="broken.pdf")
+
+    assert statuses == ["analyzing", "failed"]

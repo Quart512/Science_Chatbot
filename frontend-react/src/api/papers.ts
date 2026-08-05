@@ -18,9 +18,19 @@ export interface PaperCatalogRow {
   // 있다. 기존 업로드 다이얼로그 경로(tempfile만 쓰고 버림)로 등록된 논문은 원본이
   // 아예 없어 null — PaperRow가 이 값으로 PDF 뷰어 섹션을 보여줄지 결정한다.
   file_path: string | null
+  // 분석(파싱·청킹·임베딩) 진행 상태(④, 08-05 — RoadMap 설계 노트 항목 G). library/
+  // 경유로 등록된 논문만 pending/analyzing을 실제로 거친다 — 기존 업로드 다이얼로그로
+  // 등록된 논문(①에서 스키마만 먼저 추가됐을 때 만들어진 행)은 이 컬럼이 여전히
+  // "untracked"로 남아있을 수 있지만 실제로는 이미 분석이 끝난 상태다(등록 자체가
+  // 동기·전체 완료였으므로) — PaperRow가 pending/analyzing일 때만 별도 배지를 보여주고
+  // 그 외(untracked 포함)는 기존과 똑같이 요약을 시도하는 이유.
+  analysis_status: string
   created_at: string
   updated_at: string
 }
+
+// analysis_status가 이 안에 있으면 아직 분석 중 — 요약 조회를 시도하면 안 됨.
+export const ANALYSIS_IN_PROGRESS = ['pending', 'analyzing']
 
 export interface TitleCheck {
   status: string

@@ -1,16 +1,26 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getPaperFileUrl, getPaperSummary, type PaperCatalogRow } from '../api/papers'
+import { ANALYSIS_IN_PROGRESS, getPaperFileUrl, getPaperSummary, type PaperCatalogRow } from '../api/papers'
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '대기 중',
+  analyzing: '분석 중...',
+  failed: '분석 실패',
+}
 
 // 요약은 lazy 생성이라(paper_ingest.get_paper_summary 참고) 펼칠 때만 조회한다
 // (enabled: expanded) — 목록에 논문이 많아져도 안 펼친 것까지 미리 부르지 않음.
 export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  // ④(08-05) — pending/analyzing이면 아직 청크가 없어 요약 조회가 에러로 끝난다(파싱이
+  // 안 끝났으므로). untracked(기존 업로드로 등록된, ① 마이그레이션 이후 아무도 이 컬럼을
+  // 안 채운 논문 — 실제로는 이미 분석 끝난 상태)·done·failed는 기존과 동일하게 시도한다.
+  const inProgress = ANALYSIS_IN_PROGRESS.includes(paper.analysis_status)
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['paper-summary', paper.paper_id],
     queryFn: () => getPaperSummary(paper.paper_id),
-    enabled: expanded,
+    enabled: expanded && !inProgress,
   })
 
   return (
@@ -19,7 +29,14 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
         {/* 우선순위: title > filename > paper_id(해시) — 08-04 사용자 요청("해쉬값은
             최후순위, 파일명이 그 앞"). arxiv/DOI로 등록된 논문은 title이 항상 있어
             filename까지 갈 일이 드물고, 서지정보를 못 찾은 업로드만 filename을 보여준다. */}
-        <span>{paper.title || paper.filename || paper.paper_id}</span>
+        <span>
+          {paper.title || paper.filename || paper.paper_id}
+          {STATUS_LABEL[paper.analysis_status] && (
+            <span className={`paper-row-status paper-row-status-${paper.analysis_status}`}>
+              {STATUS_LABEL[paper.analysis_status]}
+            </span>
+          )}
+        </span>
         <span>{expanded ? '▲' : '▼'}</span>
       </button>
       {paper.authors && <p className="paper-row-meta">{paper.authors} {paper.year && `(${paper.year})`}</p>}
@@ -60,9 +77,16 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
 
       {expanded && (
         <div className="paper-row-summary">
-          {isLoading && <p>요약 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
-          {isError && <p style={{ color: 'crimson' }}>요약 조회 실패: {(error as Error).message}</p>}
-          {data && (
+          {inProgress && (
+            <p>
+              {paper.analysis_status === 'analyzing'
+                ? '분석이 진행 중입니다 (PDF 파싱 + 임베딩) — 잠시 후 자동으로 갱신됩니다.'
+                : '분석 대기 중입니다 — 곧 시작됩니다.'}
+            </p>
+          )}
+          {!inProgress && isLoading && <p>요약 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
+          {!inProgress && isError && <p style={{ color: 'crimson' }}>요약 조회 실패: {(error as Error).message}</p>}
+          {!inProgress && data && (
             <>
               <h4>핵심 주장</h4>
               <ul>

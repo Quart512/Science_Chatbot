@@ -321,3 +321,35 @@ def test_resolve_library_path_rejects_traversal_outside_root(tmp_path, monkeypat
 
     with pytest.raises(ValueError):
         paper_catalog.resolve_library_path("../outside.pdf")
+
+
+def test_mark_owned_defaults_analysis_status_to_done(conn):
+    # ④(08-05) — 기존 호출부(register_paper()가 분석을 이미 마친 뒤 호출)는 인자를
+    # 안 줘도 done이 자동으로 찍혀야 기존 동작이 안 깨진다.
+    paper_catalog.mark_owned("hash:abcd", conn=conn)
+
+    assert paper_catalog.get_paper("hash:abcd", conn=conn)["analysis_status"] == "done"
+
+
+def test_mark_owned_stores_explicit_analysis_status(conn):
+    paper_catalog.mark_owned("hash:abcd", analysis_status="pending", conn=conn)
+
+    assert paper_catalog.get_paper("hash:abcd", conn=conn)["analysis_status"] == "pending"
+
+
+def test_set_analysis_status_updates_only_that_column(conn):
+    paper_catalog.mark_owned(
+        "hash:abcd", title="원제목", file_path="quantum/a.pdf", analysis_status="pending", conn=conn
+    )
+
+    updated = paper_catalog.set_analysis_status("hash:abcd", "analyzing", conn=conn)
+
+    row = paper_catalog.get_paper("hash:abcd", conn=conn)
+    assert updated is True
+    assert row["analysis_status"] == "analyzing"
+    assert row["title"] == "원제목"  # 다른 필드는 안 건드림
+    assert row["file_path"] == "quantum/a.pdf"
+
+
+def test_set_analysis_status_returns_false_when_paper_not_found(conn):
+    assert paper_catalog.set_analysis_status("hash:없음", "failed", conn=conn) is False

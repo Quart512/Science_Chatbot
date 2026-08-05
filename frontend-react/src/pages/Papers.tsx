@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { listPapers, registerPaper } from '../api/papers'
+import { ANALYSIS_IN_PROGRESS, listPapers, registerPaper } from '../api/papers'
 import { listLibraryFiles, trackLibraryFile } from '../api/library'
 import { PaperRow } from './PaperRow'
 import './Papers.css'
@@ -17,6 +17,14 @@ export function Papers() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['papers', 'owned'],
     queryFn: () => listPapers('owned'),
+    // ④(08-05) — 트래킹은 이제 즉시 반환되고 분석(파싱·청킹·임베딩)은 서버 백그라운드에서
+    // 돈다. pending/analyzing인 논문이 하나라도 있으면 2초마다 다시 불러 done/failed
+    // 전환을 잡아낸다 — 없으면 폴링을 끈다(항상 켜두면 아무 일도 없을 때도 계속 조회하게 됨).
+    refetchInterval: (query) => {
+      const papers = query.state.data?.papers ?? []
+      const inProgress = papers.some((p) => ANALYSIS_IN_PROGRESS.includes(p.analysis_status))
+      return inProgress ? 2000 : false
+    },
   })
 
   const registerMutation = useMutation({
@@ -141,17 +149,15 @@ export function Papers() {
             {f.tracked ? (
               <span className="library-file-tracked">추적 중</span>
             ) : (
-              // isPending이면 다른 행의 버튼까지 전부 잠근다 — track은 파싱·청킹·임베딩을
-              // 동기로 다 돌리는 무거운 호출이라(④ 파싱 분리 전까지는 그렇다) 동시에
-              // 여러 개를 걸 이유가 없다.
+              // ④(08-05)부터 track 요청 자체는 등록(해시 계산 + pending 행 생성)만 동기로
+              // 하고 바로 반환된다 — isPending 구간이 짧아져 다른 행까지 잠글 이유가
+              // 약해졌지만, 같은 파일 중복 클릭 방지 목적으로 계속 남겨둔다.
               <button
                 type="button"
                 onClick={() => trackMutation.mutate(f.path)}
                 disabled={trackMutation.isPending}
               >
-                {trackMutation.isPending && trackMutation.variables === f.path
-                  ? '분석 중... (PDF 파싱 + 임베딩)'
-                  : '트래킹에 추가'}
+                {trackMutation.isPending && trackMutation.variables === f.path ? '등록 중...' : '트래킹에 추가'}
               </button>
             )}
           </div>
@@ -160,18 +166,13 @@ export function Papers() {
       {trackMutation.isError && (
         <p className="paper-message paper-message-error">트래킹 실패: {(trackMutation.error as Error).message}</p>
       )}
-      {/* 스캔본은 register_paper()가 청크를 하나도 안 만들고 mark_owned()도 안 타므로
-          목록에서 계속 "미추적"으로 남는다(②-B에서 그대로 두기로 한 기존 간극). 성공
-          응답인데 목록이 안 바뀌는 셈이라, 왜 그런지를 여기서 반드시 말해줘야 한다. */}
-      {trackResult && !trackResult.text_extractable && (
-        <p className="paper-message paper-message-warning">
-          스캔본으로 판단되어 저장하지 않았습니다 (페이지 {trackResult.page_count}쪽, 텍스트 레이어 없음) — 목록에는
-          계속 미추적으로 남습니다.
-        </p>
-      )}
-      {trackResult && trackResult.text_extractable && (
+      {/* ④부터 파싱·청킹·임베딩은 백그라운드에서 돈다 — 여기선 "시작됐다"만 알리고,
+          진행 상태(분석 중/완료/실패)는 아래 "보유 논문" 목록의 PaperRow 배지가 보여준다
+          (papers 쿼리가 진행 중인 논문이 있는 동안 자동으로 폴링됨). */}
+      {trackResult && (
         <p className="paper-message paper-message-success">
-          트래킹 완료 — paper_id=`{trackResult.paper_id}`, 청크 {trackResult.chunk_count}개, {trackResult.page_count}쪽
+          등록됨 — paper_id=`{trackResult.paper_id}`, 분석이 백그라운드에서 진행됩니다. 아래 "보유 논문" 목록에서 진행
+          상태를 확인하세요.
         </p>
       )}
 

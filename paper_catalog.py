@@ -229,6 +229,7 @@ def mark_owned(
     filename: str = "",
     file_path: str | None = None,
     content_sha256: str | None = None,
+    analysis_status: str = "done",
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """paper_id를 owned로 표시한다 — 있으면 status만 바꾸고, 없으면 새로 만든다.
@@ -239,7 +240,14 @@ def mark_owned(
     file_path·content_sha256(08-05, ②-B "트래킹에 추가" — RoadMap 설계 노트 참고)은
     library/ 경유로 등록됐을 때만 채워진다(기존 업로드 다이얼로그 경로는 여전히 None) —
     filename과 같은 방식으로 UPDATE·INSERT 양쪽에 반영해, 이미 recommended로 존재하던
-    논문을 library/에서 트래킹에 추가해도 경로가 누락되지 않게 한다."""
+    논문을 library/에서 트래킹에 추가해도 경로가 누락되지 않게 한다.
+
+    analysis_status(08-05, ④ 파싱 분리)의 기본값이 "done"인 이유: 이 함수의 기존
+    호출부(register_paper()가 파싱·청킹·임베딩을 전부 마친 뒤 호출)는 호출 시점에
+    분석이 이미 끝나 있으므로 인자를 안 줘도 자동으로 done이 찍힌다. ④가 새로 추가한
+    "빠른 등록" 단계(paper_ingest.track_in_background())만 명시적으로 "pending"을
+    넘긴다 — 나머지(analyzing/failed)는 set_analysis_status()가 이 함수를 거치지
+    않고 그 컬럼만 갱신한다(다른 필드를 덮어쓸 위험 없이)."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
@@ -247,17 +255,40 @@ def mark_owned(
         if conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone():
             conn.execute(
                 "UPDATE papers SET status = 'owned', filename = ?, file_path = ?, content_sha256 = ?, "
-                "updated_at = ? WHERE paper_id = ?",
-                (filename, file_path, content_sha256, now, paper_id),
+                "analysis_status = ?, updated_at = ? WHERE paper_id = ?",
+                (filename, file_path, content_sha256, analysis_status, now, paper_id),
             )
         else:
             conn.execute(
                 "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, filename, "
-                "file_path, content_sha256, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?, ?, ?)",
-                (paper_id, doi, arxiv_id, title, authors, year, filename, file_path, content_sha256, now, now),
+                "file_path, content_sha256, analysis_status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?, ?, ?, ?)",
+                (
+                    paper_id, doi, arxiv_id, title, authors, year, filename, file_path, content_sha256,
+                    analysis_status, now, now,
+                ),
             )
         conn.commit()
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def set_analysis_status(paper_id: str, status: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    """analysis_status 컬럼만 갱신한다(④, 08-05) — mark_owned()와 달리 다른 필드는
+    안 건드린다. track_in_background()의 백그라운드 스레드가 analyzing 진입·실패
+    시점에 호출한다(성공 시점은 register_paper()가 끝에서 부르는 mark_owned()의
+    analysis_status="done" 기본값으로 이미 반영됨 — 이 함수를 또 부를 필요 없음).
+    존재하지 않는 paper_id면 False."""
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE papers SET analysis_status = ?, updated_at = ? WHERE paper_id = ?",
+            (status, _now(), paper_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         if owns_conn:
             conn.close()

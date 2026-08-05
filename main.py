@@ -357,9 +357,11 @@ def list_library_files():
     return {"files": paper_catalog.scan_library_files()}
 
 
-# "트래킹에 추가" ②-B(08-05) — register_paper()가 이미 파싱→청킹→임베딩→mark_owned()
-# upsert까지 다 하므로(파일이 이미 디스크에 있어 /api/papers처럼 tempfile로 옮길 필요도
-# 없음), 여기서는 사용자가 준 상대경로를 검증해 절대경로로 바꾸는 것만 새로 한다.
+# "트래킹에 추가" ②-B(08-05), ④에서 비동기로 전환(08-05) — 여기서는 사용자가 준
+# 상대경로를 검증해 절대경로로 바꾸는 것까지만 동기로 하고, 무거운 파싱·청킹·임베딩은
+# paper_ingest.track_in_background()가 백그라운드 스레드로 넘긴다(설계 노트 항목 G).
+# 그래서 fitz.FileDataError 같은 파싱 실패는 더 이상 여기서 400으로 안 잡힌다 — 그
+# 시점엔 이미 응답이 나간 뒤라 analysis_status="failed"로만 반영된다(폴링으로 확인).
 class LibraryTrackRequest(BaseModel):
     path: str
 
@@ -372,12 +374,9 @@ def track_library_file(body: LibraryTrackRequest):
         raise HTTPException(status_code=400, detail="library/ 루트를 벗어난 경로입니다")
     if not os.path.isfile(abs_path):
         raise HTTPException(status_code=404, detail=f"library/{body.path} 파일을 찾을 수 없습니다")
-    try:
-        return paper_ingest.register_paper(
-            abs_path, filename=os.path.basename(body.path), file_path=body.path
-        )
-    except fitz.FileDataError:
-        raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+    return paper_ingest.track_in_background(
+        abs_path, file_path=body.path, filename=os.path.basename(body.path)
+    )
 
 
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).
