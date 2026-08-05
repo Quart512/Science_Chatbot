@@ -24,7 +24,9 @@
 
 **화면(표면) / 기능(능력) / 저장소** 3층으로 나뉜다.
 
-![표면/능력/데이터 3층 아키텍처](docs/architecture.png)
+![화면/기능/저장 3층 구조](docs/architecture.png)
+
+> 그림은 `uv run docs/draw_architecture.py`로 다시 만든다 (`docs/draw_architecture.py`의 박스 정의만 고치면 된다).
 
 핵심 원칙: **챗봇을 여러 개로 쪼개지 않고, 작업 성격에 맞는 화면을 준다** — 대화는 챗, 등록·조회는 폼, 연구는 단계형 워크플로우. 상시 대화하는 챗봇은 메인 챗 하나뿐이고 나머지는 버튼·폼을 눌렀을 때 호출되는 기능으로 존재한다.
 
@@ -81,7 +83,8 @@
 ```
 Science_Chatbot/
 ├── docs/
-│   ├── architecture.png     # 목표 아키텍처 다이어그램
+│   ├── architecture.png     # 구조도 (draw_architecture.py로 생성)
+│   ├── draw_architecture.py # 구조도 생성 스크립트
 │   ├── feynman.txt          # 코퍼스: The Feynman Lectures on Physics
 │   ├── RoadMap.md           # 개발 이력·계획 (완료/예정 + 설계 노트)
 │   ├── DEPLOY.md            # 배포 가이드 (빅뱅/Docker 방식)
