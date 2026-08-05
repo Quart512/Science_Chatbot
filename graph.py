@@ -1,6 +1,8 @@
 #from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from langgraph.graph import StateGraph, START, END  
+import concurrent.futures
+
+from langgraph.graph import StateGraph, START, END
 
 from langchain_core.documents import Document
 
@@ -66,6 +68,11 @@ class State(BaseModel):
     tool_failures: dict[str,int] = Field(default_factory=dict) # tool별 연속 실패 횟수
     disabled_tools: list[str] = Field(default_factory=list) # 서킷 브레이커로 제외된 tool 이름들. tool_failures로 tool 쓸 때마다 갯수 체크해서 일정 갯수 이하만 할수도 있는데 커스텀으로 툴 제외하는 옵션 위해
     turn_start_len: int = 0 # 이번 호출 시작 시점의 messages 길이(호출자가 len(messages)로 명시 전달). final_answer가 이 이후 메시지만 지우고 질문+최종답변으로 정리
+    # 관측성(08-05, RoadMap "tool 예외처리 잔여" 항목) — 디버그·verify 비교 지표용으로
+    # 이번 턴에 실제 일어난 일을 그대로 남긴다. trace(문자열 로그)와 달리 구조화돼 있어
+    # 나중에 "어느 tool 조합이 fix_needed로 이어졌나" 같은 집계가 가능하다.
+    tools_used: list[str] = Field(default_factory=list)  # 성공한 tool 호출 이름(라운드마다 누적)
+    tool_errors: list[str] = Field(default_factory=list)  # 실패한 호출 기록("name: 에러타입", 타임아웃 포함)
 
     # top_k/limit이 아직 -1(호출자가 안 정했음)이면 effort 프로필값으로 채운다.
     # LangGraph는 매 노드 호출마다 dict->State로 재구성하므로 이 validator도 매번 도는데,
@@ -246,6 +253,21 @@ def route_after_generate(state: State) -> Literal["run_tools", "verify"]:
 
 
 MAX_TOOL_ROUNDS = 3
+# 네트워크 tool(DDG/arxiv/wikipedia_api) hang 대비 wrapper 레벨 제한(08-05, RoadMap
+# "tool 예외처리 잔여" 항목) — 이 시간 안에 안 끝나면 실패로 취급하고 다음 라운드로 넘긴다.
+TOOL_TIMEOUT_SEC = 15
+
+
+def _invoke_tool_with_timeout(tool, args: dict, timeout: float = TOOL_TIMEOUT_SEC) -> str:
+    """tool.invoke()를 별도 스레드에서 돌리고 timeout초를 기다린다 — signal.alarm()은
+    메인 스레드에서만 동작해 LangGraph가 노드를 워커 스레드에서 돌릴 때(astream 경로)
+    못 쓴다. 시간 초과 시 스레드 자체를 강제 종료할 방법은 파이썬에 없어 백그라운드로
+    계속 돌긴 하지만("단순 경로부터" — 결과는 버려지므로 무해), 최소한 이 노드는
+    무한정 안 걸리고 제때 실패로 넘어간다."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(tool.invoke, args)
+        return str(future.result(timeout=timeout))[:4000]  # 길이 제한: messages+context 이중 반입되므로 토큰 폭발 방지
+
 
 # tool 실행 노드. 핵심 규칙: 모든 tool_call에는 반드시 대응하는 ToolMessage를 반환해야 한다
 # (Gemini·Claude API 공통 — 응답 없는 tool_call이 있으면 다음 invoke가 에러).
@@ -255,6 +277,8 @@ def run_tools(state: State) -> dict:
     failures = dict(state.tool_failures) #각 툴들이 몇번 실패했는지
     disabled = list(state.disabled_tools) #제외된 툴들
     rounds = state.tool_rounds
+    tools_used = list(state.tools_used)
+    tool_errors = list(state.tool_errors)
 
     tool_msgs, tool_docs = [], []
     attempted = False  # 실제 invoke()를 시도한 tool_call이 있었는지 — [한도 초과]/[사용
@@ -276,9 +300,20 @@ def run_tools(state: State) -> dict:
         # 실제 실행 — 예외는 인프라 문제
         attempted = True
         try:
-            result = str(tool_map[name].invoke(tc["args"]))[:4000]  # 길이 제한: messages+context 이중 반입되므로 토큰 폭발 방지
+            result = _invoke_tool_with_timeout(tool_map[name], tc["args"])
+        except concurrent.futures.TimeoutError:
+            failures[name] = failures.get(name, 0) + 1
+            tool_errors.append(f"{name}: TimeoutError")
+            print(f"tool '{name}' 시간 초과({TOOL_TIMEOUT_SEC}초, {failures[name]}회차)")
+            if failures[name] >= 2 and name not in disabled:  # 서킷 브레이커
+                disabled.append(name)
+                print(f"tool '{name}' 연속 {failures[name]}회 실패 → 이번 런에서 비활성화")
+            tool_msgs.append(ToolMessage(content=f"[시간 초과] {name}: {TOOL_TIMEOUT_SEC}초 내에 응답하지 않았다. 다른 tool을 쓰거나 문서만으로 답해.",
+                                         tool_call_id=tid, status="error"))
+            continue
         except Exception as e:
             failures[name] = failures.get(name, 0) + 1
+            tool_errors.append(f"{name}: {type(e).__name__}")
             print(f"tool '{name}' 실패({failures[name]}회차): {type(e).__name__}: {e}")
             if failures[name] >= 2 and name not in disabled:  # 서킷 브레이커
                 disabled.append(name)
@@ -293,9 +328,10 @@ def run_tools(state: State) -> dict:
             continue
         # 성공
         failures[name] = 0  # 연속 실패 카운트 리셋
+        tools_used.append(name)
         tool_msgs.append(ToolMessage(content=result, tool_call_id=tid))
         tool_docs.append(Document(page_content=result, metadata={"source": name}))
-        
+
         print(f"tool 사용: {name}{tc['args']} → {result[:80]}...")
 
 
@@ -304,6 +340,8 @@ def run_tools(state: State) -> dict:
             "tool_failures": failures,
             "disabled_tools": disabled,
             "tool_rounds": rounds + 1 if attempted else rounds,
+            "tools_used": tools_used,
+            "tool_errors": tool_errors,
             "trace" : state.trace+
             f"""------\n {tool_msgs}\n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}"""}
 
