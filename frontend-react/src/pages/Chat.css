@@ -1,0 +1,103 @@
+/* 챗봇 왼쪽 독립 화면(화면 개선 ⑤) — .chat-message* 클래스는 ChatPanel.css가 이미
+   전역으로 로드돼 있어(Layout이 항상 ChatPanel을 렌더) 여기서 다시 정의하지 않는다.
+   이 파일은 페이지 레이아웃(폭 제한 없는 전체 화면)만 담당. */
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 4rem);
+  color: var(--color-text);
+}
+
+.chat-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.chat-page-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat-page-controls select {
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+}
+
+.chat-page-register-interest {
+  align-self: flex-start;
+  margin-bottom: 0.75rem;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.chat-page-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
+.chat-page-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.5rem 0;
+  max-width: 760px;
+}
+
+.chat-page-empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.chat-page-progress {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.chat-page-input {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+  max-width: 760px;
+}
+
+.chat-page-input input {
+  flex: 1;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+}
+
+.chat-page-input button {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1.1rem;
+  cursor: pointer;
+}
+
+.chat-page-input button:hover:not(:disabled),
+.chat-page-input button:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-accent-moon);
+  outline: none;
+}
+
+.chat-page-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -67,6 +67,30 @@
   font-size: 0.75rem;
 }
 
+/* 화면 개선 ①(08-06) — "연구 워크플로우" 옆 새 연구 시작 진입점. 라벨을 눌러도
+   같은 곳(/research, threadId 없으면 새 연구 폼)으로 가지만, 지금 보고 있는
+   세션에서 눈에 띄게 "새로 시작"을 알리는 명시적 버튼이 목적이라 별도로 둔다. */
+.app-nav-new-session {
+  background: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.app-nav-new-session:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
 .app-nav-group {
   display: flex;
   flex-direction: column;

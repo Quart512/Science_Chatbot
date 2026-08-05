@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
 import api_keys
+import chat_sessions
 import equipment
 import interests
 import knowledge_notes
@@ -1404,6 +1405,108 @@ def test_close_research_session_404_when_not_found(monkeypatch):
         resp = client.delete("/api/research/sessions/no-such-thread")
 
     assert resp.status_code == 404
+
+
+# --- 챗(④) 세션 목록 (08-06, 화면 개선 ⑤) — research_sessions 테스트와 같은 패턴 ---
+
+def test_list_chat_sessions_returns_all(monkeypatch):
+    fake_rows = [{"thread_id": "t1", "title": "대화1"}, {"thread_id": "t2", "title": "대화2"}]
+    monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: fake_rows)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/chat/sessions")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"sessions": fake_rows}
+
+
+def test_rename_chat_session_updates_title(monkeypatch):
+    captured = {}
+    def _fake_update(thread_id, title, **kw):
+        captured["args"] = (thread_id, title)
+        return True
+    monkeypatch.setattr(chat_sessions, "update_title", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/chat/sessions/t1/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 200
+    assert captured["args"] == ("t1", "새 제목")
+
+
+def test_rename_chat_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "update_title", lambda thread_id, title, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/chat/sessions/no-such-thread/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 404
+
+
+def test_close_chat_session_deletes_row(monkeypatch):
+    captured = {}
+    def _fake_delete(thread_id, **kw):
+        captured["thread_id"] = thread_id
+        return True
+    monkeypatch.setattr(chat_sessions, "delete_session", _fake_delete)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/chat/sessions/t1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"thread_id": "t1", "action": "deleted"}
+    assert captured["thread_id"] == "t1"
+
+
+def test_close_chat_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "delete_session", lambda thread_id, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/chat/sessions/no-such-thread")
+
+    assert resp.status_code == 404
+
+
+# /query가 첫 메시지에서 chat_sessions 행을 lazy 생성하고, 기존 세션이면 touch만
+# 하는지 검증 — 실제 그래프 호출(astream)은 orchestrator 쪽 계약이라 여기선
+# 몽키패치로 건너뛰고 chat_sessions 호출 여부·인자만 본다.
+def test_query_creates_chat_session_when_new(monkeypatch):
+    created = {}
+    monkeypatch.setattr(chat_sessions, "get_session", lambda thread_id, **kw: None)
+    monkeypatch.setattr(
+        chat_sessions, "create_session",
+        lambda thread_id, title, **kw: created.update(thread_id=thread_id, title=title),
+    )
+
+    class _FakeGraph:
+        async def astream(self, *a, **kw):
+            return
+            yield  # pragma: no cover - 제너레이터 형태만 맞추기 위함
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _FakeGraph()
+        resp = client.post("/api/query", json={"prompt": "중력파가 뭐야?", "thread_id": "new-thread"})
+
+    assert resp.status_code == 200
+    assert created == {"thread_id": "new-thread", "title": "중력파가 뭐야?"}
+
+
+def test_query_touches_chat_session_when_existing(monkeypatch):
+    touched = []
+    monkeypatch.setattr(chat_sessions, "get_session", lambda thread_id, **kw: {"thread_id": thread_id})
+    monkeypatch.setattr(chat_sessions, "touch_session", lambda thread_id, **kw: touched.append(thread_id))
+
+    class _FakeGraph:
+        async def astream(self, *a, **kw):
+            return
+            yield  # pragma: no cover
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _FakeGraph()
+        resp = client.post("/api/query", json={"prompt": "후속 질문", "thread_id": "existing-thread"})
+
+    assert resp.status_code == 200
+    assert touched == ["existing-thread"]
 
 
 # --- 체크포인트 히스토리·복원(08-04 후속, "탭처럼 왔다갔다") -----------------------

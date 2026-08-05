@@ -1,94 +1,28 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { streamQuery, getQueryMessages, deleteQueryMessage } from '../api/chat'
-import { getInterestDraft } from '../api/interests'
+import { useQuery } from '@tanstack/react-query'
+import { listChatSessions } from '../api/chat'
+import { CHAT_MODELS, CHAT_EFFORTS, useChatThread } from '../hooks/useChatThread'
 import './ChatPanel.css'
 
-interface Message {
-  id?: string // 스트리밍 중인 임시 버블(사용자 입력·진행 중 답변)엔 아직 없음
-  role: 'user' | 'assistant'
-  content: string
-  comment?: string
-}
-
-const MODELS = ['gemini', 'claude', 'Qwen-tuned'] as const
-const EFFORTS = ['low', 'medium', 'high'] as const
-
 // 셸에 항상 떠 있는 챗 패널(08-04 설계 노트 "React 전환" 참고) — 연구 워크플로우 등
-// 다른 화면을 보면서 동시에 쓸 수 있게 하는 게 이 컴포넌트의 존재 이유. frontend/views/
-// chat.py와 기능 동등(모델·effort 선택, 스트리밍, "관심사로 등록" 버튼).
+// 다른 화면을 보면서 동시에 쓸 수 있게 하는 게 이 컴포넌트의 존재 이유.
+//
+// 화면 개선 ⑤(08-06) 갱신 — 예전엔 마운트마다 crypto.randomUUID()로 새 thread_id를
+// 발급해서 새로고침하면 대화가 사라졌다. 이제 chat_sessions 중 가장 최근(updated_at)
+// 세션을 이어서 연다 — 왼쪽 독립 챗 화면(Chat.tsx)이 세션 여러 개를 관리하는 "허브"고,
+// 여긴 그중 방금 쓰던 것 하나만 항상 보여주는 "바로가기"라는 역할 분담. 세션이 하나도
+// 없을 때만(첫 사용) 새 uuid로 새 대화를 시작한다. 두 화면이 같은 react-query 키
+// ('chat-sessions')를 보므로, 왼쪽에서 다른 세션에 메시지를 보내 그게 최신이 되면
+// 이 패널도 자동으로 그 세션을 따라간다(전송 후 invalidateQueries는 useChatThread
+// 안에서 처리).
 export function ChatPanel() {
-  const navigate = useNavigate()
   const [open, setOpen] = useState(true)
-  const [threadId] = useState(() => crypto.randomUUID())
-  const [model, setModel] = useState<string>(MODELS[0])
-  const [effort, setEffort] = useState<string>('medium')
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [progress, setProgress] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [draftError, setDraftError] = useState('')
+  const [freshThreadId] = useState(() => crypto.randomUUID())
+  const sessionsQuery = useQuery({ queryKey: ['chat-sessions'], queryFn: listChatSessions })
+  const mostRecent = sessionsQuery.data?.sessions[0]
+  const threadId = mostRecent?.thread_id ?? freshThreadId
 
-  async function registerAsInterest() {
-    setDraftError('')
-    try {
-      const draft = await getInterestDraft(threadId)
-      navigate('/interests', { state: draft })
-    } catch (e) {
-      setDraftError(`초안 생성 실패: ${(e as Error).message}`)
-    }
-  }
-
-  async function send() {
-    const question = input.trim()
-    if (!question || isStreaming) return
-    setInput('')
-    setMessages((m) => [...m, { role: 'user', content: question }])
-    setIsStreaming(true)
-    setProgress('')
-
-    let answer = ''
-    let comment = ''
-    let succeeded = true
-    try {
-      for await (const chunk of streamQuery({ prompt: question, model, effort, threadId })) {
-        if (chunk.trace) setProgress(chunk.trace)
-        if (chunk.final) {
-          answer = chunk.answer ?? ''
-          comment = chunk.comment ?? ''
-        }
-      }
-    } catch (e) {
-      succeeded = false
-      answer = `백엔드 호출 실패: ${(e as Error).message}`
-    }
-
-    setProgress('')
-    setIsStreaming(false)
-
-    if (succeeded) {
-      // 실제 체크포인트 목록으로 교체해 메시지별 id를 확보한다(메시지 삭제에 필요 —
-      // 08-13 메시지 트리밍 2단계, RoadMap 참고). comment는 체크포인트에 안 남는
-      // 값이라 방금 받은 답변에만 붙여준다(마지막 메시지 = 이번 턴의 assistant 답).
-      try {
-        const { messages: fromServer } = await getQueryMessages(threadId)
-        setMessages(
-          fromServer.map((m, i) =>
-            i === fromServer.length - 1 && m.role === 'assistant' ? { ...m, comment } : m,
-          ),
-        )
-        return
-      } catch {
-        // 목록 재조회 실패해도 방금 받은 답변은 화면에 보여야 하므로 아래로 폴백
-      }
-    }
-    setMessages((m) => [...m, { role: 'assistant', content: answer, comment }])
-  }
-
-  async function deleteMessage(id: string) {
-    await deleteQueryMessage(threadId, id)
-    setMessages((m) => m.filter((msg) => msg.id !== id))
-  }
+  const chat = useChatThread(threadId, { hydrateOnMount: mostRecent !== undefined })
 
   if (!open) {
     return (
@@ -108,15 +42,15 @@ export function ChatPanel() {
       </div>
 
       <div className="chat-panel-controls">
-        <select value={model} onChange={(e) => setModel(e.target.value)}>
-          {MODELS.map((m) => (
+        <select value={chat.model} onChange={(e) => chat.setModel(e.target.value)}>
+          {CHAT_MODELS.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
           ))}
         </select>
-        <select value={effort} onChange={(e) => setEffort(e.target.value)}>
-          {EFFORTS.map((e) => (
+        <select value={chat.effort} onChange={(e) => chat.setEffort(e.target.value)}>
+          {CHAT_EFFORTS.map((e) => (
             <option key={e} value={e}>
               {e}
             </option>
@@ -124,13 +58,13 @@ export function ChatPanel() {
         </select>
       </div>
       <p className="chat-panel-thread-id">thread_id: {threadId}</p>
-      <button className="chat-panel-register-interest" onClick={registerAsInterest}>
+      <button className="chat-panel-register-interest" onClick={chat.registerAsInterest}>
         💡 이 대화를 관심사로 등록
       </button>
-      {draftError && <p className="chat-panel-error">{draftError}</p>}
+      {chat.draftError && <p className="chat-panel-error">{chat.draftError}</p>}
 
       <div className="chat-panel-messages">
-        {messages.map((m, i) => (
+        {chat.messages.map((m, i) => (
           <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
             <div className="chat-message-content">{m.content}</div>
             {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
@@ -139,30 +73,30 @@ export function ChatPanel() {
                 type="button"
                 className="chat-message-delete"
                 title="이 메시지 삭제"
-                onClick={() => deleteMessage(m.id!)}
+                onClick={() => chat.deleteMessage(m.id!)}
               >
                 🗑
               </button>
             )}
           </div>
         ))}
-        {isStreaming && <div className="chat-panel-progress">⏳ {progress || '진행 중...'}</div>}
+        {chat.isStreaming && <div className="chat-panel-progress">⏳ {chat.progress || '진행 중...'}</div>}
       </div>
 
       <form
         className="chat-panel-input"
         onSubmit={(e) => {
           e.preventDefault()
-          send()
+          chat.send()
         }}
       >
         <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          value={chat.input}
+          onChange={(e) => chat.setInput(e.target.value)}
           placeholder="물리에 대해 궁금한 걸 물어보세요"
-          disabled={isStreaming}
+          disabled={chat.isStreaming}
         />
-        <button type="submit" disabled={isStreaming || !input.trim()}>
+        <button type="submit" disabled={chat.isStreaming || !chat.input.trim()}>
           전송
         </button>
       </form>

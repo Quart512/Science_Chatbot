@@ -20,6 +20,7 @@ from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import api_keys
+import chat_sessions
 import equipment
 import interests
 import knowledge_notes
@@ -101,12 +102,29 @@ class Query(BaseModel):
     effort: Literal["low", "medium", "high"] = "medium"
     thread_id: str = Field(default_factory=lambda: str(uuid4()))
 
+def _title_from_prompt(prompt: str, limit: int = 40) -> str:
+    stripped = prompt.strip()
+    return stripped if len(stripped) <= limit else stripped[:limit].rstrip() + "…"
+
+
 # astream(stream_mode="custom") + SSE — "custom"은 physics_qa_node가 get_stream_writer()로
 # 명시적으로 흘려보낸 값만 받는 채널이라 능력 내부 State가 새지 않는다. final=False는
 # 진행 로그, final=True가 최종 answer. request는 lifespan이 올려둔 컴파일된 그래프를
 # 꺼내 쓰기 위함.
+#
+# chat_sessions 갱신은 스트리밍 시작 전에 동기적으로 끝낸다 — research_sessions와 달리
+# "생성"과 "그래프 호출"이 같은 요청 안에서 한 번에 일어난다(research는 advance
+# 엔드포인트가 topic·stage를 이미 body로 받아 조건 분기하지만, 챗은 첫 메시지 자체가
+# 곧 세션 시작 신호라 존재 여부만 보면 된다). sqlite3는 동기 라이브러리라
+# asyncio.to_thread로 감싸 이벤트 루프를 안 막는다(/interests/draft와 같은 이유).
 @app.post("/api/query")
 async def query(request: Request, body: Query):
+    session = await asyncio.to_thread(chat_sessions.get_session, body.thread_id)
+    if session is None:
+        await asyncio.to_thread(chat_sessions.create_session, body.thread_id, _title_from_prompt(body.prompt))
+    else:
+        await asyncio.to_thread(chat_sessions.touch_session, body.thread_id)
+
     config = {"configurable": {"thread_id": body.thread_id}}
     inputs = {"question": body.prompt, "model": body.model, "effort": body.effort}
 
@@ -153,6 +171,37 @@ async def delete_query_message(request: Request, thread_id: str, message_id: str
         config, {"messages": [RemoveMessage(id=message_id)]}, as_node="__start__"
     )
     return {"deleted_id": message_id}
+
+
+# 챗(④) 세션 목록 — research_sessions의 3개 엔드포인트와 완전히 같은 패턴
+# (research_sessions.py 상단 주석·main.py 위쪽 "/research/sessions" 라우트 순서
+# 주석 참고). 여기도 리터럴 경로("/chat/sessions")가 유일해서 지금은 순서 충돌이
+# 없지만, 나중에 "/chat/{thread_id}" 계열이 추가되면 이 라우트가 먼저 와야 한다.
+@app.get("/api/chat/sessions")
+def list_chat_sessions():
+    return {"sessions": chat_sessions.list_sessions()}
+
+
+class ChatSessionTitleUpdate(BaseModel):
+    title: str
+
+
+@app.post("/api/chat/sessions/{thread_id}/title")
+def rename_chat_session(thread_id: str, body: ChatSessionTitleUpdate):
+    updated = chat_sessions.update_title(thread_id, body.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"챗 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "updated"}
+
+
+# 세션 목록에서만 지운다 — 실제 체크포인트는 안 지운다(chat_sessions.delete_session()
+# docstring 참고).
+@app.delete("/api/chat/sessions/{thread_id}")
+def close_chat_session(thread_id: str):
+    deleted = chat_sessions.delete_session(thread_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"챗 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "deleted"}
 
 
 # "관심사 등록" 버튼(라이브러리 폼)이 부르는 엔드포인트 — GET /interests/draft가 만든
