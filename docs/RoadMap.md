@@ -278,7 +278,15 @@
 - **PDF 뷰어(원래 열린 질문) — 별거 없다.** `GET /api/papers/{id}/file`이 `library/`의 파일 바이트를 `Content-Type: application/pdf`·`Content-Disposition: inline`으로 스트리밍하고(FastAPI `FileResponse`) 프론트가 `<iframe src>`로 띄우면 브라우저 내장 뷰어가 렌더한다 — pdf.js 같은 라이브러리 불필요. 주의할 건 **경로 traversal**: 사용자가 준 상대경로를 `os.path.realpath`로 정규화한 뒤 `library/` 루트 접두사를 확인해 밖으로 못 나가게 막아야 한다.
 - **부수 작업**: `library/`를 `.dockerignore`와 `docker-compose.yml` 양쪽에 추가해야 한다. `Dockerfile`이 `COPY ./ ./`로 컨텍스트 전체를 굽기 때문에 안 막으면 사용자 PDF가 이미지에 통째로 들어간다 — `chroma_db/`·`data/`를 넣은 것과 같은 이유·같은 자리(아래 "설치 앱 패키징 — 착수하면 바로 걸릴 것 3개" ①과 같은 종류의 함정).
 
-**착수 순서 (08-05 확정)**: ① `library/` 루트 + 상대경로 스키마(`papers`에 `file_path`·`content_sha256`·`analysis_status` 컬럼 추가, compose 마운트 + `.dockerignore`) → ② 서버측 파일 브라우저(`GET /api/library/files` 스캔 + "트래킹에 추가") → ③ 원본 조회(`GET /api/papers/{id}/file` + 프론트 iframe 뷰어, 경로 표시·복사) → ④ 파싱 분리(등록과 분석을 나누고 분석은 백그라운드, 상태는 DB) → ⑤ 기존 업로드 경로를 "`library/`에 복사해 넣기"로 재정의 → ⑥ export/import(위 3단계 범위). 노트 파일 전환과 "탐색기로 열기"는 이 순서 밖으로 뺀다.
+**착수 순서 (08-05 확정)**: ① `library/` 루트 + 상대경로 스키마(`papers`에 `file_path`·`content_sha256`·`analysis_status` 컬럼 추가, compose 마운트 + `.dockerignore`) → ② 서버측 파일 브라우저(`GET /api/library/files` 스캔 + "트래킹에 추가") → ③ 원본 조회(`GET /api/papers/{id}/file` + 프론트 iframe 뷰어, 경로 표시·복사) → ④ 파싱 분리(등록과 분석을 나누고 분석은 백그라운드, 상태는 DB) → ⑤ 기존 업로드 경로를 "`library/`에 복사해 넣기"로 재정의 → ⑥ export/import(위 3단계 범위). 노트 파일 전환과 "탐색기로 열기"는 이 순서 밖으로 뺀다. **①은 08-05에 완료**(위 완료 표 참고).
+
+**② 서버측 파일 브라우저 — 세부 분할 (08-05, ①을 마치고 코드로 확인해 정함)**: 원래 한 단위로 적어뒀는데, `register_paper()`(`paper/paper_ingest.py`)와 `mark_owned()`(`paper_catalog.py`)를 다시 읽어보니 예상보다 작다 — **해시 기반 재연결 로직을 새로 안 짜도 된다.** `mark_owned()`가 이미 `paper_id` 존재 여부로 UPDATE/INSERT를 가르는 upsert이고, `register_paper()`가 이미 파일 경로를 받아 파싱→청킹→임베딩→`mark_owned()` 호출까지 다 한다 — 설계 노트 항목 C가 "같은 바이트 → 같은 해시 → 같은 `paper_id`로 자동 재연결"을 기대했던 게 실제로 이미 구현돼 있었다. 그래서 세 조각(백엔드 둘 + 프론트 하나)으로 나눠 각자 완결되게 진행한다 — "한 번에 하나씩" 단위로 딱 맞는 크기.
+
+- **②-A. `GET /api/library/files` — 스캔만.** `library/`를 재귀로 나열하고 `papers.file_path`와 대조해 `tracked: true/false`만 붙여 반환. 파일시스템 읽기 + DB 조회뿐이라 LLM·네트워크 없이 pytest로 끝난다. **주의할 것 하나**: 경로 traversal 방어 — 사용자가 준 상대경로를 `os.path.realpath`로 정규화한 뒤 `library/` 루트 접두사를 확인해 밖으로 못 나가게 막는다(위 "PDF 뷰어" 문단이 ③에 대해 이미 짚어둔 것과 같은 종류의 방어, ②에서도 필요).
+- **②-B. "트래킹에 추가" — 기존 함수 재사용.** `register_paper(pdf_path=..., filename=...)`을 `library/<상대경로>`에 바로 겨눠 부른다 — 지금 `POST /api/papers`처럼 tempfile에 옮겨 쓸 필요가 없다(이미 디스크에 있는 파일이므로). 새로 할 일은 **`mark_owned()`에 `file_path`·`content_sha256` 인자 두 개를 추가**해서 upsert 시 같이 저장하는 것뿐 — 함수 시그니처 확장 수준.
+- **②-C. 프론트 — 파일 목록 화면.** ②-A를 불러 목록 렌더, 미트래킹 파일에 "트래킹에 추가" 버튼 → ②-B 호출 → 목록 새로고침.
+
+다음 세션은 ②-A부터 시작한다.
 
 **연구 워크플로우 — 타임라인·체크 결합(브랜치형), 구현 완료(08-04)**: React 전환 직후 사용자가 상세 스펙까지 확정해서 불러준 노트를 그대로 따라 구현. 단계별 메모는 범위에서 뺌(위 예정 표 참고). 아래는 확정 당시 남긴 설계 근거고, 실제 구현 요약은 맨 끝 "구현 요약" 참고.
 
