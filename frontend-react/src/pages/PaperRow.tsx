@@ -47,7 +47,11 @@ function renderListProse(items: string[]): string {
 
 // 요약은 lazy 생성이라(paper_ingest.get_paper_summary 참고) 펼칠 때만 조회한다
 // (enabled: expanded) — 목록에 논문이 많아져도 안 펼친 것까지 미리 부르지 않음.
-export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
+//
+// fileMissing(08-05, 화면 개선 ⑩ 설계 노트) — 추적은 됐지만(paper.file_path가 있음)
+// library/ 스캔에서 그 경로가 더는 안 보이는 경우(사용자가 파일을 지우거나 옮김).
+// Papers.tsx가 papers·library/files 두 쿼리를 대조해 계산해서 넘긴다.
+export function PaperRow({ paper, fileMissing = false }: { paper: PaperCatalogRow; fileMissing?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   // ④(08-05) — pending/analyzing이면 아직 청크가 없어 요약 조회가 에러로 끝난다(파싱이
@@ -101,14 +105,21 @@ export function PaperRow({ paper }: { paper: PaperCatalogRow }) {
               {copied ? '복사됨' : '경로 복사'}
             </button>
           </p>
-          <details>
-            <summary>원본 PDF 보기</summary>
-            <iframe
-              className="paper-row-pdf-frame"
-              src={getPaperFileUrl(paper.paper_id)}
-              title={`${paper.title || paper.filename || paper.paper_id} 원본`}
-            />
-          </details>
+          {fileMissing ? (
+            <p className="paper-message paper-message-warning">
+              ⚠️ library/에서 이 파일을 찾을 수 없습니다 — 옮겨졌거나 삭제된 것 같습니다. 원래 위치로 되돌리거나 "다시
+              스캔" 후 재등록하세요.
+            </p>
+          ) : (
+            <details>
+              <summary>원본 PDF 보기</summary>
+              <iframe
+                className="paper-row-pdf-frame"
+                src={getPaperFileUrl(paper.paper_id)}
+                title={`${paper.title || paper.filename || paper.paper_id} 원본`}
+              />
+            </details>
+          )}
         </div>
       )}
 

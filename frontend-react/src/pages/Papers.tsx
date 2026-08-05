@@ -128,8 +128,13 @@ export function Papers() {
         </p>
       )}
 
+      {/* 화면 개선 ⑩(08-05, RoadMap "프론트 개선 백로그" 참고) — 예전엔 이 목록에
+          추적된 파일까지 다 보여줘서 아래 "보유 논문"과 같은 논문이 두 번 나왔다.
+          제3안(의미로 분리) 채택: 여기는 "아직 라이브러리에 안 넣은 파일"만 — 추적된
+          파일은 보유 논문 목록에만 나온다. 두 목록의 의미가 갈리면서 중복이 원인부터
+          사라진다(감추기가 아니라). */}
       <div className="library-section-header">
-        <h2>library/ 폴더</h2>
+        <h2>library/ 폴더 — 미추적 파일</h2>
         {/* 파일시스템 워처를 안 만들기로 한 결정(RoadMap 설계 노트 항목 F — Docker
             Desktop 바인드 마운트에서 inotify가 컨테이너로 잘 안 온다)의 대체 수단.
             화면 진입 시 스캔(useQuery 마운트) + 이 버튼으로 수동 재스캔이 전부다. */}
@@ -139,25 +144,25 @@ export function Papers() {
       </div>
       <p className="library-hint">
         이 폴더에 PDF를 직접 넣어두면 여기 목록에 나타납니다. 파일을 옮기거나 이름을 바꿨다면 "다시 스캔"을 눌러주세요.
+        추적에 추가하면 아래 "보유 논문" 목록으로 옮겨갑니다.
       </p>
 
       {libraryLoading && <p>스캔 중...</p>}
       {libraryIsError && (
         <p className="paper-message paper-message-error">스캔 실패: {(libraryError as Error).message}</p>
       )}
-      {library && library.files.length === 0 && <p>library/ 폴더에 PDF가 없습니다.</p>}
+      {library && library.files.every((f) => f.tracked) && <p>추적되지 않은 파일이 없습니다.</p>}
       {library &&
-        library.files.map((f) => (
-          <div className="library-file" key={f.path}>
-            <span className="library-file-path" title={f.path}>
-              {f.path}
-            </span>
-            {f.tracked ? (
-              <span className="library-file-tracked">추적 중</span>
-            ) : (
-              // ④(08-05)부터 track 요청 자체는 등록(해시 계산 + pending 행 생성)만 동기로
-              // 하고 바로 반환된다 — isPending 구간이 짧아져 다른 행까지 잠글 이유가
-              // 약해졌지만, 같은 파일 중복 클릭 방지 목적으로 계속 남겨둔다.
+        library.files
+          .filter((f) => !f.tracked)
+          .map((f) => (
+            <div className="library-file" key={f.path}>
+              <span className="library-file-path" title={f.path}>
+                {f.path}
+              </span>
+              {/* ④(08-05)부터 track 요청 자체는 등록(해시 계산 + pending 행 생성)만 동기로
+                  하고 바로 반환된다 — isPending 구간이 짧아져 다른 행까지 잠글 이유가
+                  약해졌지만, 같은 파일 중복 클릭 방지 목적으로 계속 남겨둔다. */}
               <button
                 type="button"
                 onClick={() => trackMutation.mutate(f.path)}
@@ -165,9 +170,8 @@ export function Papers() {
               >
                 {trackMutation.isPending && trackMutation.variables === f.path ? '등록 중...' : '트래킹에 추가'}
               </button>
-            )}
-          </div>
-        ))}
+            </div>
+          ))}
 
       {trackMutation.isError && (
         <p className="paper-message paper-message-error">트래킹 실패: {(trackMutation.error as Error).message}</p>
@@ -186,7 +190,19 @@ export function Papers() {
       {isLoading && <p>불러오는 중...</p>}
       {isError && <p className="paper-message paper-message-error">조회 실패: {(error as Error).message}</p>}
       {data && data.papers.length === 0 && <p>등록된 논문이 없습니다.</p>}
-      {data && data.papers.map((p) => <PaperRow key={p.paper_id} paper={p} />)}
+      {data &&
+        data.papers.map((p) => (
+          // fileMissing — ⑩ 설계 노트가 같이 정하라고 남겨둔 "추적됐지만 파일이 사라진"
+          // 경우. library/files 스캔 결과에 이 경로가 없으면 사용자가 파일을 지웠거나
+          // 옮긴 것 — 새 백엔드 필드 없이 이미 불러온 두 쿼리(papers·library/files)를
+          // 대조하는 것만으로 계산된다. library가 아직 안 불려왔으면(로딩 중) 성급하게
+          // "없음"으로 단정하지 않음(false 기본값).
+          <PaperRow
+            key={p.paper_id}
+            paper={p}
+            fileMissing={!!p.file_path && !!library && !library.files.some((f) => f.path === p.file_path)}
+          />
+        ))}
     </div>
   )
 }
