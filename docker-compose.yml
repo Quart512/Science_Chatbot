@@ -31,6 +31,11 @@ services:
       # RDB(RoadMap "VDB vs RDB" 참고)도 파일만 분리해 같은 디렉터리에 추가될 예정 —
       # chroma_db처럼 디렉터리 단위로 마운트해두면 그때 이 파일을 다시 안 고쳐도 됨
       - "./data:/app/data"
+      # 논문·노트 원본 파일 저장소(08-05, "논문 파일 경로 추적 재설계" 착수 ①) — chroma_db·
+      # data와 달리 **사람이 OS 파일관리자로 직접 넣거나 정리하는 걸 전제**로 한 디렉터리다.
+      # papers.file_path(paper_catalog.py)가 이 루트 기준 상대경로를 저장하므로, 마운트
+      # 지점이 바뀌어도(호스트 경로 vs portable 번들 실행 경로) DB 값은 안 깨진다.
+      - "./library:/app/library"
       # 네임드 볼륨 — bge-m3 다운로드 캐시(자동 생성, 사람이 안 들여다봄).
       # 프로젝트 폴더 밖 Docker 관리 영역에 저장 → git/폴더 오염 없이 재시작해도 재사용
       - "huggingface-cache:/root/.cache/huggingface"
