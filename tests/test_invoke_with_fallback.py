@@ -7,6 +7,11 @@ invoke_with_fallback — models.py의 재귀적 fallback 로직.
 model_map 자체를 통째로 monkeypatch — models.py 코드는 이 사실을 전혀 모른다
 (테스트 개념이 운영 코드에 스며들지 않음). graph.py를 거치지 않고 models를 바로
 import하므로 retrieval의 무거운 import-time 로딩과도 아예 무관하다.
+
+08-05부터 model_map의 값은 클라이언트 객체가 아니라 "클라이언트를 만드는 함수"다
+(설정 화면 착수 — models.py의 model_map 주석 참고) — invoke_with_fallback이
+model_map[name]()으로 호출하므로, 여기서도 가짜 클라이언트를 반환하는 lambda로
+감싸야 한다.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -15,7 +20,8 @@ import httpx
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequestError
 from google.api_core.exceptions import ResourceExhausted
-from google.genai.errors import ServerError
+from google.genai.errors import ClientError, ServerError
+from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 
 import models
 
@@ -43,7 +49,7 @@ def make_fake_model(*, raises=None):
 
 def test_success_on_first_try(monkeypatch):
     fake_gemini = make_fake_model()
-    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": make_fake_model()})
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: make_fake_model()})
 
     response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
 
@@ -56,7 +62,7 @@ def test_success_on_first_try(monkeypatch):
 def test_falls_back_to_secondary_on_resource_exhausted(monkeypatch):
     fake_gemini = make_fake_model(raises=ResourceExhausted("quota exceeded"))
     fake_claude = make_fake_model()
-    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": fake_claude})
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
 
     response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
 
@@ -72,12 +78,15 @@ def test_falls_back_on_google_genai_server_error(monkeypatch):
     # 못 타고 500까지 샜던 실제 사례(models.py의 GoogleGenAIAPIError 주석 참고).
     fake_gemini = make_fake_model(raises=ServerError(503, {"error": {"message": "overloaded"}}))
     fake_claude = make_fake_model()
-    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": fake_claude})
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
 
     response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
 
     assert used_model == "claude"
-    assert disabled == ["gemini"]
+    # 08-05: 원래 여기서 disabled == ["gemini"]를 단언했으나, 503은 몇 초 뒤 풀리는 일시
+    # 장애라 세션 차단 대상이 아니라고 판단해 동작을 바꿨다(아래
+    # test_google_503_is_transient_and_does_not_disable가 그 계약을 직접 검증). 이 테스트가
+    # 원래 지키려던 것은 "ServerError에 fallback이 걸린다"이므로 그 단언만 남긴다.
     fake_claude.invoke.assert_called_once()
 
 
@@ -87,7 +96,7 @@ def test_falls_back_on_anthropic_credit_balance_error(monkeypatch):
     # SDK의 별개 클래스라 따로 잡아야 한다(models.py의 AnthropicBadRequestError 주석 참고).
     fake_claude = make_fake_model(raises=_anthropic_bad_request("credit balance too low"))
     fake_gemini = make_fake_model()
-    monkeypatch.setattr(models, "model_map", {"claude": fake_claude, "gemini": fake_gemini})
+    monkeypatch.setattr(models, "model_map", {"claude": lambda: fake_claude, "gemini": lambda: fake_gemini})
 
     response, used_model, disabled, tokens = models.invoke_with_fallback("claude", messages=["dummy"])
 
@@ -99,16 +108,98 @@ def test_falls_back_on_anthropic_credit_balance_error(monkeypatch):
 def test_raises_runtime_error_when_all_models_exhausted(monkeypatch):
     fake_gemini = make_fake_model(raises=ResourceExhausted("quota exceeded"))
     fake_claude = make_fake_model(raises=ResourceExhausted("quota exceeded"))
-    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": fake_claude})
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
 
     with pytest.raises(RuntimeError):
         models.invoke_with_fallback("gemini", messages=["dummy"])
 
 
+# --- 아래 5개: 08-05 "세션 지속 장애 vs 이번 요청 한정 실패" 구분 (models.py의 예외 튜플 주석 참고) ---
+# 08-05 관심사 등록 버그의 근본 원인 — 예외 종류를 안 가리고 실패한 모델을 전부
+# disabled_models에 넣는 바람에, 요청 형식 하나가 틀린 것만으로 사용자가 고른 모델이
+# 그 스레드 내내 조용히 회피됐다. fallback 자체는 옳았으므로 그건 그대로 두고,
+# "세션 상태를 오염시키느냐"만 갈랐다는 게 이 테스트들의 요지.
+
+
+def test_request_scoped_failure_falls_back_without_disabling(monkeypatch):
+    # gemini가 이 요청의 형식을 거부(INVALID_ARGUMENT)한 경우 — claude는 같은 메시지를
+    # 받아들이므로(prefill 허용) fallback은 성공해야 하고, 동시에 gemini는 세션 차단
+    # 목록에 들어가면 안 된다(다음 턴엔 정상적으로 다시 시도돼야 한다).
+    fake_gemini = make_fake_model(raises=ChatGoogleGenerativeAIError(
+        "400 INVALID_ARGUMENT: Requests ending with a model turn are not supported"
+    ))
+    fake_claude = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
+
+    _response, used_model, disabled, _tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    assert used_model == "claude"          # fallback은 여전히 동작
+    assert disabled == []                  # 핵심 — 세션 차단 목록이 안 더러워진다
+    fake_claude.invoke.assert_called_once()
+
+
+def test_google_503_is_transient_and_does_not_disable(monkeypatch):
+    # 과부하(503)는 몇 초 뒤 풀리는 일시 장애다 — 한 번의 blip으로 세션 내내 gemini를
+    # 못 쓰게 되면 안 된다. 08-11에 추가한 "503은 fallback을 탄다"는 그대로 유지.
+    fake_gemini = make_fake_model(raises=ServerError(503, {"error": {"message": "overloaded"}}))
+    fake_claude = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
+
+    _response, used_model, disabled, _tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    assert used_model == "claude"
+    assert disabled == []
+
+
+def test_google_429_quota_does_disable(monkeypatch):
+    # 같은 SDK·같은 예외 클래스라도 429(쿼터 소진)는 리필 전까진 계속 실패하므로
+    # 세션 차단이 맞다 — HTTP 코드로 가른다는 설계가 실제로 두 방향 다 작동하는지.
+    fake_gemini = make_fake_model(raises=ClientError(429, {"error": {"message": "quota exceeded"}}))
+    fake_claude = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
+
+    _response, used_model, disabled, _tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    assert used_model == "claude"
+    assert disabled == ["gemini"]
+
+
+def test_anthropic_malformed_request_does_not_disable(monkeypatch):
+    # 크레딧 부족(위 test_falls_back_on_anthropic_credit_balance_error)과 **같은 클래스**로
+    # 오는 잘못된 요청. 메시지로만 구분되므로, 크레딧 문구가 없으면 세션 차단을 하지
+    # 않는 쪽(안전한 기본값)으로 떨어져야 한다.
+    fake_claude = make_fake_model(raises=_anthropic_bad_request("messages: at least one message is required"))
+    fake_gemini = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"claude": lambda: fake_claude, "gemini": lambda: fake_gemini})
+
+    _response, used_model, disabled, _tokens = models.invoke_with_fallback("claude", messages=["dummy"])
+
+    assert used_model == "gemini"
+    assert disabled == []
+
+
+def test_request_scoped_failure_on_every_model_terminates(monkeypatch):
+    # 세션 차단을 안 하게 되면서 생긴 새 위험 — 예전엔 disabled_models가 "이미 시도함"
+    # 역할을 겸해서 재귀가 멈췄다. 그 둘을 분리했으니(_attempted) 요청 한정 실패가 전
+    # 모델에서 나도 무한 재귀 없이 끝나야 하고, 에러 메시지에 모델별 실패 사유가 남아
+    # "왜 전부 실패했는지"를 호출부가 알 수 있어야 한다.
+    fake_gemini = make_fake_model(raises=ChatGoogleGenerativeAIError("400 INVALID_ARGUMENT"))
+    fake_claude = make_fake_model(raises=ChatGoogleGenerativeAIError("400 INVALID_ARGUMENT"))
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
+
+    with pytest.raises(RuntimeError) as excinfo:
+        models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    message = str(excinfo.value)
+    assert "gemini" in message and "claude" in message
+    assert "INVALID_ARGUMENT" in message   # 진짜 원인이 안 사라진다
+    assert excinfo.value.__cause__ is not None  # raise ... from exc 로 원본 예외가 체인됨
+
+
 def test_disabled_models_are_skipped_without_calling_invoke(monkeypatch):
     fake_gemini = make_fake_model()
     fake_claude = make_fake_model()
-    monkeypatch.setattr(models, "model_map", {"gemini": fake_gemini, "claude": fake_claude})
+    monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
 
     response, used_model, disabled, tokens = models.invoke_with_fallback(
         "gemini", messages=["dummy"], disabled_models=["gemini"]

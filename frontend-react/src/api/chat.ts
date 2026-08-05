@@ -17,7 +17,7 @@ export async function* streamQuery(params: {
   effort: string
   threadId: string
 }): AsyncGenerator<QueryChunk> {
-  const res = await fetch(`${BACKEND_URL}/query`, {
+  const res = await fetch(`${BACKEND_URL}/api/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

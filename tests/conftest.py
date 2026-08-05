@@ -20,10 +20,12 @@ graph.py는 `from retrieval import vectorstore, papers_vectorstore`로 가져오
 로 그때그때 원하는 가짜 객체를 넣으면 된다 — 이 conftest.py를 다시 건드릴 필요 없음.
 
 --- API 키 더미값 ---
-models.py의 model_map은 import되는 순간 ChatGoogleGenerativeAI(...) 등을 생성하는데,
-이 생성자가 "API 키가 실제로 존재하는지"를 그 자리에서 검사한다(진짜 네트워크 호출은
-.invoke() 시점에만 일어나 — 키 존재 여부만 보는 것). 로컬은 .env로 채워지지만 CI 등
-키가 없는 환경에서는 graph.py를 import하는 것만으로 즉시 에러가 난다. 더미 문자열이면
+models.py의 model_map 값은 ChatGoogleGenerativeAI(...) 등을 만드는 "함수"다(08-05부터
+— 설정 화면 착수 전엔 모듈 임포트 시점에 만들어지는 클라이언트 "객체"였다). 그 생성자가
+"API 키가 실제로 존재하는지"를 그 자리에서 검사한다(진짜 네트워크 호출은 .invoke()
+시점에만 일어나 — 키 존재 여부만 보는 것). model_map을 몽키패치 안 하고 실제로
+invoke_with_fallback을 부르는 테스트가 함수를 호출하는 순간 이 검사에 걸릴 수 있어서,
+로컬은 .env로 채워지지만 CI 등 키가 없는 환경 대비 더미값을 채워둔다. 더미 문자열이면
 이 생성 시점 검사는 통과하고, 테스트에서 실제로 .invoke()를 부르지만 않으면(지금 우리
 테스트들은 안 부름) 진짜 API 호출도, 진짜 키도 필요 없다.
 os.environ.setdefault를 쓰므로 로컬에서 .env로 이미 값이 있으면 그대로 두고,

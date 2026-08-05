@@ -32,13 +32,6 @@ jobs:
           push: true
           tags: quart512/science-chatbot:latest
 
-      - name: 프론트 이미지 빌드 + push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: true
-          tags: quart512/science-chatbot-frontend:latest
-
       - name: docker-compose.yml EC2로 전송
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -56,6 +49,6 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/science-chatbot
-            docker compose --profile frontend pull
-            docker compose --profile frontend up -d
+            docker compose pull
+            docker compose up -d
             docker image prune -f

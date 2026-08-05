@@ -1,11 +1,22 @@
+# 이 파일은 **배포판(릴리즈 zip)용 베이스**다 — 최종 사용자가 받는 건 이 파일 하나뿐이라
+# Dockerfile도 소스도 .env도 없는 폴더에서 `docker compose up -d`만으로 떠야 한다.
+# 개발용 설정(로컬 빌드·.env)은 docker-compose.override.yml에 분리했다 — Compose가
+# 그 파일명을 규약으로 자동 인식해 같은 디렉터리에 있으면 -f 없이도 이 파일 위에
+# 덮어씌운다. 그래서 저장소를 클론한 개발 기계에서는 예전과 완전히 똑같이 동작하고,
+# override를 안 담은 릴리즈 zip에서는 pull만 하는 배포 설정이 된다.
+#
+# 08-05 배포 재검토에서 실제로 겪은 것 두 가지가 이 분리의 이유다:
+#  ① env_file은 기본이 required라 .env 없는 폴더에서는 `env file ... not found`로 즉사했다
+#     (스크립트가 감지도 못 해 영문 에러만 뜨고 창이 닫힘). 배포판은 API 키를 설정 화면
+#     (api_keys.py → data/app.db)에서 받으므로 .env가 아예 필요 없다 — 그래서 required:false
+#     같은 신문법(Compose 2.24+, 구버전 Docker Desktop에서 오히려 깨짐) 대신 통째로 뺐다.
+#  ② compose는 pull에 실패하면 build로 폴백한다(실측 확인). 릴리즈 zip엔 Dockerfile이
+#     없으니 build:를 남겨두면 그 폴백이 반드시 "Dockerfile not found"로 죽는다.
 services:
   science-chatbot:
-    build: .                              # 로컬에서 빌드할 때 씀 (Dockerfile 기반)
-    image: quart512/science-chatbot:latest # 서버에서는 이 이름으로 Docker Hub에서 pull만 함
+    image: quart512/science-chatbot:latest # Docker Hub에서 pull만 함 (build는 override에만)
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       # LOCAL_MODEL_URL이 models.py의 os.getenv 기본값(localhost:8080)을 덮어씀.
       # 컨테이너 안에서 localhost는 "자기 자신"이라 llama-server를 못 찾음 —
@@ -20,22 +31,14 @@ services:
       # RDB(RoadMap "VDB vs RDB" 참고)도 파일만 분리해 같은 디렉터리에 추가될 예정 —
       # chroma_db처럼 디렉터리 단위로 마운트해두면 그때 이 파일을 다시 안 고쳐도 됨
       - "./data:/app/data"
+      # 논문·노트 원본 파일 저장소(08-05, "논문 파일 경로 추적 재설계" 착수 ①) — chroma_db·
+      # data와 달리 **사람이 OS 파일관리자로 직접 넣거나 정리하는 걸 전제**로 한 디렉터리다.
+      # papers.file_path(paper_catalog.py)가 이 루트 기준 상대경로를 저장하므로, 마운트
+      # 지점이 바뀌어도(호스트 경로 vs portable 번들 실행 경로) DB 값은 안 깨진다.
+      - "./library:/app/library"
       # 네임드 볼륨 — bge-m3 다운로드 캐시(자동 생성, 사람이 안 들여다봄).
       # 프로젝트 폴더 밖 Docker 관리 영역에 저장 → git/폴더 오염 없이 재시작해도 재사용
       - "huggingface-cache:/root/.cache/huggingface"
-
-  frontend:
-    build: ./frontend                              # science-chatbot과 별개 Dockerfile — 백엔드 무거운 의존성과 무관
-    image: quart512/science-chatbot-frontend:latest
-    ports:
-      - "8501:8501"
-    environment:
-      # BACKEND_URL이 app.py의 기본값(localhost:8000)을 덮어씀 — 컨테이너 안 localhost는
-      # "자기 자신"이라 science-chatbot을 못 찾음, 서비스 이름으로 불러야 내장 DNS가 찾아줌
-      - BACKEND_URL=http://science-chatbot:8000
-    depends_on:
-      - science-chatbot # 시작 순서만 보장(healthcheck 없이) — science-chatbot 컨테이너가 "떠서 실행되기 시작"하면 바로 frontend도 시작. 완전히 준비됐는지는 안 기다림
-    profiles: ["frontend"]  # 기본 `up`엔 실행 안 됨 — API(`/docs`)만으로도 충분해서 선택 설치. `--profile frontend up`으로 명시 필요
 
   llama-server:
     # llama-server 실행 파일에 붙는 인자만 적음 (ENTRYPOINT가 이미 고정돼 있음)

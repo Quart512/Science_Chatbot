@@ -93,7 +93,7 @@ export function StageContent({ values }: { values: ResearchState }) {
           <summary>참고문헌 ({references.length}편)</summary>
           {references.map((r) => (
             <p key={r.paper_id} className="research-caption">
-              - [{r.source}] {r.title}
+              - [{r.source}] {r.title || r.paper_id}
               {r.reasoning && ` — ${r.reasoning}`}
             </p>
           ))}

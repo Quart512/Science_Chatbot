@@ -2,13 +2,15 @@ import asyncio
 import json
 import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import os
 
 import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 from pydantic import Field
@@ -17,6 +19,7 @@ from uuid import uuid4
 from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+import api_keys
 import equipment
 import interests
 import knowledge_notes
@@ -64,6 +67,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# /api 응답에 브라우저가 캐싱하지 못하게 명시(08-05, 설정 화면 개발 중 실제로 겪은 버그).
+# FastAPI는 기본적으로 Cache-Control을 안 붙이는데, 그 상태에서 어떤 이유로든 /api
+# 경로가 한 번이라도 캐싱 가능한 응답(예: SPA 폴백의 FileResponse가 ETag/Last-Modified를
+# 자동으로 붙인 index.html)을 준 적이 있으면, 브라우저가 그 뒤로도 진짜 API 응답 대신
+# 캐싱된 옛 응답을 계속 재사용한다 — 실제로 이 경로 분리(/api) 작업 도중 재현: 서버
+# 코드를 고쳐 재시작해도 브라우저가 예전 응답을 계속 돌려줘서 원인 파악에 시간이 걸렸다.
+# REST API는 애초에 캐싱 대상이 아니므로(정적 자산 /assets/*는 Vite가 파일명에 해시를
+# 붙여 그대로 장기 캐싱돼도 안전 — 여긴 안 건드림) 아예 원천 차단한다.
+@app.middleware("http")
+async def no_cache_for_api(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+# 설치판 실행 스크립트(.command/.bat, 08-05 Docker 패키징)가 폴링할 가벼운 대상 — DB나
+# 임베딩 모델을 안 건드리는 순수 응답. lifespan이 끝나야(bge-m3 로딩 완료 후) 이 라우트
+# 자체가 응답 가능해지므로, 200이 오는 순간 곧 "서버가 실제로 요청을 받을 준비가 됐다"는
+# 뜻이다 — 실측(08-05): 처음 받는 bge-m3 다운로드 포함 시 최대 2~3분까지 걸릴 수 있었다.
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
 # top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에 그대로는 안 뺌 — 대신 Claude의 reasoning
 # effort와 같은 패턴으로 low/medium/high 프로필만 노출. 실제 숫자 매핑은 graph.py(EFFORT_PROFILES)
 # 안에 있고, 여긴 그 이름만 그대로 통과시킨다.
@@ -77,7 +104,7 @@ class Query(BaseModel):
 # 명시적으로 흘려보낸 값만 받는 채널이라 능력 내부 State가 새지 않는다. final=False는
 # 진행 로그, final=True가 최종 answer. request는 lifespan이 올려둔 컴파일된 그래프를
 # 꺼내 쓰기 위함.
-@app.post("/query")
+@app.post("/api/query")
 async def query(request: Request, body: Query):
     config = {"configurable": {"thread_id": body.thread_id}}
     inputs = {"question": body.prompt, "model": body.model, "effort": body.effort}
@@ -100,7 +127,7 @@ async def query(request: Request, body: Query):
 _MESSAGE_TYPE_TO_ROLE = {"human": "user", "ai": "assistant"}
 
 
-@app.get("/query/{thread_id}/messages")
+@app.get("/api/query/{thread_id}/messages")
 async def get_query_messages(request: Request, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.graph.aget_state(config)
@@ -118,7 +145,7 @@ async def get_query_messages(request: Request, thread_id: str):
 # 정확히 그 id만 지워짐을 직접 재현해 확인함(RoadMap 참고). orchestrator._trim_history가
 # 예산 초과분을 자동으로 지울 때 쓰는 것과 같은 메커니즘을, 여기서는 사용자가 특정 id
 # 하나를 지목한 경우에 쓴다.
-@app.delete("/query/{thread_id}/messages/{message_id}")
+@app.delete("/api/query/{thread_id}/messages/{message_id}")
 async def delete_query_message(request: Request, thread_id: str, message_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     await request.app.state.graph.aupdate_state(
@@ -143,7 +170,7 @@ class InterestRegistration(BaseModel):
 
 
 
-@app.get("/interests")
+@app.get("/api/interests")
 def list_interests():
     return {"interests": interests.list_interests()}
 
@@ -160,7 +187,7 @@ def list_interests():
 # 함수이므로, 이미 읽어온 스냅샷에서 같이 꺼내 쓰고(공짜) 갱신됐으면 aupdate_state로
 # 다시 써준다. 그래야 여기서 gemini가 소진됐다는 걸 알아내면 다음 /query 턴이나 다음
 # 클릭이 그 사실을 재발견하지 않고 곧장 claude로 간다.
-@app.get("/interests/draft")
+@app.get("/api/interests/draft")
 async def draft_interest(request: Request, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.graph.aget_state(config)
@@ -183,7 +210,7 @@ async def draft_interest(request: Request, thread_id: str):
     return draft
 
 
-@app.post("/interests")
+@app.post("/api/interests")
 def register_interest(body: InterestRegistration):
     if body.update_existing_id is not None:
         updated = interests.update_interest(
@@ -205,7 +232,7 @@ def register_interest(body: InterestRegistration):
 # 발견한 버그: 이 조인 행을 안 지우면 삭제한 관심사가 남긴 recommended 논문·스크리닝
 # 기록이 고아로 남아 "관심사와 무관한데 recommended"로 혼란을 준다. interest_paper는
 # paper_catalog.py가 스키마를 소유해서 그쪽 함수를 통해 지운다(순환 import 방지).
-@app.delete("/interests/{interest_id}")
+@app.delete("/api/interests/{interest_id}")
 def delete_interest(interest_id: int):
     paper_catalog.delete_screenings_for_interest(interest_id)
     deleted = interests.delete_interest(interest_id)
@@ -217,7 +244,7 @@ def delete_interest(interest_id: int):
 # "관심사에서 트리거할 때만" 실행(cron 아님) — 라이브러리 관심사 카드의 검색 버튼만
 # 호출한다. 결과를 한 번에 돌려주는 단순한 형태(스트리밍은 필요해지면 SSE로 전환).
 # start는 페이지네이션 오프셋 — "추가 검색"이 다음 순위부터 이어받는다.
-@app.post("/interests/{interest_id}/search")
+@app.post("/api/interests/{interest_id}/search")
 def trigger_recommend_search(interest_id: int, start: int = 0):
     try:
         results = paper_recommend.recommend_for_interest(interest_id, start=start)
@@ -234,7 +261,7 @@ class RefreshRequest(BaseModel):
 
 # 관심사 수정 직후 프론트가 호출 — /search와 달리 세션에 쌓인 기존 후보 목록을 같이
 # 받아 refresh_for_interest()가 재스크리닝+병합까지 한다(그 함수 docstring 참고).
-@app.post("/interests/{interest_id}/refresh")
+@app.post("/api/interests/{interest_id}/refresh")
 def refresh_recommend_search(interest_id: int, body: RefreshRequest):
     try:
         results = paper_recommend.refresh_for_interest(interest_id, body.existing_candidates)
@@ -246,7 +273,7 @@ def refresh_recommend_search(interest_id: int, body: RefreshRequest):
 # interest_paper 조인 조회 — /search·/refresh는 그 순간의 스크리닝 결과만 응답으로
 # 돌려주고 저장은 안 했었다(08-03 전까지). 이제 record_screening()이 매 스크리닝을
 # 남기므로, 세션이 끊긴 뒤에도 "이 관심사에 무엇이 추천됐는지"를 다시 조회할 수 있다.
-@app.get("/interests/{interest_id}/papers")
+@app.get("/api/interests/{interest_id}/papers")
 def list_interest_papers(interest_id: int, only_relevant: bool = False):
     if interests.get_interest(interest_id) is None:
         raise HTTPException(status_code=404, detail=f"관심사 id={interest_id}를 찾을 수 없습니다")
@@ -255,7 +282,7 @@ def list_interest_papers(interest_id: int, only_relevant: bool = False):
 
 # register_paper()가 pdf_path(디스크 경로)를 받으므로 업로드 바이트를 임시 파일에
 # 써서 넘긴다. fitz.FileDataError(유효하지 않은 PDF)는 사용자 입력 검증 경계라 400으로.
-@app.post("/papers")
+@app.post("/api/papers")
 def register_paper_endpoint(
     file: UploadFile = File(...),
     doi: str | None = Form(None),
@@ -275,7 +302,7 @@ def register_paper_endpoint(
 
 # status로 필터링(recommended/owned/dismissed) — 관심사별 필터는 interest_paper 조인
 # 테이블이 없어 아직 불가(RoadMap "관심사↔논문이 다대다다" 참고), 전역 목록만 가능.
-@app.get("/papers")
+@app.get("/api/papers")
 def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = None):
     return {"papers": paper_catalog.list_papers(status=status)}
 
@@ -283,7 +310,7 @@ def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = No
 # 논문 내용 조회(08-03) — get_paper_summary()는 이미 있었지만 지금까지 어디서도 호출을
 # 안 해서 API로 노출된 적이 없었다. 논문은 원본(PDF)이 따로 있는 불변 소스라 수정
 # 엔드포인트는 안 둔다(잘못됐으면 재등록하거나 기각 — equipment/notes와 다른 지점).
-@app.get("/papers/{paper_id}/summary")
+@app.get("/api/papers/{paper_id}/summary")
 def get_paper_summary_endpoint(paper_id: str):
     try:
         result = paper_ingest.get_paper_summary(paper_id)
@@ -311,12 +338,12 @@ class EquipmentRegistration(BaseModel):
     update_existing_id: int | None = None
 
 
-@app.get("/equipment")
+@app.get("/api/equipment")
 def list_equipment():
     return {"equipment": equipment.list_equipment()}
 
 
-@app.post("/equipment")
+@app.post("/api/equipment")
 def register_equipment(body: EquipmentRegistration):
     # None(= 명시 안 함)인 필드는 아예 빼서 넘긴다 — update_equipment()가 **fields로
     # 받은 것만 SET 하는 부분 갱신이라, 안 넘기면 기존 값이 그대로 유지된다.
@@ -337,7 +364,7 @@ def register_equipment(body: EquipmentRegistration):
     return {"equipment_id": new_id, "action": "created"}
 
 
-@app.delete("/equipment/{equipment_id}")
+@app.delete("/api/equipment/{equipment_id}")
 def delete_equipment(equipment_id: int):
     deleted = equipment.delete_equipment(equipment_id)
     if not deleted:
@@ -353,12 +380,12 @@ class NoteRegistration(BaseModel):
     update_existing_id: int | None = None
 
 
-@app.get("/notes")
+@app.get("/api/notes")
 def list_notes():
     return {"notes": knowledge_notes.list_notes()}
 
 
-@app.post("/notes")
+@app.post("/api/notes")
 def register_note(body: NoteRegistration):
     optional = {
         k: v for k, v in (("title", body.title), ("text", body.text))
@@ -375,7 +402,7 @@ def register_note(body: NoteRegistration):
     return {"note_id": new_id, "action": "created"}
 
 
-@app.delete("/notes/{note_id}")
+@app.delete("/api/notes/{note_id}")
 def delete_note(note_id: int):
     deleted = knowledge_notes.delete_note(note_id)
     if not deleted:
@@ -383,12 +410,41 @@ def delete_note(note_id: int):
     return {"note_id": note_id, "action": "deleted"}
 
 
+# 설정 화면(08-05) — 사용자 API 키 입력. RoadMap "싱글 유저 로컬 앱 확정" 결정("API 키는
+# 사용자 본인 입력") 참고. 조회는 마스킹된 상태만 돌려주고 평문 키를 다시 내려주지 않는다
+# — 저장된 키를 화면에 다시 보여줄 일이 없어서(있음/끝자리만 표시) 그럴 이유가 없다.
+class ApiKeyRegistration(BaseModel):
+    provider: Literal["gemini", "claude"]
+    api_key: str
+
+
+@app.get("/api/settings/keys")
+def list_api_key_status():
+    return {"keys": api_keys.list_key_status()}
+
+
+@app.post("/api/settings/keys")
+def save_api_key(body: ApiKeyRegistration):
+    if not body.api_key.strip():
+        raise HTTPException(status_code=400, detail="api_key는 빈 문자열일 수 없습니다")
+    api_keys.set_api_key(body.provider, body.api_key.strip())
+    return {"provider": body.provider, "action": "saved"}
+
+
+@app.delete("/api/settings/keys/{provider}")
+def delete_api_key(provider: Literal["gemini", "claude"]):
+    deleted = api_keys.delete_api_key(provider)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"저장된 {provider} 키가 없습니다")
+    return {"provider": provider, "action": "deleted"}
+
+
 # 연구 워크플로우(⑥) 세션 목록 — 챗 사이드바와 같은 패턴(thread_id는 프론트가 새 연구를
 # 시작할 때 uuid4()로 발급, chat.py의 st.session_state.thread_id 발급 방식 그대로).
 # /research/sessions처럼 리터럴 경로를 /research/{thread_id} 계열보다 먼저 선언해야
 # 한다 — Starlette은 등록 순서대로 매칭하므로, {thread_id}가 먼저 있으면 "sessions"가
 # 그 파라미터로 먹혀버린다.
-@app.get("/research/sessions")
+@app.get("/api/research/sessions")
 def list_research_sessions():
     return {"sessions": research_sessions.list_sessions()}
 
@@ -397,7 +453,7 @@ class ResearchSessionTitleUpdate(BaseModel):
     title: str
 
 
-@app.post("/research/sessions/{thread_id}/title")
+@app.post("/api/research/sessions/{thread_id}/title")
 def rename_research_session(thread_id: str, body: ResearchSessionTitleUpdate):
     updated = research_sessions.update_title(thread_id, body.title)
     if not updated:
@@ -407,7 +463,7 @@ def rename_research_session(thread_id: str, body: ResearchSessionTitleUpdate):
 
 # 세션 목록에서만 지운다 — 실제 체크포인트는 안 지운다(research_sessions.delete_session()
 # docstring, RoadMap §4 참고).
-@app.delete("/research/sessions/{thread_id}")
+@app.delete("/api/research/sessions/{thread_id}")
 def close_research_session(thread_id: str):
     deleted = research_sessions.delete_session(thread_id)
     if not deleted:
@@ -437,7 +493,7 @@ class ResearchAdvanceRequest(BaseModel):
     keep_reference_paper_ids: list[str] = Field(default_factory=list)
 
 
-@app.post("/research/{thread_id}/advance")
+@app.post("/api/research/{thread_id}/advance")
 async def advance_research(request: Request, thread_id: str, body: ResearchAdvanceRequest):
     session = research_sessions.get_session(thread_id)
     if session is None:
@@ -504,7 +560,7 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
 # 페이지 새로고침 시 재실행 없이 현재 값만 보는 조회 — GET /interests/draft가
 # aget_state()로 조회만 하는 것과 같은 패턴. 체크포인트가 아예 없으면(닫힌 적 없는데도
 # 한 번도 advance가 안 된 thread_id) snapshot.values가 비어 404.
-@app.get("/research/{thread_id}")
+@app.get("/api/research/{thread_id}")
 async def get_research_state(request: Request, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.research_graph.aget_state(config)
@@ -526,7 +582,7 @@ async def get_research_state(request: Request, thread_id: str):
 # next==()로 다시 잡히므로(복원 흐름이 aupdate_state 직후 꼭 ainvoke를 부르는 것과 같은
 # 이유) 제외해도 정보 손실이 없다.
 # 새로 진행 순(오래된 것부터)으로 뒤집어 반환 — 화면이 타임라인처럼 왼쪽부터 그리기 편하도록.
-@app.get("/research/{thread_id}/history")
+@app.get("/api/research/{thread_id}/history")
 async def get_research_history(request: Request, thread_id: str):
     snapshots = [
         s async for s in request.app.state.research_graph.aget_state_history(
@@ -573,7 +629,7 @@ class ResearchNoteUpdate(BaseModel):
     note: str
 
 
-@app.post("/research/{thread_id}/notes/{checkpoint_id}")
+@app.post("/api/research/{thread_id}/notes/{checkpoint_id}")
 async def save_research_note(thread_id: str, checkpoint_id: str, body: ResearchNoteUpdate):
     research_notes.set_note(checkpoint_id, thread_id, body.note)
     return {"checkpoint_id": checkpoint_id, "note": body.note}
@@ -593,7 +649,7 @@ class ResearchDraftUpdate(BaseModel):
     discussion: str | None = None
 
 
-@app.post("/research/{thread_id}/draft")
+@app.post("/api/research/{thread_id}/draft")
 async def update_research_draft(request: Request, thread_id: str, body: ResearchDraftUpdate):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.research_graph.aget_state(config)
@@ -617,7 +673,7 @@ async def update_research_draft(request: Request, thread_id: str, body: Research
 # 결과만 tip에 얹는다 — 가설·설계 산출물 자체는 안 건드리고 참고문헌 검색(검색어 추출+
 # 스크리닝)만 다시 돈다. 노드 함수가 동기(LLM 호출 포함)라 /interests/draft와 같은
 # 이유로 asyncio.to_thread로 감싼다.
-@app.post("/research/{thread_id}/references/retry")
+@app.post("/api/research/{thread_id}/references/retry")
 async def retry_research_references(request: Request, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = await request.app.state.research_graph.aget_state(config)
@@ -635,3 +691,29 @@ async def retry_research_references(request: Request, thread_id: str):
 
     new_snapshot = await request.app.state.research_graph.aget_state(config)
     return new_snapshot.values
+
+
+# 설치판 정적 파일 서빙(08-05, Docker 패키징 착수 — RoadMap "설치 앱의 UI 실행 방식"
+# 설계 노트 참고) — 프론트 빌드 산출물을 백엔드가 같은 포트(8000)로 같이 서빙해서
+# BACKEND_URL이 빈 문자열(같은 오리진)로 동작하게 한다. 개발 환경(Vite 5173 + 백엔드
+# 8000, 서로 다른 포트)에서는 frontend-react/dist가 최신이 아니거나 없을 수 있어
+# is_dir()로 감싸 안전하게 건너뛴다 — 이 블록이 없어도 개발 환경은 그대로 동작한다.
+# **반드시 파일 맨 끝에 둔다**: 아래 catch-all 라우트(`/{full_path:path}`)가 위의 모든
+# API 라우트보다 먼저 등록되면 그것들을 전부 가려버린다(Starlette은 라우트를 등록
+# 순서대로 매칭). CORS 미들웨어는 그대로 둔다 — 같은 오리진 요청엔 CORS 헤더가
+# 아무 영향이 없어(브라우저가 same-origin 요청엔 CORS 검사 자체를 안 함) 프로덕션에서
+# 무해하고, 개발 환경(서로 다른 포트)은 여전히 CORS가 필요하므로 제거하면 그쪽이 깨진다.
+FRONTEND_DIST = Path(__file__).parent / "frontend-react" / "dist"
+
+if FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # 정적 파일이 직접 요청되면(예: /favicon.ico, /manifest.json) 그 파일을 그대로
+        # 돌려주고, 그 외(React Router가 처리할 경로, 예: /research)는 index.html을 돌려줘
+        # 클라이언트 라우팅이 이어받게 한다 — 새로고침·직접 URL 접근 시 필요한 SPA 폴백.
+        candidate = FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")

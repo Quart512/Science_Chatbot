@@ -18,7 +18,6 @@
 2. **인스턴스 생성**: EC2 콘솔 → 인스턴스 시작 → Ubuntu LTS(최신보다 한 버전 이전 LTS 추천 — 생태계 호환성) → 인스턴스 타입 → 키페어 생성(`.pem`, 안전한 곳에 보관, 재발급 불가) → 네트워크 설정에서 보안 그룹 생성:
    - SSH(22): 소스를 "내 IP"로 제한
    - 앱 포트(8000): 사용자 지정 TCP, 소스는 필요에 따라 "내 IP" 또는 "Anywhere"(공개 서비스라면). **HTTP는 평문 프로토콜**이라(10주차 WireShark 캡처로 직접 확인) 공인망 노출 시 최소한 소스 제한 권장, 여유 되면 HTTPS
-   - 프론트 포트(8501, Streamlit UI): CI/CD가 프론트도 자동 배포하므로(2.6) 같이 열어두는 게 편함. 보통 본인만 쓰므로 "내 IP"로 제한 권장
    - 스토리지: 기본 8GB는 부족할 수 있음(Docker 방식은 이미지만 8GB대) — 20GB 이상 권장(30GB까지 프리티어 무료)
 3. **SSH 접속**:
    ```bash
@@ -141,7 +140,7 @@ docker compose --profile llama up -d
 ```
 
 - `llama-server`까지 띄울 경우 EC2 RAM 여유를 반드시 확인 — 프리티어(1GB)는 bge-m3 임베딩 로드만으로도 빠듯할 수 있다.
-- 프론트(Streamlit)까지 같이 띄우는 법은 2.6 참고 — CI/CD를 쓰면 아래 과정 전체(2.4·2.5)가 git push 한 번으로 자동화된다.
+- CI/CD를 쓰면 아래 과정 전체(2.4·2.5)가 git push 한 번으로 자동화된다.
 - 접속 확인: `curl http://<EC2_퍼블릭IP>:8000/docs`
 
 ### 2.5 갱신 (코드 수정 후 재배포)
@@ -160,49 +159,7 @@ docker compose up -d   # 새 이미지로 컨테이너 재생성
 
 ---
 
-### 2.6 프론트엔드(Streamlit) — CI/CD로 자동 배포
-
-`deploy.yml`이 `main` push마다 백엔드와 함께 프론트도 자동으로 처리한다: 프론트 이미지 빌드+push, `docker-compose.yml`을 EC2로 전송(`appleboy/scp-action` — git의 최신 파일을 그대로 옮기므로 `frontend` 서비스 정의가 항상 EC2에도 반영됨), `docker compose --profile frontend pull` + `up -d`까지 한 번에 실행. **로컬에서 따로 build/push/scp 할 필요 없음** — git push만 하면 됨.
-
-단, CI가 못 해주는 수동 준비물이 하나 있다: 외부에서 `8501`로 접속하려면 EC2 보안 그룹에 **8501** 포트를 열어야 함(0번 참고 — 인스턴스 만들 때 미리 열어뒀다면 여기서 더 할 일 없음).
-
-접속 확인: `http://<EC2_퍼블릭IP>:8501`
-
-그만 쓰고 싶으면 EC2에서 직접:
-```bash
-docker compose --profile frontend stop frontend   # 멈추기만
-docker compose --profile frontend rm -s frontend  # 컨테이너까지 제거
-```
-(다음 git push 때 `deploy.yml`이 다시 `up -d`로 살려낸다 — 완전히 끄려면 `docker-compose.yml`에서 `frontend` 서비스 자체를 빼거나 CI 스텝을 주석 처리해야 함.)
-
-#### 2.6.1 (서브) CI 없이 수동으로 설치
-
-위 자동 흐름을 안 쓰고 싶거나(CI 설정 전, 혹은 그때그때 직접 확인하고 싶을 때) 직접 하는 절차:
-
-```bash
-# 로컬 — 프론트 이미지 빌드 & push
-docker compose build frontend
-docker push <Docker_Hub_계정>/science-chatbot-frontend:latest
-
-# 로컬 — EC2의 docker-compose.yml을 최신으로 갱신 (frontend 서비스 정의 반영)
-scp -i ~/경로/키페어이름.pem docker-compose.yml ubuntu@<EC2_퍼블릭IP>:~/science-chatbot/
-```
-```bash
-# EC2 안에서
-cd ~/science-chatbot
-docker compose --profile frontend pull   # frontend + science-chatbot 이미지 pull (llama는 안 건드림)
-docker compose --profile frontend up -d
-```
-
-이후 프론트만 갱신할 때도 같은 흐름(로컬 빌드+push → EC2 pull+up) 반복 — CI를 안 쓰는 한 자동 갱신은 없음.
-
-#### 2.6.2 (서브) 프론트 없이 설치하려면
-
-**CI 없이 수동으로 할 때(2.1~2.5)**: `--profile frontend`를 아예 안 붙이면 된다. `docker compose pull` / `docker compose up -d`처럼 profile 없이 실행하면 `frontend`는 opt-in 서비스라 애초에 대상에 안 잡힌다 — 별도 설정 필요 없음.
-
-**CI(`deploy.yml`)를 쓸 때는 주의**: 지금 `deploy.yml`은 프론트 빌드+push+배포가 기본 흐름에 포함돼 있어서, git push할 때마다 자동으로 프론트도 같이 설치/갱신된다. 완전히 배제하려면 `.github/workflows/deploy.yml`에서 "프론트 이미지 빌드 + push" 스텝을 지우고, "EC2 배포" 스텝의 스크립트에서 `--profile frontend`를 뺀 `docker compose pull` / `up -d`로 되돌려야 한다 — 그냥 EC2에서 컨테이너만 내리면 다음 push 때 도로 살아난다(위 2.6 마지막 문단 참고).
-
-### 2.7 인스턴스 중지 → 재시작 (비용 절약)
+### 2.6 인스턴스 중지 → 재시작 (비용 절약)
 
 ```bash
 # 콘솔 또는 CLI로 인스턴스 중지, 필요할 때 다시 시작
@@ -210,18 +167,18 @@ docker compose --profile frontend up -d
 
 재시작 후 체크리스트:
 1. **퍼블릭 IP가 바뀐다** (재부팅과 다름) — EC2 콘솔에서 새 IP 확인 후 SSH·접속 주소 갱신
-2. **컨테이너는 자동으로 안 켜짐** — 재접속 후 `cd ~/science-chatbot && docker compose --profile frontend up -d`(프론트 안 쓰면 `--profile frontend` 생략) 다시 실행. CI/CD를 쓴다면 다음 git push 때 자동으로도 켜지지만, 그 전까지는 꺼진 채로 있음
+2. **컨테이너는 자동으로 안 켜짐** — 재접속 후 `cd ~/science-chatbot && docker compose up -d` 다시 실행. CI/CD를 쓴다면 다음 git push 때 자동으로도 켜지지만, 그 전까지는 꺼진 채로 있음
 3. **스왑은 그대로 유지됨** — `/etc/fstab`에 등록해뒀으므로 재설정 불필요
 4. **이미지·`.env`·`docker-compose.yml`은 EBS에 남아있음** — 재전송 불필요, RAM 상주 상태만 초기화됨
 5. **GitHub Actions CI/CD를 쓰는 경우, `EC2_HOST` Secret도 새 IP로 갱신해야 함** — 저장소 Settings → Secrets and variables → Actions → `EC2_HOST` → Update. 안 하면 다음 push 시 워크플로우의 SSH 배포 단계가 예전 IP로 접속을 시도하다 실패함. (근본 해결책은 Elastic IP로 고정하는 것 — 자동화 파이프라인이 있다면 이 시점부터 Elastic IP의 실익이 커짐)
 
 ## 3. CI/CD(GitHub Actions) 사용 시 — 로컬 vs EC2, 뭐가 자동으로 바뀌나
 
-`deploy.yml`이 `main` push마다 하는 일: GitHub 러너에서 테스트(pytest 게이트) → 코드 체크아웃 → 이미지 빌드(science-chatbot + frontend 둘 다) → Docker Hub push → `docker-compose.yml`을 EC2로 scp 전송 → EC2에 SSH 접속해 `docker compose --profile frontend pull` + `up -d` + 옛 이미지 정리(`docker image prune -f`). **로컬(맥)은 이 흐름에 전혀 관여하지 않는다** — GitHub 러너가 로컬 파일을 읽는 게 아니라 push된 git 커밋을 자기 서버에서 체크아웃해 새로 빌드하는 것이고, 결과물도 로컬로 내려오지 않는다.
+`deploy.yml`이 `main` push마다 하는 일: GitHub 러너에서 테스트(pytest 게이트) → 코드 체크아웃 → 이미지 빌드(science-chatbot) → Docker Hub push → `docker-compose.yml`을 EC2로 scp 전송 → EC2에 SSH 접속해 `docker compose pull` + `up -d` + 옛 이미지 정리(`docker image prune -f`). **로컬(맥)은 이 흐름에 전혀 관여하지 않는다** — GitHub 러너가 로컬 파일을 읽는 게 아니라 push된 git 커밋을 자기 서버에서 체크아웃해 새로 빌드하는 것이고, 결과물도 로컬로 내려오지 않는다.
 
 | | git push 시 자동 갱신? | 최신화하려면 |
 |---|---|---|
-| EC2 (실서비스) | O — `deploy.yml`이 백엔드+프론트 이미지 갱신, `docker-compose.yml` 동기화, 재시작, 옛 이미지 정리까지 자동으로 | 아무것도 안 해도 됨 |
+| EC2 (실서비스) | O — `deploy.yml`이 이미지 갱신, `docker-compose.yml` 동기화, 재시작, 옛 이미지 정리까지 자동으로 | 아무것도 안 해도 됨 |
 | 로컬 (맥) | X | 레지스트리의 최신 배포 버전을 그대로 보고 싶으면 `docker compose pull`, 방금 고친 로컬 코드를 테스트하고 싶으면 `docker compose up --build` |
 
 로컬은 보통 매번 맞출 필요 없다 — 로컬의 역할은 "배포된 이미지를 그대로 쓰는 것"이 아니라 "소스 코드로 직접 빌드해서 테스트하는 것"이기 때문이다. `pull`과 `--build`의 차이, `pull`/`up -d`가 이미지·컨테이너·볼륨을 각각 어떻게 건드리는지, 옛 이미지가 왜 자동으로 안 지워지는지 같은 원리는 [README_11.md §9](README_11.md#9-이미지컨테이너-갱신-메커니즘)에 따로 정리했다.

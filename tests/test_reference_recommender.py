@@ -101,7 +101,10 @@ def test_recommend_references_owned_and_external_share_the_same_keys(monkeypatch
 
     assert len(results) == 2
     assert {frozenset(r) for r in results} == {frozenset({"paper_id", "title", "source", "reasoning"})}
-    assert results[0]["reasoning"] == ""  # 보유 논문은 스크리닝을 안 거쳐 근거가 비어 있음
+    # 보유 논문은 스크리닝을 안 거쳐 근거 문장이 없는 대신, 08-05부터 벡터 검색 거리를
+    # reasoning에 채운다(_FakeVectorstore 기본 score는 0.0부터) — 빈 문자열이 아니라
+    # 이 값이 실제로 들어있는지 확인.
+    assert results[0]["reasoning"] == reference_recommender.OWNED_MATCH_REASONING.format(score=0.0)
 
 
 def test_recommend_references_searches_owned_chunks_deeper_than_max_results(monkeypatch):

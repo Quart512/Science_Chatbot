@@ -13,12 +13,15 @@ export function Layout() {
   return (
     <div className="app-shell">
       <nav className="app-nav">
-        <div className="app-nav-title">🔬 Science Chatbot</div>
+        <div className="app-nav-title">🔬 AIsaac</div>
 
         <div className="app-nav-group">
           <div className="app-nav-group-title">메인</div>
           <NavLink to="/" end className="app-nav-link">
             홈
+          </NavLink>
+          <NavLink to="/settings" className="app-nav-link">
+            ⚙️ 설정
           </NavLink>
         </div>
 

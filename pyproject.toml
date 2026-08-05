@@ -14,7 +14,6 @@ dependencies = [
     "langchain-chroma>=1.1.0",
     "langchain-community>=0.4.2",
     "langchain-google-genai>=4.2.6",
-    "langchain-huggingface>=1.2.2",
     "langchain-openai>=1.3.5",
     "langchain-text-splitters>=1.1.2",
     "langgraph>=1.2.6",
@@ -23,23 +22,10 @@ dependencies = [
     "pymupdf>=1.28.0",
     "pymupdf4llm>=1.28.0",
     "python-dotenv>=1.2.2",
-    "sentence-transformers>=5.6.0",
-    "torch>=2.0",
     "uvicorn>=0.49.0",
     "wikipedia>=1.4.0",
 ]
 
-# sentence-transformers가 torch를 끌어올 때, 리눅스 대상(Docker 빌드/EC2)에서는
-# 기본적으로 GPU(CUDA) 지원 wheel이 선택돼 nvidia-cublas 등 안 쓰는 패키지가 2GB+ 딸려옴.
-# torch를 PyTorch 공식 CPU 전용 인덱스로 명시 고정 → uv sync가 어디서 실행되든
-# (Docker 빌드, EC2 native uv sync 둘 다 이 파일을 읽으므로) 동일하게 CPU wheel만 설치됨.
-[tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 # 운영 코드가 아니라 테스트할 때만 필요 — uv sync는 기본적으로 이 그룹도 같이 설치하지만
 # (배포용) `uv sync --no-dev`로 제외 가능

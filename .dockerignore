@@ -6,11 +6,19 @@ evaluation/results/
 .github/
 tests/
 .pytest_cache/
-frontend/
+
+# 08-05, Docker 패키징 — frontend-react/는 Dockerfile의 별도 frontend-build 스테이지가
+# 컨테이너 안에서 npm ci로 새로 설치·빌드한다(RoadMap "설치 앱의 UI 실행 방식" 참고).
+# node_modules(89MB)·호스트에 남아있을 수 있는 낡은 dist를 빌드 컨텍스트에서 아예
+# 빼서 업로드 낭비와 혼동을 막는다 — frontend-react/ 자체는 제외하지 않는다(그러면
+# frontend-build 스테이지가 COPY할 소스 자체가 사라진다).
+frontend-react/node_modules/
+frontend-react/dist/
 
 # 런타임에 바인드 마운트로 붙는 것들 — 이미지에 굽지 않는다 (docker-compose.yml 참고)
 chroma_db/
 data/
+library/
 models/
 *.gguf
 

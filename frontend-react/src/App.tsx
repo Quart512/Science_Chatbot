@@ -6,6 +6,7 @@ import { Interests } from './pages/Interests'
 import { Equipment } from './pages/Equipment'
 import { Notes } from './pages/Notes'
 import { Research } from './pages/Research'
+import { Settings } from './pages/Settings'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
         <Route path="/interests" element={<Interests />} />
         <Route path="/equipment" element={<Equipment />} />
         <Route path="/notes" element={<Notes />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   )

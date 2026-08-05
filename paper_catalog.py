@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS papers (
     journal_ref TEXT,
     citation_count INTEGER,
     filename TEXT NOT NULL DEFAULT '',
+    file_path TEXT,
+    content_sha256 TEXT,
+    analysis_status TEXT NOT NULL DEFAULT 'untracked',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -55,10 +58,22 @@ CREATE TABLE IF NOT EXISTS interest_paper (
 
 # CREATE TABLE IF NOT EXISTS는 테이블이 이미 있으면 새로 추가한 컬럼(filename)을 기존
 # DB에 안 만든다 — equipment.py가 precautions 컬럼에서 실제로 겪은 문제(§7.4 참고)와
-# 같은 함정이라 같은 패턴으로 막는다. 배포 환경(EC2 바인드 마운트)의 기존 papers
+# 같은 패턴이라 같은 방식으로 막는다. 배포 환경(EC2 바인드 마운트)의 기존 papers
 # 테이블에 이 코드를 올리면 filename 없이 INSERT하다 "no such column"으로 터진다.
+#
+# file_path/content_sha256/analysis_status(08-05, "논문 파일 경로 추적 재설계" 착수
+# ①) — RoadMap 설계 노트 참고. file_path는 library/ 루트 기준 **상대경로**로 둔다(절대
+# 경로면 컨테이너 마운트 지점이 바뀌거나 portable 번들로 옮겨질 때 깨진다 — 설계 노트
+# 항목 A). content_sha256은 DOI/arXiv 논문의 paper_id가 해시가 아니라(normalize_paper_id:
+# DOI>arXiv>해시 우선순위) 그 경우도 파일↔레코드를 매칭할 별도 컬럼이 필요해서 둔다
+# (설계 노트 항목 C — "경로는 변할 수 있는 속성, 해시가 신원"). analysis_status는 등록
+# (트래킹)과 분석(파싱·색인)을 분리하는 다음 단계(설계 노트 항목 G)를 위해 미리 컬럼만
+# 마련 — 지금은 아무 코드도 이 값을 안 채운다.
 _EXPECTED_COLUMNS = {
     "filename": "TEXT NOT NULL DEFAULT ''",
+    "file_path": "TEXT",
+    "content_sha256": "TEXT",
+    "analysis_status": "TEXT NOT NULL DEFAULT 'untracked'",
 }
 
 

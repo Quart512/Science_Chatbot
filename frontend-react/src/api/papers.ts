@@ -45,7 +45,7 @@ export async function registerPaper(file: File, doi?: string, arxivId?: string):
   if (doi) form.append('doi', doi)
   if (arxivId) form.append('arxiv_id', arxivId)
 
-  const res = await fetch(`${BACKEND_URL}/papers`, { method: 'POST', body: form })
+  const res = await fetch(`${BACKEND_URL}/api/papers`, { method: 'POST', body: form })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new ApiError(res.status, body?.detail ?? res.statusText)
