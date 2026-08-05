@@ -279,6 +279,18 @@ def mark_owned(
     filename과 같은 방식으로 UPDATE·INSERT 양쪽에 반영해, 이미 recommended로 존재하던
     논문을 library/에서 트래킹에 추가해도 경로가 누락되지 않게 한다.
 
+    title/authors/year는 UPDATE 분기에서 **빈 문자열이면 기존 값을 유지**한다(COALESCE+
+    NULLIF) — recommended 승격 시나리오(추천 검색이 이미 넣어둔 title을 owned 전환이
+    지우면 안 됨, test_mark_owned_transitions_existing_recommended_to_owned)를 지키기
+    위해서다. **이 조건부 UPDATE가 실제로 필요해진 계기(08-05 버그 발견·수정)**: ④ 파싱
+    분리 이후 track_in_background()가 파싱 시작 전에 title 없이 먼저 이 함수를 불러 행을
+    만들고, 파싱이 끝난 뒤 register_paper()가 실제 title로 다시 부르는 2단계 호출이
+    표준 경로가 됐다 — 이때 두 번째 호출은 항상 "행이 이미 존재하는" UPDATE 분기를 타는데,
+    예전 UPDATE문은 title/authors/year 컬럼 자체를 SET 절에 안 넣고 있었다. 그래서
+    register_paper()가 실제 제목(arXiv 조회분 포함)을 넘겨도 조용히 저장되지 않았다 —
+    무조건 덮어쓰는 방식(filename처럼) 대신 조건부로 고친 이유는 recommended 승격
+    시나리오를 그대로 보존하기 위함.
+
     analysis_status(08-05, ④ 파싱 분리)의 기본값이 "done"인 이유: 이 함수의 기존
     호출부(register_paper()가 파싱·청킹·임베딩을 전부 마친 뒤 호출)는 호출 시점에
     분석이 이미 끝나 있으므로 인자를 안 줘도 자동으로 done이 찍힌다. ④가 새로 추가한
@@ -291,9 +303,13 @@ def mark_owned(
         now = _now()
         if conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone():
             conn.execute(
-                "UPDATE papers SET status = 'owned', filename = ?, file_path = ?, content_sha256 = ?, "
+                "UPDATE papers SET status = 'owned', "
+                "title = COALESCE(NULLIF(?, ''), title), "
+                "authors = COALESCE(NULLIF(?, ''), authors), "
+                "year = COALESCE(NULLIF(?, ''), year), "
+                "filename = ?, file_path = ?, content_sha256 = ?, "
                 "analysis_status = ?, updated_at = ? WHERE paper_id = ?",
-                (filename, file_path, content_sha256, analysis_status, now, paper_id),
+                (title, authors, year, filename, file_path, content_sha256, analysis_status, now, paper_id),
             )
         else:
             conn.execute(

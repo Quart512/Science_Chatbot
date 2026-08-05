@@ -399,12 +399,13 @@ def test_register_paper_endpoint_writes_to_library_and_forwards_to_track(monkeyp
     monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
     captured = {}
 
-    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, **kw):
+    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, title=None, **kw):
         captured["pdf_path"] = pdf_path
         captured["file_path"] = file_path
         captured["filename"] = filename
         captured["doi"] = doi
         captured["arxiv_id"] = arxiv_id
+        captured["title"] = title
         with open(pdf_path, "rb") as f:
             captured["bytes_on_disk"] = f.read()
         return {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
@@ -415,13 +416,14 @@ def test_register_paper_endpoint_writes_to_library_and_forwards_to_track(monkeyp
         resp = client.post(
             "/api/papers",
             files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")},
-            data={"arxiv_id": "2401.12345"},
+            data={"arxiv_id": "2401.12345", "title": "비-arXiv 논문용 수동 제목"},
         )
 
     assert resp.status_code == 200
     assert resp.json() == {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
     assert captured["arxiv_id"] == "2401.12345"
     assert captured["doi"] is None
+    assert captured["title"] == "비-arXiv 논문용 수동 제목"
     assert captured["filename"] == "paper.pdf"
     assert captured["file_path"] == "paper.pdf"  # library/ 루트 기준 상대경로(충돌 없음)
     assert captured["bytes_on_disk"] == b"%PDF-1.4 dummy"  # 실제로 library/에 써짐

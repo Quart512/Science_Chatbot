@@ -446,7 +446,7 @@ def ensure_summary_in_background(paper_id: str, *, model: str = BACKGROUND_SUMMA
 
 def track_in_background(
     pdf_path: str, *, file_path: str, filename: str,
-    doi: str | None = None, arxiv_id: str | None = None, vectorstore=None,
+    doi: str | None = None, arxiv_id: str | None = None, title: str | None = None, vectorstore=None,
 ) -> dict:
     """②-B "트래킹에 추가"·⑤ 업로드(08-05)가 부르는 진입점(④ 파싱 분리 — RoadMap
     설계 노트 항목 G). 무거운 파싱·청킹·임베딩(register_paper() 전체)을 동기로 안
@@ -459,7 +459,12 @@ def track_in_background(
     있으면 paper_id가 그걸 우선 쓰고(normalize_paper_id: DOI>arXiv>해시), 없으면
     파일 해시 기반이다. 반환: {"paper_id", "analysis_status"} — 이미 pending/analyzing
     중이면 새로 스폰하지 않고 그 상태를 그대로 돌려준다(같은 파일을 중복 클릭해도 안전).
-    """
+
+    title(08-05, mark_owned() title 버그 수정 후속)은 arxiv_id가 없는(자동 조회가 안
+    걸리는) 논문에 제목을 넣을 유일한 방법이다. 아래 첫 mark_owned() 호출에 그대로
+    넘겨 pending 상태에서도 곧바로 화면에 보이게 하고, register_paper()에는
+    bibliographic로 넘겨 "명시값이 arXiv 조회보다 우선" 규칙을 그대로 태운다 — arxiv_id를
+    같이 줬어도 사용자가 직접 적은 제목이 fetch_by_id() 결과를 덮어쓴다."""
     with open(pdf_path, "rb") as f:
         file_bytes = f.read()
     content_sha256 = hashlib.sha256(file_bytes).hexdigest()
@@ -470,7 +475,7 @@ def track_in_background(
         return {"paper_id": paper_id, "analysis_status": existing["analysis_status"]}
 
     paper_catalog.mark_owned(
-        paper_id, doi=doi, arxiv_id=arxiv_id, filename=filename, file_path=file_path,
+        paper_id, doi=doi, arxiv_id=arxiv_id, title=title or "", filename=filename, file_path=file_path,
         content_sha256=content_sha256, analysis_status="pending",
     )
 
@@ -480,6 +485,7 @@ def track_in_background(
             result = register_paper(
                 pdf_path, doi=doi, arxiv_id=arxiv_id, filename=filename,
                 file_path=file_path, vectorstore=vectorstore,
+                bibliographic={"title": title} if title else None,
             )
             if not result["text_extractable"]:
                 # 스캔본 — register_paper()가 mark_owned()를 안 타서 "done"이 자동으로

@@ -46,11 +46,14 @@ export function listPapers(status?: string) {
 
 // multipart/form-data라 apiFetch(JSON 전용)를 못 쓴다 — Content-Type을 직접 안 정해야
 // 브라우저가 boundary를 붙여서 알아서 채운다.
-export async function registerPaper(file: File, doi?: string, arxivId?: string): Promise<TrackResult> {
+// title(08-05) — arxiv_id가 없는 논문은 자동 조회가 안 걸려 제목을 넣을 방법이 없었다.
+// arxiv_id를 같이 줘도 이 값이 우선한다(백엔드 "명시값 우선" 규칙, main.py 주석 참고).
+export async function registerPaper(file: File, doi?: string, arxivId?: string, title?: string): Promise<TrackResult> {
   const form = new FormData()
   form.append('file', file)
   if (doi) form.append('doi', doi)
   if (arxivId) form.append('arxiv_id', arxivId)
+  if (title) form.append('title', title)
 
   const res = await fetch(`${BACKEND_URL}/api/papers`, { method: 'POST', body: form })
   if (!res.ok) {

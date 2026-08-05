@@ -286,11 +286,17 @@ def list_interest_papers(interest_id: int, only_relevant: bool = False):
 # 바이트를 library/ 안에 그대로 남긴다. 이름이 겹치면 unique_library_filename()이
 # _2, _3...을 붙인다. 매직바이트(%PDF-)만 즉시 확인하고 나머지 검증(파싱 가능 여부)은
 # track_in_background()의 백그라운드 스레드로 넘긴다 — ②-B/④와 동일한 경계.
+# title(08-05, mark_owned() title 버그 수정 후속) — arxiv_id가 없는 논문은 자동 조회
+# (fetch_by_id())가 안 걸려 제목을 넣을 방법이 API에 전혀 없었다(RoadMap 예정 표
+# "논문 등록 — 비-arXiv 논문은 제목을 수동으로 넣을 방법이 없음" 항목). 선택 필드로
+# 추가 — arxiv_id가 있어도 넘기면 register_paper()의 "명시값 우선" 규칙에 따라
+# arXiv 조회 결과보다 우선한다(register_paper() docstring 참고).
 @app.post("/api/papers")
 def register_paper_endpoint(
     file: UploadFile = File(...),
     doi: str | None = Form(None),
     arxiv_id: str | None = Form(None),
+    title: str | None = Form(None),
 ):
     file_bytes = file.file.read()
     if not file_bytes.startswith(b"%PDF-"):
@@ -303,7 +309,8 @@ def register_paper_endpoint(
         f.write(file_bytes)
 
     return paper_ingest.track_in_background(
-        dest_abs_path, file_path=dest_rel_path, filename=file.filename or "", doi=doi, arxiv_id=arxiv_id
+        dest_abs_path, file_path=dest_rel_path, filename=file.filename or "",
+        doi=doi, arxiv_id=arxiv_id, title=title,
     )
 
 

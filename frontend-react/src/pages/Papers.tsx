@@ -13,6 +13,7 @@ export function Papers() {
   const [file, setFile] = useState<File | null>(null)
   const [doi, setDoi] = useState('')
   const [arxivId, setArxivId] = useState('')
+  const [title, setTitle] = useState('')
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['papers', 'owned'],
@@ -30,12 +31,13 @@ export function Papers() {
   const registerMutation = useMutation({
     mutationFn: () => {
       if (!file) throw new Error('PDF 파일을 선택해주세요.')
-      return registerPaper(file, doi || undefined, arxivId || undefined)
+      return registerPaper(file, doi || undefined, arxivId || undefined, title || undefined)
     },
     onSuccess: () => {
       setFile(null)
       setDoi('')
       setArxivId('')
+      setTitle('')
       queryClient.invalidateQueries({ queryKey: ['papers'] })
       // ⑤(08-05)부터 업로드도 library/에 파일을 남기므로, trackMutation과 같은 이유로
       // library/files도 같이 무효화해야 "library/ 폴더" 섹션이 방금 올린 파일을
@@ -100,6 +102,14 @@ export function Papers() {
           <input placeholder="DOI (선택)" value={doi} onChange={(e) => setDoi(e.target.value)} />
           <input placeholder="arXiv id (선택)" value={arxivId} onChange={(e) => setArxivId(e.target.value)} />
         </div>
+        {/* 08-05 — arxiv_id 없이는 자동 조회가 안 걸려 제목 넣을 방법이 없던 문제
+            (RoadMap 예정 표 "비-arXiv 논문 제목 입력" 항목). DOI/arXiv id를 같이 적어도
+            이 값이 우선한다(백엔드 "명시값 우선" 규칙). */}
+        <input
+          placeholder="제목 (선택 — DOI/arXiv로 자동으로 안 채워질 때 직접 입력)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
         <button type="submit" disabled={registerMutation.isPending}>
           {registerMutation.isPending ? '등록 중...' : '등록'}
         </button>

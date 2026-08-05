@@ -888,6 +888,59 @@ def test_track_in_background_creates_pending_row_and_returns_immediately(monkeyp
     assert kwargs["filename"] == "paper.pdf"
 
 
+def test_track_in_background_passes_title_to_initial_mark_owned(monkeypatch, tmp_path):
+    # 08-05, 비-arXiv 논문 제목 수동 입력 — pending 행을 만드는 첫 mark_owned() 호출에도
+    # title이 그대로 들어가야 분석이 끝나기 전에도 화면에 사용자가 적은 제목이 보인다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: None)
+
+    paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf", title="사용자가 직접 적은 제목"
+    )
+
+    assert calls[0]["title"] == "사용자가 직접 적은 제목"
+
+
+def test_track_in_background_carries_title_into_register_paper_bibliographic(monkeypatch, tmp_path):
+    # register_paper()가 arxiv_id로 자동 조회를 해도 사용자가 명시한 title이 우선해야
+    # 한다("명시값 우선" — register_paper() docstring과 같은 규칙) — bibliographic으로
+    # 넘겨야 그 규칙을 그대로 태울 수 있다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "set_analysis_status", lambda paper_id, status, **kw: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(
+        paper_ingest, "fetch_by_id",
+        lambda arxiv_id: {"title": "arxiv에서 가져온 제목", "abstract": "arxiv 초록"},
+    )
+
+    captured = {}
+    real_register_paper = paper_ingest.register_paper
+
+    def _spy_register_paper(*args, **kwargs):
+        captured.update(kwargs)
+        return real_register_paper(*args, **kwargs)
+    monkeypatch.setattr(paper_ingest, "register_paper", _spy_register_paper)
+
+    paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf",
+        arxiv_id="2401.1", title="사용자가 직접 적은 제목", vectorstore=FakeVectorstore(),
+    )
+
+    assert captured["bibliographic"] == {"title": "사용자가 직접 적은 제목"}
+
+
 def test_track_in_background_skips_spawn_when_already_in_progress(monkeypatch, tmp_path):
     pdf_path = tmp_path / "paper.pdf"
     pdf_path.write_bytes(b"dummy content")

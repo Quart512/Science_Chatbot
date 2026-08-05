@@ -101,6 +101,22 @@ def test_mark_owned_transitions_existing_recommended_to_owned(conn):
     assert row["title"] == "추천됨"  # mark_owned가 title을 안 넘겼으면 기존 값 유지
 
 
+def test_mark_owned_backfills_title_on_second_call_without_dropping_it(conn):
+    # 08-05 버그 재현 — track_in_background()가 파싱 전에 title 없이 먼저 mark_owned()로
+    # pending 행을 만들고, 파싱이 끝난 뒤 register_paper()가 실제 title로 다시 부르는
+    # 2단계 호출 패턴. 두 번째 호출은 항상 UPDATE 분기를 타는데, 예전 UPDATE문은
+    # title/authors/year를 SET 절에 아예 안 넣어서 이 실제 title이 조용히 유실됐었다.
+    paper_catalog.mark_owned("arxiv:2401.1", arxiv_id="2401.1", analysis_status="pending", conn=conn)
+    paper_catalog.mark_owned(
+        "arxiv:2401.1", arxiv_id="2401.1", title="진짜 논문 제목", authors="김철수", year="2024", conn=conn
+    )
+
+    row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
+    assert row["title"] == "진짜 논문 제목"
+    assert row["authors"] == "김철수"
+    assert row["year"] == "2024"
+
+
 def test_mark_owned_stores_filename_on_new_row(conn):
     # title이 비어있는 논문(서지정보를 못 찾은 경우) 화면 표시용 차선책 — 08-04 사용자 요청.
     paper_catalog.mark_owned("hash:abcd", filename="내논문.pdf", conn=conn)
