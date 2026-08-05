@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import StructuredTool
 
@@ -39,8 +42,53 @@ arxiv_tool = StructuredTool.from_function(
     description="arXiv 논문 검색 — 제목/저자/연도/arxiv id/요약을 구조화해서 반환",
 )
 
+# 사용법 가이드(RoadMap "사용법 가이드 README + QA 연결" 항목) — docs/USAGE.md를 그대로
+# 정본으로 쓰고 이 tool은 "## " 제목 단위로 잘라 필요한 절만 돌려준다. 전문(약 12000자)을
+# 통째로 반환하면 run_tools의 4000자 캡(graph.py의 _invoke_tool_with_timeout)에 걸려
+# 뒤쪽 절(연구 워크플로우·문제 해결 등)이 통째로 잘려나가므로, 절 단위 발췌가 필수다.
+# 요약을 따로 하드코딩하지 않은 이유: 사용법이 바뀔 때마다 문서·요약 두 곳을 맞춰야
+# 하는 드리프트 위험을 피하고 docs/USAGE.md 하나만 정본으로 유지하기 위함.
+USAGE_GUIDE_PATH = Path(__file__).parent / "docs" / "USAGE.md"
+
+
+def _parse_usage_sections() -> dict[str, str]:
+    text = USAGE_GUIDE_PATH.read_text(encoding="utf-8")
+    parts = re.split(r"(?m)^## ", text)[1:]  # [0]은 "## " 이전의 문서 제목·인트로
+    sections = {}
+    for part in parts:
+        heading, _, body = part.partition("\n")
+        sections[heading.strip()] = body.strip()
+    return sections
+
+
+# topic은 자유 텍스트 — LLM이 "관심사", "논문 등록", "연구 워크플로우"처럼 대충 골라
+# 불러도 정확한 절 제목과 부분 일치(대소문자 무시)로 찾는다. 못 찾으면 실제 절 제목
+# 목록을 돌려줘서 LLM이 다음 라운드에 정확한 이름으로 재호출할 수 있게 한다
+# (search_wikipedia/search_arxiv의 "[결과 없음]" 패턴과 동일).
+def read_usage_guide(topic: str) -> str:
+    sections = _parse_usage_sections()
+    if topic in sections:
+        return sections[topic]
+    lowered = topic.lower()
+    for heading, body in sections.items():
+        if lowered in heading.lower() or heading.lower() in lowered:
+            return body
+    return "[찾을 수 없음] 사용 가능한 항목: " + ", ".join(sections.keys())
+
+
+usage_guide_tool = StructuredTool.from_function(
+    func=read_usage_guide,
+    name="read_usage_guide",
+    description=(
+        "AIsaac 앱 자체의 사용법(어느 화면에서 무엇을 누르면 되는가)을 물을 때만 사용 — "
+        "물리 지식 질문에는 쓰지 않는다. topic에 화면/기능 이름(예: '관심사', '논문 등록', "
+        "'연구 워크플로우', '실험도구', 'API 키')을 넣어 호출."
+    ),
+)
+
 tools_list = [DuckDuckGoSearchRun(description="일반 범용성 검색"),
         arxiv_tool,
         wikipedia_tool,
+        usage_guide_tool,
         ]
 tool_map = {tool.name: tool for tool in tools_list} #이름으로 검색할 수 있게
