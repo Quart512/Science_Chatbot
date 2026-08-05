@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteApiKey, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
+import { exportLibrary } from '../api/library'
 import './Settings.css'
 
 const PROVIDER_LABELS: Record<ApiKeyStatus['provider'], string> = {
@@ -90,6 +91,77 @@ function ApiKeyCard({ status }: { status: ApiKeyStatus }) {
   )
 }
 
+// ⑥-A(08-05) — 3단계 누적 범위(RoadMap "논문·노트 저장 방식 재설계" 참고). 뒤로 갈수록
+// include_index·include_library가 추가로 켜지는 것뿐이라 서버 계약과 그대로 맞춘다.
+type ExportScope = { includeIndex: boolean; includeLibrary: boolean }
+
+const EXPORT_OPTIONS: { key: string; label: string; hint: string; scope: ExportScope }[] = [
+  {
+    key: 'share',
+    label: '공유용',
+    hint: '논문 서지·상태·관심사·노트만 — 가볍고 저작권 안전(원본 PDF 제외)',
+    scope: { includeIndex: false, includeLibrary: false },
+  },
+  {
+    key: 'migrate',
+    label: '기기 이전용',
+    hint: '+검색 인덱스 — 새 기기에서 재파싱·재임베딩 없이 그대로 복원',
+    scope: { includeIndex: true, includeLibrary: false },
+  },
+  {
+    key: 'backup',
+    label: '완전 백업',
+    hint: '+원본 PDF까지 전부 — 본인용, 파일이 가장 큼',
+    scope: { includeIndex: true, includeLibrary: true },
+  },
+]
+
+function LibraryExportCard() {
+  const [pendingKey, setPendingKey] = useState<string | null>(null)
+  const exportMutation = useMutation({
+    mutationFn: (scope: ExportScope) => exportLibrary(scope.includeIndex, scope.includeLibrary),
+    onSuccess: (blob) => {
+      // Blob URL을 만들어 <a download>를 트리거하는 표준 패턴 — 서버가 준 바이트를
+      // 그대로 브라우저 다운로드로 넘긴다. 다운로드가 시작되면 URL은 더 안 필요해
+      // revoke해서 메모리에 안 남긴다.
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'library_export.zip'
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    onSettled: () => setPendingKey(null),
+  })
+
+  return (
+    <div className="settings-card">
+      <h3>라이브러리 내보내기</h3>
+      <p className="settings-card-meta">
+        논문·관심사·실험도구·노트를 ZIP으로 내려받습니다. 범위가 넓을수록 파일이 커집니다.
+      </p>
+      <div className="settings-card-actions">
+        {EXPORT_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            title={opt.hint}
+            onClick={() => {
+              setPendingKey(opt.key)
+              exportMutation.mutate(opt.scope)
+            }}
+            disabled={exportMutation.isPending}
+          >
+            {exportMutation.isPending && pendingKey === opt.key ? '내보내는 중...' : opt.label}
+          </button>
+        ))}
+      </div>
+      {exportMutation.isError && (
+        <p className="settings-error">내보내기 실패: {(exportMutation.error as Error).message}</p>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['api-key-status'],
@@ -108,6 +180,8 @@ export function Settings() {
       {isLoading && <p>불러오는 중...</p>}
       {isError && <p className="settings-error">조회 실패: {(error as Error).message}</p>}
       {data && data.keys.map((status) => <ApiKeyCard key={status.provider} status={status} />)}
+
+      <LibraryExportCard />
     </div>
   )
 }

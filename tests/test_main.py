@@ -6,6 +6,8 @@ TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query�
 """
 import asyncio
 import uuid
+import zipfile
+from io import BytesIO
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
@@ -23,6 +25,7 @@ import research_branches
 import research_notes
 import research_sessions
 import research_workflow
+import retrieval
 
 
 # --- GET/DELETE /query/{thread_id}/messages (08-13 메시지 트리밍 2단계, 수동 삭제) ---
@@ -568,6 +571,106 @@ def test_track_library_file_400_on_traversal(monkeypatch, tmp_path):
         resp = client.post("/api/library/track", json={"path": "../outside.pdf"})
 
     assert resp.status_code == 400
+
+
+# --- POST /api/library/export (⑥-A, 08-05) ---------------------------------------
+# ZIP 안 경로는 저장소 루트 기준 상대경로 그대로(예: "data/app.db") — export/import가
+# 대칭이 되도록 하는 설계라, 여기서도 그 상대경로로 담기는지가 핵심 확인 대상이다.
+
+
+def test_export_library_includes_app_db_only_by_default(monkeypatch, tmp_path):
+    db_path = tmp_path / "app.db"
+    db_path.write_bytes(b"fake sqlite bytes")
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(db_path))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert zf.namelist() == [str(db_path).lstrip("/")]
+        assert zf.read(str(db_path).lstrip("/")) == b"fake sqlite bytes"
+
+
+def test_export_library_includes_index_when_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    index_dir = tmp_path / "chroma_db"
+    index_dir.mkdir()
+    (index_dir / "chroma.sqlite3").write_bytes(b"fake index bytes")
+    monkeypatch.setattr(retrieval, "persist_directory", str(index_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_index": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        names = zf.namelist()
+        assert any(n.endswith("chroma.sqlite3") for n in names)
+
+
+def test_export_library_includes_library_when_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    (library_dir / "quantum").mkdir(parents=True)
+    (library_dir / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        names = zf.namelist()
+        assert any(n.endswith("quantum/paper.pdf") for n in names)
+
+
+def test_export_library_omits_index_and_library_when_not_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    index_dir = tmp_path / "chroma_db"
+    index_dir.mkdir()
+    (index_dir / "chroma.sqlite3").write_bytes(b"fake index bytes")
+    monkeypatch.setattr(retrieval, "persist_directory", str(index_dir))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert zf.namelist() == []  # app.db도 없고(위에서 존재하지 않는 경로로 돌림) 나머지도 제외
+
+
+def test_export_library_follows_symlinked_folder_in_library(monkeypatch, tmp_path):
+    # 포터블 번들 "라이브러리 외부 경로 추적" 기능(심볼릭 링크)으로 연결된 파일도
+    # 완전 백업(본인용)에는 같이 담겨야 한다 — scan_library_files()와 같은 이유.
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "foo.pdf").write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert any(n.endswith("linked/foo.pdf") for n in zf.namelist())
+
+
+def test_export_library_avoids_infinite_loop_on_cyclic_symlink(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "self").symlink_to(library_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})  # 순환을 못 막으면 여기서 무한 루프
+
+    assert resp.status_code == 200
 
 
 # --- GET /papers/{paper_id}/summary (08-03) -------------------------------------

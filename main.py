@@ -1,5 +1,7 @@
 import asyncio
+import io
 import json
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,7 +9,7 @@ import os
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
@@ -29,6 +31,7 @@ import research_branches
 import research_notes
 import research_sessions
 import research_workflow
+import retrieval
 from models import ContextBudgetExceeded
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
@@ -381,6 +384,55 @@ def track_library_file(body: LibraryTrackRequest):
         raise HTTPException(status_code=404, detail=f"library/{body.path} 파일을 찾을 수 없습니다")
     return paper_ingest.track_in_background(
         abs_path, file_path=body.path, filename=os.path.basename(body.path)
+    )
+
+
+# 라이브러리 export ⑥-A(08-05, RoadMap "논문·노트 저장 방식 재설계" 참고) — 3단계
+# 누적 범위. 메타데이터(data/app.db — 논문 서지·상태·관심사·실험도구·노트)는 항상
+# 포함하고, include_index(+chroma_db, 기기 이전용)·include_library(+library/ 원본,
+# 완전 백업)는 선택. ZIP 안 경로를 저장소 루트 기준 상대경로 그대로 담아(예: "data/
+# app.db", "library/quantum/foo.pdf") export/import가 대칭이 되게 한다 — import는
+# 이 상대경로를 그대로 다시 그 자리에 풀면 끝(②-A/②-B가 이미 상대경로로 file_path를
+# 저장해두는 것과 같은 이유).
+def _add_dir_to_zip(zf: zipfile.ZipFile, root_dir: str) -> None:
+    """root_dir 밑의 모든 파일을 root_dir 자체를 포함한 상대경로(arcname)로 zip에 담는다.
+    library/의 심볼릭 링크(포터블 번들 "라이브러리 외부 경로 추적" 기능)도 따라간다 —
+    완전 백업(본인용)이라면 그렇게 연결해둔 원본도 같이 담기는 게 맞다. scan_library_files()
+    와 같은 순환 방지(실제 경로 기준 이미 방문한 디렉터리는 다시 안 내려감)."""
+    if not os.path.isdir(root_dir):
+        return
+    seen_dirs = set()
+    for dirpath, dirnames, filenames in os.walk(root_dir, followlinks=True):
+        real_dirpath = os.path.realpath(dirpath)
+        if real_dirpath in seen_dirs:
+            dirnames[:] = []
+            continue
+        seen_dirs.add(real_dirpath)
+        for name in filenames:
+            full_path = os.path.join(dirpath, name)
+            if os.path.isfile(full_path):  # 깨진 심볼릭 링크(Docker 등) 무시
+                zf.write(full_path, arcname=full_path)
+
+
+class LibraryExportRequest(BaseModel):
+    include_index: bool = False
+    include_library: bool = False
+
+
+@app.post("/api/library/export")
+def export_library(body: LibraryExportRequest):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.isfile(interests.APP_DB_PATH):
+            zf.write(interests.APP_DB_PATH, arcname=interests.APP_DB_PATH)
+        if body.include_index:
+            _add_dir_to_zip(zf, retrieval.persist_directory)
+        if body.include_library:
+            _add_dir_to_zip(zf, paper_catalog.LIBRARY_DIR)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="library_export.zip"'},
     )
 
 

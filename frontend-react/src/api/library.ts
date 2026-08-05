@@ -1,4 +1,4 @@
-import { apiFetch } from './client'
+import { BACKEND_URL, apiFetch, ApiError } from './client'
 import type { TrackResult } from './papers'
 
 export interface LibraryFile {
@@ -18,4 +18,19 @@ export function trackLibraryFile(path: string) {
     method: 'POST',
     body: JSON.stringify({ path }),
   })
+}
+
+// ⑥-A(08-05) — ZIP 바이너리를 그대로 받는다(JSON이 아니라서 apiFetch를 못 씀,
+// registerPaper()와 같은 이유). 호출부(Settings.tsx)가 Blob URL을 만들어 다운로드 트리거.
+export async function exportLibrary(includeIndex: boolean, includeLibrary: boolean): Promise<Blob> {
+  const res = await fetch(`${BACKEND_URL}/api/library/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ include_index: includeIndex, include_library: includeLibrary }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new ApiError(res.status, body?.detail ?? res.statusText)
+  }
+  return res.blob()
 }
