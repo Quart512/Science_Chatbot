@@ -1,3 +1,46 @@
+/* 색상 토큰 (08-05, 브랜드 색감 병합 — docs/RoadMap.md "브랜드 색감·카피 병합 —
+   설계 명세" 참고). 다크 모드 전용 — 지금 쓰던 값을 대부분 그대로 변수로 승격했고,
+   accent(주 액센트)만 파랑(#3b5bdb)에서 보라(ai-saac 다크 팔레트)로 바뀐다.
+   moon(보조 액센트)은 이번에 새로 추가 — 채도를 낮게 잡아 이미 있는
+   warning(#e3b341, 쨍한 경고 노랑)과 헷갈리지 않게 분리했다. 라이트 모드·토글은
+   범위 밖(RoadMap "무기한 보류 — 영어 버전" 항목에서 같이 다룰 것). */
+:root {
+  --color-bg: #0e0f13;
+  --color-bg-elevated: #1a1c24;
+  --color-bg-surface: #22242e;
+
+  --color-border: #2e313d;
+  --color-border-strong: #40434f;
+  --color-border-faint: #3a3d48;
+
+  --color-text: #e6e6e6;
+  --color-text-muted: #a0a4b0;
+  --color-text-muted-light: #c7c9d1;
+  --color-text-dim: #6b7080;
+  --color-text-disabled: #5a5e6b;
+
+  /* 상태 색상 — 성공/경고/위험/정보. 브랜드 액센트(accent/moon)와는 별개 축이라
+     헷갈리지 않게 이름을 분리해뒀다(경고 노랑을 달빛 노랑으로 착각하지 않도록). */
+  --color-success: #7ee787;
+  --color-success-bg: rgba(46, 160, 67, 0.15);
+  --color-warning: #e3b341;
+  --color-warning-bg: rgba(210, 153, 34, 0.15);
+  --color-danger: #ff7b72;
+  --color-danger-bg: rgba(248, 81, 73, 0.15);
+  --color-info: #8ab4ff;
+  --color-info-alt: #79c0ff;
+  --color-info-bg: rgba(88, 166, 255, 0.15);
+
+  /* 주 액센트 — 보라(프리즘/주요 강조: 버튼, 선택 상태) */
+  --color-accent: oklch(0.62 0.2 292);
+  --color-accent-15: oklch(0.62 0.2 292 / 15%);
+  --color-accent-20: oklch(0.62 0.2 292 / 20%);
+  --color-accent-25: oklch(0.62 0.2 292 / 25%);
+
+  /* 보조 액센트 — 달빛 노랑(호버·조용한 화면의 포인트) */
+  --color-accent-moon: oklch(0.82 0.06 90);
+}
+
 * {
   box-sizing: border-box;
 }

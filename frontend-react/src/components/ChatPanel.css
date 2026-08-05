@@ -4,9 +4,9 @@
   width: 340px;
   min-width: 340px;
   height: 100vh;
-  background: #1a1c24;
-  border-left: 1px solid #2e313d;
-  color: #e6e6e6;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text);
   font-size: 0.9rem;
 }
 
@@ -14,9 +14,9 @@
   position: fixed;
   top: 1rem;
   right: 1rem;
-  background: #2e313d;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
   cursor: pointer;
@@ -27,14 +27,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #2e313d;
+  border-bottom: 1px solid var(--color-border);
   font-weight: 600;
 }
 
 .chat-panel-header button {
   background: none;
   border: none;
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   cursor: pointer;
   font-size: 1rem;
 }
@@ -47,25 +47,25 @@
 
 .chat-panel-controls select {
   flex: 1;
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.25rem;
 }
 
 .chat-panel-thread-id {
   padding: 0.25rem 1rem 0.5rem;
-  color: #6b7080;
+  color: var(--color-text-dim);
   font-size: 0.7rem;
   word-break: break-all;
 }
 
 .chat-panel-register-interest {
   margin: 0 1rem 0.5rem;
-  background: #2e313d;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
   cursor: pointer;
@@ -74,7 +74,7 @@
 
 .chat-panel-error {
   margin: 0 1rem 0.5rem;
-  color: #ff7b72;
+  color: var(--color-danger);
   font-size: 0.8rem;
 }
 
@@ -101,7 +101,7 @@
   right: 0;
   background: none;
   border: none;
-  color: #6b7080;
+  color: var(--color-text-dim);
   cursor: pointer;
   font-size: 0.75rem;
   opacity: 0;
@@ -113,17 +113,17 @@
 }
 
 .chat-message-user .chat-message-content {
-  color: #8ab4ff;
+  color: var(--color-info);
 }
 
 .chat-message-comment {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.8rem;
   margin-top: 0.25rem;
 }
 
 .chat-panel-progress {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 
@@ -131,25 +131,33 @@
   display: flex;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  border-top: 1px solid #2e313d;
+  border-top: 1px solid var(--color-border);
 }
 
 .chat-panel-input input {
   flex: 1;
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
 }
 
 .chat-panel-input button {
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
   border: none;
   border-radius: 4px;
   padding: 0.4rem 0.9rem;
   cursor: pointer;
+}
+
+/* 보조 액센트(달빛 노랑) — 08-05, 대화창에서 실제로 상호작용하는 지점에 은은한
+   포커스 글로우를 준다(이전엔 hover/focus 표시가 아예 없었다). */
+.chat-panel-input button:hover:not(:disabled),
+.chat-panel-input button:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-accent-moon);
+  outline: none;
 }
 
 .chat-panel-input button:disabled {

@@ -1,15 +1,15 @@
 .app-shell {
   display: flex;
   height: 100vh;
-  background: #0e0f13;
-  color: #e6e6e6;
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: system-ui, sans-serif;
 }
 
 .app-nav {
   width: 280px;
   min-width: 280px;
-  border-right: 1px solid #2e313d;
+  border-right: 1px solid var(--color-border);
   padding: 1rem;
   display: flex;
   flex-direction: column;
@@ -28,7 +28,7 @@
 }
 
 .app-nav-group-title {
-  color: #6b7080;
+  color: var(--color-text-dim);
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -38,19 +38,23 @@
 }
 
 .app-nav-link {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   text-decoration: none;
   padding: 0.4rem 0.5rem;
   border-radius: 4px;
+  border-left: 3px solid transparent;
 }
 
 .app-nav-link:hover {
-  background: #1a1c24;
+  background: var(--color-bg-elevated);
 }
 
+/* 보조 액센트(달빛 노랑) 적용 지점 — 08-05 브랜드 색감 병합, "지금 보고 있는 화면"을
+   왼쪽 강조선으로 조용히 표시. 배경/글자색은 기존 중립 톤 그대로 두고 선만 더함. */
 .app-nav-link.active {
-  background: #2e313d;
-  color: #e6e6e6;
+  background: var(--color-border);
+  color: var(--color-text);
+  border-left-color: var(--color-accent-moon);
 }
 
 .app-main {

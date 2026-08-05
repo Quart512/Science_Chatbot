@@ -11,7 +11,7 @@
 }
 
 .research-session-card {
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 0.5rem;
   display: flex;
@@ -21,13 +21,13 @@
 }
 
 .research-session-card-selected {
-  border-color: #3b5bdb;
+  border-color: var(--color-accent);
 }
 
 .research-session-select {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem;
   cursor: pointer;
@@ -46,22 +46,22 @@
 }
 
 .research-session-actions button {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.3rem 0.6rem;
   cursor: pointer;
 }
 
 .research-session-actions button[type='submit'] {
-  background: #3b5bdb;
-  border-color: #3b5bdb;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: white;
 }
 
 .research-session-close {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
 }
 
 /* 브랜치형 타임라인(BranchTimeline.tsx) — 예전 research-timeline(완료체크 5칸)과
@@ -73,7 +73,7 @@
 
 .research-branch-toggle {
   background: none;
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   border: none;
   padding: 0;
   margin-bottom: 0.5rem;
@@ -93,18 +93,18 @@
 }
 
 .research-branch-line {
-  stroke: #40434f;
+  stroke: var(--color-border-strong);
   stroke-width: 2;
 }
 
 .research-branch-line-branch {
-  stroke: #8ab4ff;
+  stroke: var(--color-info);
   stroke-width: 2;
   stroke-dasharray: 4 3;
 }
 
 .research-branch-dot {
-  fill: #40434f;
+  fill: var(--color-border-strong);
 }
 
 .research-branch-row {
@@ -122,17 +122,17 @@
 }
 
 .research-branch-row:hover {
-  background: #22242e;
+  background: var(--color-bg-surface);
 }
 
 .research-branch-row-active {
-  background: rgba(59, 91, 219, 0.2);
+  background: var(--color-accent-20);
 }
 
 .research-branch-row-label {
   flex-shrink: 0;
   width: 8rem;
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.8rem;
 }
 
@@ -149,19 +149,19 @@
 }
 
 .research-branch-cell-fresh {
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
 }
 
 .research-branch-cell-inherited {
-  background: #2e313d;
-  color: #c7c9d1;
+  background: var(--color-border);
+  color: var(--color-text-muted-light);
 }
 
 .research-branch-cell-pending {
   background: none;
-  color: #5a5e6b;
-  border: 1px solid #3a3d48;
+  color: var(--color-text-disabled);
+  border: 1px solid var(--color-border-faint);
 }
 
 .research-branch-future {
@@ -171,11 +171,11 @@
   flex-wrap: wrap;
   margin: 0.3rem 0 0 0.4rem;
   padding-left: 1rem;
-  border-left: 2px dashed #40434f;
+  border-left: 2px dashed var(--color-border-strong);
 }
 
 .research-branch-future-label {
-  color: #6b7080;
+  color: var(--color-text-dim);
   font-size: 0.78rem;
 }
 
@@ -186,18 +186,18 @@
 }
 
 .research-branch-future-chip {
-  background: #22242e;
-  color: #c7c9d1;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text-muted-light);
+  border: 1px solid var(--color-border-strong);
   border-radius: 999px;
   padding: 0.2rem 0.6rem;
   font-size: 0.78rem;
 }
 
 .research-branch-future-chip-recommended {
-  background: rgba(59, 91, 219, 0.25);
-  color: #8ab4ff;
-  border-color: #3b5bdb;
+  background: var(--color-accent-25);
+  color: var(--color-info);
+  border-color: var(--color-accent);
   font-weight: 600;
 }
 
@@ -206,9 +206,9 @@
 }
 
 .research-retry-references button {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.8rem;
   cursor: pointer;
@@ -222,7 +222,7 @@
 .research-note-editor {
   margin: 0.75rem 0;
   padding: 0.6rem 0.8rem;
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
 }
 
@@ -236,9 +236,9 @@
 }
 
 .research-note-editor button {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.8rem;
   cursor: pointer;
@@ -250,15 +250,15 @@
 }
 
 .research-comment {
-  background: rgba(59, 91, 219, 0.15);
-  color: #8ab4ff;
+  background: var(--color-accent-15);
+  color: var(--color-info);
   padding: 0.6rem 0.8rem;
   border-radius: 4px;
   white-space: pre-wrap;
 }
 
 .research-caption {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
@@ -267,7 +267,7 @@
 }
 
 .research-warning {
-  color: #e3b341;
+  color: var(--color-warning);
   font-size: 0.85rem;
 }
 
@@ -277,19 +277,19 @@
 
 .research-option-group h4 {
   margin: 0 0 0.25rem;
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .research-option {
-  border-top: 1px solid #2e313d;
+  border-top: 1px solid var(--color-border);
   padding: 0.75rem 0;
 }
 
 .research-option button[type='submit'] {
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
   border: none;
   border-radius: 4px;
@@ -311,7 +311,7 @@
 }
 
 .research-retry-guidance summary {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
   cursor: pointer;
 }
@@ -321,9 +321,9 @@
   display: block;
   width: 100%;
   max-width: 480px;
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
   font-family: inherit;
