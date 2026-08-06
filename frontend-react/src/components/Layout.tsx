@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { ChatPanel } from './ChatPanel'
 import { ChatSessionNav } from './ChatSessionNav'
 import { ResearchSessionNav } from './ResearchSessionNav'
+import { useScrollbarAutoHide } from '../hooks/useScrollbarAutoHide'
 import './Layout.css'
 
 // 셸 — 왼쪽 네비게이션 + 가운데 라우팅된 메인 콘텐츠 + 오른쪽 항상-떠-있는 챗 패널.
@@ -22,6 +23,7 @@ export function Layout() {
   const [navOpen, setNavOpen] = useState(true)
   const [chatSessionsOpen, setChatSessionsOpen] = useState(true)
   const [researchSessionsOpen, setResearchSessionsOpen] = useState(true)
+  useScrollbarAutoHide()
 
   if (!navOpen) {
     return (
@@ -57,6 +59,9 @@ export function Layout() {
             <NavLink to="/chat" className="app-nav-link app-nav-link-grow">
               💬 챗봇
             </NavLink>
+            <NavLink to="/chat/new" className="app-nav-new-session" title="새 대화 시작" aria-label="새 대화 시작">
+              +
+            </NavLink>
             <button
               type="button"
               className="app-nav-session-toggle"
@@ -71,7 +76,7 @@ export function Layout() {
             <NavLink to="/research" className="app-nav-link app-nav-link-grow">
               🧬 연구 워크플로우
             </NavLink>
-            <NavLink to="/research" className="app-nav-new-session" title="새 연구 시작" aria-label="새 연구 시작">
+            <NavLink to="/research/new" className="app-nav-new-session" title="새 연구 시작" aria-label="새 연구 시작">
               +
             </NavLink>
             <button

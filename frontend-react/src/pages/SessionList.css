@@ -1,0 +1,103 @@
+/* 챗봇·연구 워크플로우 네비 라벨 클릭 시 뜨는 "세션 목록" 화면(08-06) — 사이드바의
+   좁은 세션 목록(ChatSessionNav/ResearchSessionNav)과 시각 언어는 같은 계열이지만,
+   여긴 본문 영역 전체를 쓰는 카드 그리드라 클릭 영역이 더 넓고 한눈에 여러 세션을
+   훑어볼 수 있다. ChatSessionList.tsx·ResearchSessionList.tsx가 공유 — 제목 행
+   자체는 EditableSessionTitle.tsx·css가 따로 담당(수정/닫기 아이콘 포함), 여기는
+   카드 껍데기와 그 아래 상태 줄만. ChatSessionNav.tsx·ResearchSessionNav.tsx(사이드바)
+   도 상태 줄(.session-status-*)만 이 파일에서 가져다 쓴다. */
+.session-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.session-list-new {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-list-new:hover {
+  box-shadow: 0 0 0 2px var(--color-accent-moon);
+}
+
+.session-list-empty,
+.session-list-error {
+  color: var(--color-text-muted);
+}
+
+.session-list-error {
+  color: var(--color-danger);
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.9rem;
+}
+
+.session-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--color-bg-elevated);
+}
+
+/* 상태 줄(08-06) — 챗봇: 대기중/응답됨 점 + 최근 대화 미리보기. 연구: stage 배지
+   (last_message_role 개념이 연구엔 안 맞아서, 사용자 결정으로 배지만). 둘 다 끝에
+   최근 수정 시각. */
+.session-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.session-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-status-dot-answered {
+  background: var(--color-success);
+}
+
+.session-status-dot-waiting {
+  background: var(--color-warning);
+}
+
+.session-status-preview {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-status-time {
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.session-card-stage {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--color-accent-moon);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}

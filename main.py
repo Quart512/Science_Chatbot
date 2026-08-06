@@ -177,9 +177,26 @@ async def delete_query_message(request: Request, thread_id: str, message_id: str
 # (research_sessions.py 상단 주석·main.py 위쪽 "/research/sessions" 라우트 순서
 # 주석 참고). 여기도 리터럴 경로("/chat/sessions")가 유일해서 지금은 순서 충돌이
 # 없지만, 나중에 "/chat/{thread_id}" 계열이 추가되면 이 라우트가 먼저 와야 한다.
+#
+# 08-06 — 세션 카드 화면(화면 개선, ChatSessionNav·ChatSessionList)이 "대기중/응답됨"
+# 상태와 최근 대화 미리보기를 보여주려고 last_message_role/last_message_preview를
+# 추가로 채워 보낸다. chat_sessions 테이블에 새 컬럼을 두는 대신(쓰기 경로가 하나
+# 늘고 체크포인트와 값이 어긋날 위험) 매번 체크포인터에서 직접 읽어 계산 — 개인용
+# 로컬 앱 규모(세션 수십 개)에서는 매 목록 조회마다 aget_state()를 반복해도 무리가
+# 없고, 정본(체크포인트)과 절대 어긋나지 않는다는 이점이 더 크다.
 @app.get("/api/chat/sessions")
-def list_chat_sessions():
-    return {"sessions": chat_sessions.list_sessions()}
+async def list_chat_sessions(request: Request):
+    sessions = chat_sessions.list_sessions()
+    for session in sessions:
+        config = {"configurable": {"thread_id": session["thread_id"]}}
+        snapshot = await request.app.state.graph.aget_state(config)
+        messages = snapshot.values.get("messages", [])
+        last = messages[-1] if messages else None
+        session["last_message_role"] = _MESSAGE_TYPE_TO_ROLE.get(last.type, last.type) if last else None
+        session["last_message_preview"] = (
+            (last.content[:50] + "…" if len(last.content) > 50 else last.content) if last else None
+        )
+    return {"sessions": sessions}
 
 
 class ChatSessionTitleUpdate(BaseModel):

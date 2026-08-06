@@ -126,14 +126,21 @@ body {
   min-height: 100vh;
 }
 
-/* 스크롤바 테마 대응(08-06) — 지금까지 브라우저 기본 스크롤바(회색/흰색)를 그대로
-   써서 다크·라이트 둘 다 배경과 안 어울렸다. 토큰을 그대로 참조해 테마 전환에 같이
-   따라가게 함 — Firefox는 scrollbar-color, WebKit(Chrome/Edge/Safari)은
-   ::-webkit-scrollbar 계열로 표준이 갈려 둘 다 선언(전역 * 하나로 왼쪽 네비·챗
-   패널·본문 스크롤 전부 커버). */
+/* 스크롤바 테마 대응 + 자동 숨김(08-06) — 지금까지 브라우저 기본 스크롤바(회색/흰색)를
+   그대로 써서 다크·라이트 둘 다 배경과 안 어울렸다(테마 대응). 여기 더해 평소엔 완전
+   투명, 스크롤 중(또는 멈춘 뒤 잠깐)에만 테마색으로 보이게 한다(자동 숨김, 08-06
+   추가 요청) — CSS엔 "스크롤 진행 중"을 잡는 표준 가상클래스가 없어서(스크롤바 자체를
+   드래그할 때만 반응하는 :active류와는 다름) useScrollbarAutoHide.ts가 전역 scroll
+   이벤트를 잡아 'is-scrolling' 클래스를 붙였다 뗀다. Firefox는 scrollbar-color,
+   WebKit(Chrome/Edge/Safari)은 ::-webkit-scrollbar 계열로 표준이 갈려 둘 다 선언
+   (전역 * 하나로 왼쪽 네비·챗 패널·본문 스크롤 전부 커버). */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border-strong) var(--color-bg);
+  scrollbar-color: transparent transparent;
+}
+
+*.is-scrolling {
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -142,15 +149,21 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: var(--color-border-strong);
+  background-color: transparent;
   border-radius: 6px;
-  border: 2px solid var(--color-bg);
+  border: 2px solid transparent;
+  transition: background-color 0.2s ease;
 }
 
-::-webkit-scrollbar-thumb:hover {
+.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-color: var(--color-bg);
+}
+
+.is-scrolling::-webkit-scrollbar-thumb:hover {
   background-color: var(--color-text-dim);
 }

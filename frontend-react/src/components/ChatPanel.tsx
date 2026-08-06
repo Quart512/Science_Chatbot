@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { listChatSessions } from '../api/chat'
 import { CHAT_MODELS, CHAT_EFFORTS, useChatThread } from '../hooks/useChatThread'
+import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import './ChatPanel.css'
 
 // 셸에 항상 떠 있는 챗 패널(08-04 설계 노트 "React 전환" 참고) — 연구 워크플로우 등
@@ -15,14 +17,43 @@ import './ChatPanel.css'
 // ('chat-sessions')를 보므로, 왼쪽에서 다른 세션에 메시지를 보내 그게 최신이 되면
 // 이 패널도 자동으로 그 세션을 따라간다(전송 후 invalidateQueries는 useChatThread
 // 안에서 처리).
+//
+// 08-06 후속 — 챗봇 화면(왼쪽)에 이미 같은 세션이 떠 있으니 이 패널은 거기선
+// 중복이다. ① 챗봇 화면(/chat, /chat/new, /chat/:id)에서는 무조건 닫는다.
+// ② 챗봇을 벗어날 때 다시 열지는 설정(useChatPanelAutoShow, Settings.tsx)에
+// 따른다 — 껐다/켰다는 여전히 오른쪽 버튼으로 항상 가능, 이 설정은 "챗봇에서 나갈
+// 때"에만 적용된다(다른 화면끼리 이동할 땐 사용자가 마지막으로 골라둔 열림/닫힘을
+// 그대로 유지, 아래 effect가 "방금 챗봇을 나왔을 때"만 판단하는 이유).
+function isChatRoute(pathname: string): boolean {
+  return pathname === '/chat' || pathname.startsWith('/chat/')
+}
+
 export function ChatPanel() {
-  const [open, setOpen] = useState(true)
+  const { pathname } = useLocation()
+  const { autoShow } = useChatPanelAutoShow()
+  const [open, setOpen] = useState(!isChatRoute(pathname))
+  const wasOnChatRoute = useRef(isChatRoute(pathname))
+
+  useEffect(() => {
+    const isChat = isChatRoute(pathname)
+    if (isChat) {
+      setOpen(false)
+    } else if (wasOnChatRoute.current && autoShow) {
+      setOpen(true)
+    }
+    wasOnChatRoute.current = isChat
+  }, [pathname, autoShow])
+
   const [freshThreadId] = useState(() => crypto.randomUUID())
   const sessionsQuery = useQuery({ queryKey: ['chat-sessions'], queryFn: listChatSessions })
   const mostRecent = sessionsQuery.data?.sessions[0]
   const threadId = mostRecent?.thread_id ?? freshThreadId
 
   const chat = useChatThread(threadId, { hydrateOnMount: mostRecent !== undefined })
+
+  if (isChatRoute(pathname)) {
+    return null
+  }
 
   if (!open) {
     return (

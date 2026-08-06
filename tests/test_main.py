@@ -1410,6 +1410,9 @@ def test_close_research_session_404_when_not_found(monkeypatch):
 # --- 챗(④) 세션 목록 (08-06, 화면 개선 ⑤) — research_sessions 테스트와 같은 패턴 ---
 
 def test_list_chat_sessions_returns_all(monkeypatch):
+    # thread_id에 대응하는 체크포인트가 없으면(한 번도 /query가 안 돈 thread)
+    # aget_state()가 빈 snapshot을 돌려준다(main.py "/interests/draft" 주석 참고,
+    # 에러 아님) — 그래서 이 테스트는 진짜 존재하지 않는 thread_id로도 안전하다.
     fake_rows = [{"thread_id": "t1", "title": "대화1"}, {"thread_id": "t2", "title": "대화2"}]
     monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: fake_rows)
 
@@ -1417,7 +1420,70 @@ def test_list_chat_sessions_returns_all(monkeypatch):
         resp = client.get("/api/chat/sessions")
 
     assert resp.status_code == 200
-    assert resp.json() == {"sessions": fake_rows}
+    sessions = resp.json()["sessions"]
+    assert [s["thread_id"] for s in sessions] == ["t1", "t2"]
+    assert all(s["last_message_role"] is None and s["last_message_preview"] is None for s in sessions)
+
+
+# 08-06 — 화면 개선(세션 카드 상태 아이콘·미리보기) 신설: /api/chat/sessions가
+# 체크포인터에서 마지막 메시지의 role/내용을 직접 계산해 얹는다(스키마 변경 없이,
+# 정본인 체크포인트에서 매번 읽음 — main.py 주석 참고). role 매핑
+# (human→user/ai→assistant)은 get_query_messages와 동일.
+def test_list_chat_sessions_includes_last_message_role_and_preview(monkeypatch):
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: [{"thread_id": thread_id, "title": "대화"}])
+
+    with TestClient(main.app) as client:
+        asyncio.run(main.app.state.graph.aupdate_state(
+            config,
+            {"question": "질문", "messages": [HumanMessage(content="질문"), AIMessage(content="답변입니다")]},
+            as_node="__start__",
+        ))
+        resp = client.get("/api/chat/sessions")
+
+    session = resp.json()["sessions"][0]
+    assert session["last_message_role"] == "assistant"
+    assert session["last_message_preview"] == "답변입니다"
+
+
+def test_list_chat_sessions_preview_truncates_long_content(monkeypatch):
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: [{"thread_id": thread_id, "title": "대화"}])
+    long_content = "가" * 80
+
+    with TestClient(main.app) as client:
+        asyncio.run(main.app.state.graph.aupdate_state(
+            config,
+            {"question": "질문", "messages": [HumanMessage(content="질문"), AIMessage(content=long_content)]},
+            as_node="__start__",
+        ))
+        resp = client.get("/api/chat/sessions")
+
+    preview = resp.json()["sessions"][0]["last_message_preview"]
+    assert preview == "가" * 50 + "…"
+
+
+def test_list_chat_sessions_waiting_when_last_message_is_human(monkeypatch):
+    # 마지막 메시지가 사용자(human)로 끝나 있으면 "대기중"(아직 답이 없음) — 정상
+    # 흐름이면 거의 안 생기고(턴이 항상 AI 메시지로 끝남), 중간에 에러로 끊긴
+    # 턴에서나 실제로 나타난다.
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: [{"thread_id": thread_id, "title": "대화"}])
+
+    with TestClient(main.app) as client:
+        asyncio.run(main.app.state.graph.aupdate_state(
+            config,
+            {"question": "질문", "messages": [HumanMessage(content="질문")]},
+            as_node="__start__",
+        ))
+        resp = client.get("/api/chat/sessions")
+
+    session = resp.json()["sessions"][0]
+    assert session["last_message_role"] == "user"
+    assert session["last_message_preview"] == "질문"
 
 
 def test_rename_chat_session_updates_title(monkeypatch):
