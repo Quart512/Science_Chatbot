@@ -36,7 +36,11 @@ def test_successful_call_appends_tools_used_and_resets_failures(make_state, monk
     assert result["tool_errors"] == []
     assert result["tool_failures"]["fake"] == 0  # 성공하면 연속 실패 카운트 리셋
     assert result["tool_rounds"] == 1  # 실제로 시도했으므로 라운드 소모
-    assert result["messages"][0].content == "결과 문자열"
+    # 프롬프트 주입 방어 — 원문은 <tool_output> 델리미터로 감싸져서 나간다(그대로 노출 X)
+    content = result["messages"][0].content
+    assert content.startswith('<tool_output source="fake">')
+    assert "결과 문자열" in content
+    assert "지시문" in content  # LLM에게 데이터로만 취급하라는 경고 문구 포함
 
 
 def test_exception_appends_tool_errors_and_disables_after_two_failures(make_state, monkeypatch):
