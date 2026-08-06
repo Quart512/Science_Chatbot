@@ -190,6 +190,57 @@ def test_list_papers_filters_by_status(conn):
     assert len(all_papers) == 2
 
 
+# --- list_papers() sort/검색 (08-06) -----------------------------------------------
+
+def test_list_papers_sort_by_created_and_updated(conn):
+    paper_catalog.mark_owned("arxiv:1", title="첫 등록", conn=conn)
+    paper_catalog.mark_owned("arxiv:2", title="둘째 등록", conn=conn)
+    # arxiv:1을 나중에 수정 — updated_at만 최신이 된다(created_at 순서는 그대로).
+    paper_catalog.mark_owned("arxiv:1", title="첫 등록(수정됨)", conn=conn)
+
+    created_desc = paper_catalog.list_papers(sort="created_desc", conn=conn)
+    assert [p["paper_id"] for p in created_desc] == ["arxiv:2", "arxiv:1"]
+
+    updated_desc = paper_catalog.list_papers(sort="updated_desc", conn=conn)
+    assert [p["paper_id"] for p in updated_desc] == ["arxiv:1", "arxiv:2"]
+
+
+def test_list_papers_title_search_is_substring_and_escapes_wildcards(conn):
+    paper_catalog.mark_owned("arxiv:1", title="양자역학 입문", conn=conn)
+    paper_catalog.mark_owned("arxiv:2", title="고전역학 개론", conn=conn)
+    paper_catalog.mark_owned("arxiv:3", title="50% 효율 논문", conn=conn)  # LIKE 와일드카드 포함 제목
+
+    matched = paper_catalog.list_papers(q="역학", conn=conn)
+    assert {p["paper_id"] for p in matched} == {"arxiv:1", "arxiv:2"}
+
+    # "%"를 검색어로 넣으면 리터럴 %만 찾아야 한다 — 이스케이프 안 하면 모든 행이 걸린다.
+    percent_search = paper_catalog.list_papers(q="%", conn=conn)
+    assert [p["paper_id"] for p in percent_search] == ["arxiv:3"]
+
+
+# --- move_paper() (08-06, library_order.py) ---------------------------------------
+
+def test_move_paper_only_swaps_within_same_status(conn):
+    # sort_order는 papers 테이블 전체가 공유하는 하나의 축이다 — recommended 논문이
+    # owned 논문들 사이 sort_order를 차지하고 있어도(추천 검색이 먼저 만들고, 사용자가
+    # 그 앞뒤로 논문을 등록하는 흔한 순서), "보유 논문" 화면의 위/아래 버튼은 화면에
+    # 안 보이는 recommended 논문과는 절대 안 바뀌어야 한다 — scope_where가 그걸 보장.
+    paper_catalog.mark_owned("owned:1", title="보유1", conn=conn)
+    paper_catalog.upsert_recommended("rec:1", title="추천1", conn=conn)  # 화면엔 안 보임
+    paper_catalog.mark_owned("owned:2", title="보유2", conn=conn)
+
+    assert paper_catalog.move_paper("owned:2", "up", conn=conn) is True
+    owned = paper_catalog.list_papers(status="owned", conn=conn)
+    assert [p["paper_id"] for p in owned] == ["owned:2", "owned:1"]
+
+    # recommended 쪽은 전혀 안 건드려졌다.
+    recommended = paper_catalog.list_papers(status="recommended", conn=conn)
+    assert [p["paper_id"] for p in recommended] == ["rec:1"]
+
+    # 이제 owned:2가 owned 목록에서 맨 앞 — 더 못 올라간다(recommended로 넘어가면 안 됨).
+    assert paper_catalog.move_paper("owned:2", "up", conn=conn) is False
+
+
 # --- interest_paper (08-03) ----------------------------------------------------
 
 
@@ -438,3 +489,36 @@ def test_set_analysis_status_updates_only_that_column(conn):
 
 def test_set_analysis_status_returns_false_when_paper_not_found(conn):
     assert paper_catalog.set_analysis_status("hash:없음", "failed", conn=conn) is False
+
+
+# --- reset_stale_analysis_status() (08-06) -----------------------------------------
+
+def test_reset_stale_analysis_status_reverts_pending_and_analyzing_to_failed(conn):
+    paper_catalog.mark_owned("hash:a", title="분석중", analysis_status="analyzing", conn=conn)
+    paper_catalog.mark_owned("hash:b", title="대기중", analysis_status="pending", conn=conn)
+    paper_catalog.mark_owned("hash:c", title="완료됨", analysis_status="done", conn=conn)
+
+    reverted = paper_catalog.reset_stale_analysis_status(conn=conn)
+
+    assert set(reverted) == {"hash:a", "hash:b"}
+    assert paper_catalog.get_paper("hash:a", conn=conn)["analysis_status"] == "failed"
+    assert paper_catalog.get_paper("hash:b", conn=conn)["analysis_status"] == "failed"
+    assert paper_catalog.get_paper("hash:c", conn=conn)["analysis_status"] == "done"  # 안 건드림
+
+
+def test_reset_stale_analysis_status_noop_when_nothing_stuck(conn):
+    paper_catalog.mark_owned("hash:a", title="완료됨", analysis_status="done", conn=conn)
+
+    assert paper_catalog.reset_stale_analysis_status(conn=conn) == []
+    assert paper_catalog.get_paper("hash:a", conn=conn)["analysis_status"] == "done"
+
+
+def test_reset_stale_analysis_status_unblocks_retry_guard(conn):
+    # 실제 버그 재현 — track_in_background()의 가드(파일 참고)가 pending/analyzing만
+    # 막으므로, reset 이후 failed가 된 논문은 같은 paper_id로 다시 mark_owned를 불러도
+    # (재트래킹과 동등) 더 이상 막히지 않는다는 걸 확인한다.
+    paper_catalog.mark_owned("hash:a", title="멈춘 논문", analysis_status="analyzing", conn=conn)
+    paper_catalog.reset_stale_analysis_status(conn=conn)
+
+    existing = paper_catalog.get_paper("hash:a", conn=conn)
+    assert existing["analysis_status"] not in ("pending", "analyzing")

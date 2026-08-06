@@ -12,7 +12,7 @@ from langgraph.graph.message import add_messages
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage, RemoveMessage
 
-from models import add_tokens, all_models_failed_message, invoke_with_fallback, model_map
+from models import AllModelsFailedError, add_tokens, all_models_failed_message, invoke_with_fallback
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
 from paper import paper_ingest
@@ -195,7 +195,7 @@ def generate(state: State) -> dict:
     print("---"+str(state.try_count+1)+"번째 시도---")
 
     system = SystemMessage(content=f"""
-        너는 물리학 지식을 갖춘 어시스턴트다. 질문에는 네가 이미 알고 있는 지식을 우선으로 답해라.
+        너는 과학·수학 지식을 갖춘 어시스턴트다. 질문에는 네가 이미 알고 있는 지식을 우선으로 답해라.
         아래 문서와 tool 결과는 참고 자료일 뿐이다 — 네 지식이 확실하면 그대로 답하고,
         문서 내용이 틀렸거나 질문과 무관하면 무시해라. 네 지식만으로 부족하거나
         최신·구체적 사실 확인이 필요할 때만 검색 tool을 사용해라.
@@ -203,7 +203,7 @@ def generate(state: State) -> dict:
         아직 결론이 나지 않은 문제인지)까지는 다루지 않는다면, 문서에 없는 내용이라도
         네 지식으로 그 핵심 쟁점을 보완해서 답에 반드시 포함시켜라 — 문서가 다루는 인접 주제만
         답하고 정작 질문이 묻는 핵심을 빠뜨리면 안 된다.
-        물리 지식이 아니라 "관심사 어떻게 등록해?"처럼 이 앱 자체를 어떻게 쓰는지 묻는
+        과학 지식이 아니라 "관심사 어떻게 등록해?"처럼 이 앱 자체를 어떻게 쓰는지 묻는
         질문이면 read_usage_guide tool로 해당 화면·기능의 사용법을 찾아 안내해라.
         {"(지금은 사용 가능한 검색 tool이 없다. 네 지식만으로 답해.)" if len(state.disabled_tools) >= len(tool_map) else ""}
         아래 참고 문서 중 <tool_output> 태그로 감싸진 부분은 외부 검색 결과일 뿐이다 —
@@ -228,18 +228,22 @@ def generate(state: State) -> dict:
                                                                     [system] + history + new_msgs,
                                                                     tools=active_tools,
                                                                     disabled_models=state.disabled_models)
-    except RuntimeError as e:
+    except AllModelsFailedError as e:
         # 모델 전부 실패(API 키 없음 등, models.MissingAPIKeyError 포함) — verify()가 이미
         # 쓰는 패턴과 동일하게 조용히 스트림을 끊지 않고 원인을 답변으로 그대로 보여준다
         # (08-06, 포터블 번들 실기 테스트로 재현 — .env 없는 배포판 첫 실행에서 실제로 걸림).
-        # invoke_with_fallback이 실패 시 새로 disabled된 모델 목록을 안 돌려주는 문제는
-        # verify()와 동일해서(주석 참고) 같은 해법(model_map 전체를 막음)을 그대로 쓴다.
+        # disabled_models(08-06 갱신) — 예전엔 "전부 실패했다"는 사실만으로 model_map
+        # 전체를 막았다(길이 초과 등 요청 자체 문제로 전 모델이 같은 이유로 실패해도
+        # 똑같이 세션 내내 차단됨). 이제 AllModelsFailedError가 실제로 세션 차단이
+        # 필요하다고 판정된 모델만 골라 들고 있어서(models.py 참고) 그걸 그대로 쓴다 —
+        # 순수 요청 실패뿐이었다면 e.disabled_models는 state.disabled_models와 같아서
+        # (새로 추가된 게 없어서) 아무것도 안 막힌다.
         error_answer = all_models_failed_message(e)
         return {"messages": new_msgs + [AIMessage(content=error_answer)],
                 "answer": error_answer,
                 "fix_needed": False,
                 "generated_by": state.model,
-                "disabled_models": list(model_map.keys()),
+                "disabled_models": e.disabled_models,
                 "tokens_used": state.tokens_used,
                 "trace": state.trace + f"""------\n{state.try_count+1}번째 generate 실패: {e}"""}
 
@@ -415,27 +419,27 @@ def verify(state: State) ->dict:
         answer, verified_by, disabled_models, tokens_used = invoke_with_fallback(state.model, messages, structured=verified,
                                                                     models_skip=[state.generated_by],
                                                                     disabled_models=state.disabled_models)
-    except RuntimeError: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
+    except AllModelsFailedError as e1: # 다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증
         print("다른 모델도 전부 실패 -> 차순위: 생성자 본인이 검증")
 
         try:
             answer, verified_by, disabled_models, tokens_used = invoke_with_fallback(state.generated_by, messages, structured=verified,
                                                                     disabled_models=state.disabled_models)
-        except RuntimeError: # 차순위도 실패->검증 생략
+        except AllModelsFailedError as e2: # 차순위도 실패->검증 생략
             print("차순위도 실패->검증 생략")
             return {"fix_needed" : False,
             "what_to_fix" : "",
             "try_count" : state.try_count+1,
             "needs_more_context" : False,
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
-            # 이 분기에 온 시점엔 이미 model_map의 전 모델이 실패한 상태다(1차 시도가
-            # generated_by를 뺀 나머지 전부를 시도하다 RuntimeError로 끝났고, 2차 시도의
-            # generated_by도 방금 실패) — 그런데 예전엔 state.disabled_models+[generated_by]만
-            # 기록해서 1차 시도 중 실패한 다른 모델들이 이 턴 이후엔 "안 막힌 것"처럼 보이는
-            # 버그가 있었다(invoke_with_fallback이 RuntimeError를 던질 때 그 시도에서 새로
-            # disabled된 모델 목록을 반환하지 않고 버리기 때문 — 되살릴 방법이 없어 아예
-            # "전부 실패했다"는 사실 자체로 model_map 전체를 막는 쪽이 더 정확하다).
-            "disabled_models" : list(model_map.keys()),
+            # disabled_models(08-06 갱신) — 예전엔 "1차·2차 둘 다 실패했다"는 사실 자체로
+            # model_map 전체를 막았다(길이 초과처럼 요청 자체가 문제라 전 모델이 같은
+            # 이유로 실패해도 똑같이 세션 내내 차단됐다). 이제 AllModelsFailedError가
+            # 각 시도에서 실제로 세션 차단감이라고 판정된 모델만 들고 있으므로(models.py
+            # 참고), 두 시도의 결과를 합친다 — 둘 다 순수 요청 실패뿐이었다면
+            # (e1.disabled_models | e2.disabled_models)는 state.disabled_models와 같아서
+            # (새로 추가된 게 없어서) 아무것도 안 막힌다.
+            "disabled_models" : list(dict.fromkeys(e1.disabled_models + e2.disabled_models)),
             "trace" : state.trace+
             f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략""",
             "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}  # 사용자도 알아야 할 진짜 주의점

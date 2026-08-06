@@ -61,6 +61,16 @@ def test_list_interests_returns_in_id_order(conn):
     assert [r["title"] for r in rows] == ["첫번째", "두번째", "세번째"]
 
 
+def test_move_interest_swaps_with_neighbor(conn):
+    first = interests.create_interest("첫번째", conn=conn)
+    second = interests.create_interest("두번째", conn=conn)
+
+    assert interests.move_interest(second, "up", conn=conn) is True
+    rows = interests.list_interests(conn=conn)
+    assert [r["title"] for r in rows] == ["두번째", "첫번째"]
+    assert interests.move_interest(first, "down", conn=conn) is False  # 이미 맨 뒤
+
+
 def test_update_interest_only_touches_given_fields(conn):
     interest_id = interests.create_interest(
         "원래 제목", looking_for="원래 내용", already_known="아는 것", conn=conn

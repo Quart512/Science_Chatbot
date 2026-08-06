@@ -109,12 +109,42 @@ def test_get_note_does_not_touch_vectorstore(conn):
     assert knowledge_notes.get_note(note_id, conn=conn)["text"] == "본문"
 
 
-def test_list_notes_orders_by_updated_at_desc(conn, vs):
-    knowledge_notes.create_note("첫 번째", "a", conn=conn, vectorstore=vs)
+def test_list_notes_orders_by_sort_order(conn, vs):
+    # 08-06 — 기본 정렬을 updated_at DESC(최근 수정 순)에서 수동 정렬(sort_order,
+    # library_order.py)로 바꿨다. 새로 만든 노트는 끝에 붙는다(등록 순서 그대로).
+    first_id = knowledge_notes.create_note("첫 번째", "a", conn=conn, vectorstore=vs)
     second_id = knowledge_notes.create_note("두 번째", "b", conn=conn, vectorstore=vs)
 
     notes = knowledge_notes.list_notes(conn=conn)
-    assert notes[0]["id"] == second_id  # 가장 최근 것이 먼저
+    assert [n["id"] for n in notes] == [first_id, second_id]
+
+    # 수정해도(updated_at이 바뀌어도) 순서는 그대로 — 수동 정렬의 핵심 계약.
+    knowledge_notes.update_note(first_id, conn=conn, vectorstore=vs, text="수정됨")
+    notes = knowledge_notes.list_notes(conn=conn)
+    assert [n["id"] for n in notes] == [first_id, second_id]
+
+
+def test_move_note_swaps_with_neighbor(conn, vs):
+    first_id = knowledge_notes.create_note("첫 번째", "a", conn=conn, vectorstore=vs)
+    second_id = knowledge_notes.create_note("두 번째", "b", conn=conn, vectorstore=vs)
+
+    assert knowledge_notes.move_note(second_id, "up", conn=conn) is True
+    notes = knowledge_notes.list_notes(conn=conn)
+    assert [n["id"] for n in notes] == [second_id, first_id]
+
+    # 이미 맨 앞이라 더 못 올라감 — False, 순서도 그대로.
+    assert knowledge_notes.move_note(second_id, "up", conn=conn) is False
+    notes = knowledge_notes.list_notes(conn=conn)
+    assert [n["id"] for n in notes] == [second_id, first_id]
+
+
+def test_list_notes_title_search_is_substring(conn, vs):
+    a = knowledge_notes.create_note("양자역학 메모", "본문", conn=conn, vectorstore=vs)
+    knowledge_notes.create_note("고전역학 메모", "본문", conn=conn, vectorstore=vs)
+    knowledge_notes.create_note("전혀 다른 제목", "본문", conn=conn, vectorstore=vs)
+
+    matched = knowledge_notes.list_notes(q="양자", conn=conn)
+    assert [n["id"] for n in matched] == [a]
 
 
 # --- update_note() ---------------------------------------------------------------

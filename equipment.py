@@ -22,6 +22,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import interests
+import library_order
 
 APP_DB_PATH = interests.APP_DB_PATH
 
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS equipment (
     purpose TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT '',
     precautions TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -49,6 +51,7 @@ _EXPECTED_COLUMNS = {
     "purpose": "TEXT NOT NULL DEFAULT ''",
     "detail": "TEXT NOT NULL DEFAULT ''",
     "precautions": "TEXT NOT NULL DEFAULT ''",
+    "sort_order": "INTEGER NOT NULL DEFAULT 0",  # 08-06, library_order.py 참고
 }
 
 
@@ -61,6 +64,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             # ADD COLUMN은 기존 행을 DEFAULT로 채워주므로 데이터 손실이 없다(그래서
             # NOT NULL 컬럼도 DEFAULT만 있으면 나중에 붙일 수 있다).
             conn.execute(f"ALTER TABLE equipment ADD COLUMN {name} {ddl}")
+            if name == "sort_order":
+                library_order.backfill_sort_order("equipment", "id", conn=conn)
     conn.commit()
 
 
@@ -89,10 +94,11 @@ def create_equipment(
     conn = conn or _get_connection()
     try:
         now = _now()
+        sort_order = library_order.next_sort_order("equipment", conn=conn)
         cur = conn.execute(
-            "INSERT INTO equipment (name, purpose, detail, precautions, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, purpose, detail, precautions, now, now),
+            "INSERT INTO equipment (name, purpose, detail, precautions, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, purpose, detail, precautions, sort_order, now, now),
         )
         conn.commit()
         return cur.lastrowid
@@ -105,8 +111,18 @@ def list_equipment(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
-        rows = conn.execute("SELECT * FROM equipment ORDER BY id").fetchall()
+        rows = conn.execute("SELECT * FROM equipment ORDER BY sort_order").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def move_equipment(equipment_id: int, direction: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        return library_order.move_item("equipment", "id", equipment_id, direction, conn=conn)
     finally:
         if owns_conn:
             conn.close()

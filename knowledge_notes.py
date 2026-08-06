@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import interests
+import library_order
 
 APP_DB_PATH = interests.APP_DB_PATH
 
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -37,9 +39,22 @@ CREATE TABLE IF NOT EXISTS notes (
 # 없는 평범한 텍스트라 paper_chunking.py의 헤더 기반 분할이 아니라 이 단순 분할이 맞다.
 _SPLITTER = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
+# sort_order(08-06, library_order.py 참고) — 기존 기본 정렬(updated_at DESC, "최근 수정
+# 순")을 수동 정렬로 대체한다. 처음 추가하는 컬럼이라 equipment.py와 같은 ALTER TABLE
+# 가드가 필요.
+_EXPECTED_COLUMNS = {
+    "sort_order": "INTEGER NOT NULL DEFAULT 0",
+}
+
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(notes)")}
+    for name, ddl in _EXPECTED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE notes ADD COLUMN {name} {ddl}")
+            if name == "sort_order":
+                library_order.backfill_sort_order("notes", "id", conn=conn)
     conn.commit()
 
 
@@ -88,9 +103,10 @@ def create_note(
     conn = conn or _get_connection()
     try:
         now = _now()
+        sort_order = library_order.next_sort_order("notes", conn=conn)
         cur = conn.execute(
-            "INSERT INTO notes (title, text, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (title, text, now, now),
+            "INSERT INTO notes (title, text, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (title, text, sort_order, now, now),
         )
         conn.commit()
         note_id = cur.lastrowid
@@ -113,12 +129,29 @@ def get_note(note_id: int, *, conn: sqlite3.Connection | None = None) -> dict | 
             conn.close()
 
 
-def list_notes(*, conn: sqlite3.Connection | None = None) -> list[dict]:
+def list_notes(*, q: str | None = None, conn: sqlite3.Connection | None = None) -> list[dict]:
+    """q(08-06)는 제목 부분 일치 검색 — paper_catalog.list_papers()와 같은 계약."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
-        rows = conn.execute("SELECT * FROM notes ORDER BY updated_at DESC").fetchall()
+        if q:
+            rows = conn.execute(
+                "SELECT * FROM notes WHERE title LIKE ? ESCAPE '\\' ORDER BY sort_order",
+                (library_order.escape_like(q),),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM notes ORDER BY sort_order").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def move_note(note_id: int, direction: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        return library_order.move_item("notes", "id", note_id, direction, conn=conn)
     finally:
         if owns_conn:
             conn.close()

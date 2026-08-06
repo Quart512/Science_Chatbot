@@ -963,6 +963,34 @@ def test_track_in_background_skips_spawn_when_already_in_progress(monkeypatch, t
     assert result["analysis_status"] == "analyzing"  # 기존 상태를 그대로 돌려줌(재시도 아님)
 
 
+# 08-06, 논문 분석 멈춤 버그 대응(PaperRow "다시 시도" 버튼) — failed로 멈춘 논문을
+# doi/arxiv_id 없이 재시도하면 normalize_paper_id가 파일 해시로 새 paper_id를 계산해서
+# 원본 행과 분리된 고아 중복을 만든다(실제로 겪은 버그). arxiv_id를 그대로 넘기면
+# 원래 행과 같은 paper_id로 재계산돼야 한다.
+def test_track_in_background_retry_with_arxiv_id_reuses_same_paper_id(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    expected_paper_id = paper_ingest.normalize_paper_id(arxiv_id="2401.12345", file_bytes=b"dummy content")
+
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "analysis_status": "failed"} if paper_id == expected_paper_id else None,
+    )
+    mark_owned_calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: mark_owned_calls.append((paper_id, kwargs)),
+    )
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: None)  # 백그라운드는 안 돌림
+
+    result = paper_ingest.track_in_background(
+        str(pdf_path), file_path="paper.pdf", filename="paper.pdf", arxiv_id="2401.12345",
+    )
+
+    assert result["paper_id"] == expected_paper_id  # 해시 기반의 다른 id가 아니라 원본과 동일
+    assert mark_owned_calls[0][0] == expected_paper_id
+
+
 def test_track_in_background_completes_full_pipeline_synchronously(monkeypatch, tmp_path):
     # _spawn_background를 동기 실행으로 갈아끼워 register_paper() 전체(파싱만 몽키패치,
     # 나머지는 진짜)가 끝까지 돌고 analysis_status가 pending → analyzing → (register_paper의

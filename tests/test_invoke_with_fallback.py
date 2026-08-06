@@ -187,13 +187,16 @@ def test_request_scoped_failure_on_every_model_terminates(monkeypatch):
     fake_claude = make_fake_model(raises=ChatGoogleGenerativeAIError("400 INVALID_ARGUMENT"))
     monkeypatch.setattr(models, "model_map", {"gemini": lambda: fake_gemini, "claude": lambda: fake_claude})
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(models.AllModelsFailedError) as excinfo:
         models.invoke_with_fallback("gemini", messages=["dummy"])
 
     message = str(excinfo.value)
     assert "gemini" in message and "claude" in message
     assert "INVALID_ARGUMENT" in message   # 진짜 원인이 안 사라진다
     assert excinfo.value.__cause__ is not None  # raise ... from exc 로 원본 예외가 체인됨
+    # disabled_models 정밀화(08-06) — 요청 한정 실패뿐이었으니 새로 세션 차단할 모델이
+    # 없다. 호출부(graph.py)가 이걸 그대로 써서 "전부 실패=세션 전체 차단"을 피한다.
+    assert excinfo.value.disabled_models == []
 
 
 def test_client_construction_failure_falls_back(monkeypatch):
@@ -220,12 +223,14 @@ def test_client_construction_failure_on_every_model_raises_with_detail(monkeypat
         raise models.MissingAPIKeyError("claude")
     monkeypatch.setattr(models, "model_map", {"gemini": _boom_gemini, "claude": _boom_claude})
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(models.AllModelsFailedError) as excinfo:
         models.invoke_with_fallback("gemini", messages=["dummy"])
 
     message = str(excinfo.value)
     assert "gemini" in message and "claude" in message
     assert "API 키" in message
+    # MissingAPIKeyError는 SESSION_OUTAGE_EXCEPTIONS라 둘 다 진짜 세션 차단감이어야 한다.
+    assert set(excinfo.value.disabled_models) == {"gemini", "claude"}
 
 
 def test_disabled_models_are_skipped_without_calling_invoke(monkeypatch):

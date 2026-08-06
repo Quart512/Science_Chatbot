@@ -90,6 +90,30 @@ def test_list_equipment_returns_in_id_order(conn):
     assert [r["name"] for r in rows] == ["첫번째", "두번째", "세번째"]
 
 
+# --- move_equipment() (08-06, library_order.py) -----------------------------------
+
+def test_move_equipment_swaps_with_neighbor(conn):
+    first = equipment.create_equipment("첫번째", conn=conn)
+    second = equipment.create_equipment("두번째", conn=conn)
+    equipment.create_equipment("세번째", conn=conn)
+
+    assert equipment.move_equipment(second, "up", conn=conn) is True
+    rows = equipment.list_equipment(conn=conn)
+    assert [r["name"] for r in rows] == ["두번째", "첫번째", "세번째"]
+
+    # 맨 앞으로 온 항목은 더 못 올라간다.
+    assert equipment.move_equipment(second, "up", conn=conn) is False
+
+
+def test_move_equipment_at_bottom_boundary_is_noop(conn):
+    equipment.create_equipment("첫번째", conn=conn)
+    last = equipment.create_equipment("두번째", conn=conn)
+
+    assert equipment.move_equipment(last, "down", conn=conn) is False
+    rows = equipment.list_equipment(conn=conn)
+    assert [r["name"] for r in rows] == ["첫번째", "두번째"]
+
+
 def test_update_equipment_only_touches_given_fields(conn):
     equipment_id = equipment.create_equipment(
         "원래 이름", purpose="원래 목적", detail="원래 세부", conn=conn

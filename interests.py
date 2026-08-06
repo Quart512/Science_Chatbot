@@ -7,6 +7,8 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
+import library_order
+
 APP_DB_PATH = "data/app.db"
 
 # 로드맵이 명시한 필수 템플릿 필드 — 관심사 문서는 이 세 질문에 대한 답이 전부다
@@ -20,10 +22,19 @@ CREATE TABLE IF NOT EXISTS interests (
     looking_for TEXT NOT NULL DEFAULT '',
     already_known TEXT NOT NULL DEFAULT '',
     excluded_topics TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 """
+
+# sort_order(08-06, 라이브러리 화면 수동 정렬 — library_order.py 참고) — 처음으로 이
+# 테이블에 컬럼을 추가하는 경우라 equipment.py/paper_catalog.py의 기존 ALTER TABLE
+# 패턴을 그대로 들여온다("정식 마이그레이션 도구는 과하다"는 원래 판단은 테이블이
+# 하나면 유지되지만, 컬럼 추가 자체는 피할 수 없다).
+_EXPECTED_COLUMNS = {
+    "sort_order": "INTEGER NOT NULL DEFAULT 0",
+}
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -32,6 +43,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
     받는 이유: 실제 연결(_get_connection())과 테스트용 :memory: 연결 양쪽에 같은 스키마를
     적용해야 하는데, 후자는 _get_connection()을 거치지 않으므로 명시적으로 호출해야 한다."""
     conn.executescript(SCHEMA)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(interests)")}
+    for name, ddl in _EXPECTED_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE interests ADD COLUMN {name} {ddl}")
+            if name == "sort_order":
+                library_order.backfill_sort_order("interests", "id", conn=conn)
     conn.commit()
 
 
@@ -60,10 +77,11 @@ def create_interest(
     conn = conn or _get_connection()
     try:
         now = _now()
+        sort_order = library_order.next_sort_order("interests", conn=conn)
         cur = conn.execute(
-            "INSERT INTO interests (title, looking_for, already_known, excluded_topics, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (title, looking_for, already_known, excluded_topics, now, now),
+            "INSERT INTO interests (title, looking_for, already_known, excluded_topics, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (title, looking_for, already_known, excluded_topics, sort_order, now, now),
         )
         conn.commit()
         return cur.lastrowid
@@ -76,8 +94,18 @@ def list_interests(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
-        rows = conn.execute("SELECT * FROM interests ORDER BY id").fetchall()
+        rows = conn.execute("SELECT * FROM interests ORDER BY sort_order").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def move_interest(interest_id: int, direction: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        return library_order.move_item("interests", "id", interest_id, direction, conn=conn)
     finally:
         if owns_conn:
             conn.close()

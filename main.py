@@ -45,6 +45,12 @@ from models import ContextBudgetExceeded, all_models_failed_message
 async def lifespan(app: FastAPI):
     orchestrator.ensure_checkpoint_dir()
     research_workflow.ensure_checkpoint_dir()
+    # 논문 분석 멈춤 버그 대응(08-06, RoadMap 참고) — 지난 실행이 "analyzing"/"pending"
+    # 상태에서 죽었으면(daemon thread가 정리 없이 같이 죽음) 여기서 "failed"로 돌려놔야
+    # track_in_background()의 재시도 가드를 벗어나 사용자가 다시 시도할 수 있다.
+    stale = paper_catalog.reset_stale_analysis_status()
+    if stale:
+        print(f"이전 실행에서 멈춘 논문 분석 {len(stale)}건을 failed로 되돌림: {stale}")
     async with (
         AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer,
         AsyncSqliteSaver.from_conn_string(research_workflow.CHECKPOINT_DB_PATH) as research_checkpointer,
@@ -308,6 +314,15 @@ def delete_interest(interest_id: int):
     return {"interest_id": interest_id, "action": "deleted"}
 
 
+# 라이브러리 수동 정렬(08-06, library_order.py) — 위/아래 버튼이 부르는 4개 엔드포인트
+# 중 하나. moved=False는 에러가 아니라 "이미 맨 앞/맨 뒤라 옮길 게 없었다"는 정상
+# 결과(프론트가 경계에서 버튼을 disabled로 두지만, 레이스 등에 대비한 안전망).
+@app.post("/api/interests/{interest_id}/move")
+def move_interest(interest_id: int, direction: Literal["up", "down"]):
+    moved = interests.move_interest(interest_id, direction)
+    return {"interest_id": interest_id, "moved": moved}
+
+
 # "관심사에서 트리거할 때만" 실행(cron 아님) — 라이브러리 관심사 카드의 검색 버튼만
 # 호출한다. 결과를 한 번에 돌려주는 단순한 형태(스트리밍은 필요해지면 SSE로 전환).
 # start는 페이지네이션 오프셋 — "추가 검색"이 다음 순위부터 이어받는다.
@@ -390,8 +405,18 @@ def register_paper_endpoint(
 # status로 필터링(recommended/owned/dismissed) — 관심사별 필터는 interest_paper 조인
 # 테이블이 없어 아직 불가(RoadMap "관심사↔논문이 다대다다" 참고), 전역 목록만 가능.
 @app.get("/api/papers")
-def list_papers(status: Literal["recommended", "owned", "dismissed"] | None = None):
-    return {"papers": paper_catalog.list_papers(status=status)}
+def list_papers(
+    status: Literal["recommended", "owned", "dismissed"] | None = None,
+    sort: Literal["created_desc", "created_asc", "updated_desc", "updated_asc"] | None = None,
+    q: str | None = None,
+):
+    return {"papers": paper_catalog.list_papers(status=status, sort=sort, q=q)}
+
+
+@app.post("/api/papers/{paper_id}/move")
+def move_paper(paper_id: str, direction: Literal["up", "down"]):
+    moved = paper_catalog.move_paper(paper_id, direction)
+    return {"paper_id": paper_id, "moved": moved}
 
 
 # 논문 내용 조회(08-03) — get_paper_summary()는 이미 있었지만 지금까지 어디서도 호출을
@@ -456,6 +481,15 @@ def list_library_files():
 # 시점엔 이미 응답이 나간 뒤라 analysis_status="failed"로만 반영된다(폴링으로 확인).
 class LibraryTrackRequest(BaseModel):
     path: str
+    # doi/arxiv_id/title(08-06, 논문 분석 멈춤 버그 대응 — PaperRow의 "다시 시도"가
+    # 이 세 필드를 넘긴다) — 안 넘기면(②-B의 기존 "미추적 파일에 추가" 경로) 예전과
+    # 동일하게 해시 기반 paper_id가 나온다. **재시도인데 이 필드들을 빠뜨리면**
+    # normalize_paper_id(DOI>arXiv>해시 우선순위)가 원래 arxiv/doi로 등록됐던 논문을
+    # 해시 기반의 **다른 paper_id**로 다시 만들어버려 원본 행과 분리된 고아 중복이
+    # 생긴다 — 실제로 재현·확인한 버그(RoadMap 참고).
+    doi: str | None = None
+    arxiv_id: str | None = None
+    title: str | None = None
 
 
 @app.post("/api/library/track")
@@ -467,7 +501,8 @@ def track_library_file(body: LibraryTrackRequest):
     if not os.path.isfile(abs_path):
         raise HTTPException(status_code=404, detail=f"library/{body.path} 파일을 찾을 수 없습니다")
     return paper_ingest.track_in_background(
-        abs_path, file_path=body.path, filename=os.path.basename(body.path)
+        abs_path, file_path=body.path, filename=os.path.basename(body.path),
+        doi=body.doi, arxiv_id=body.arxiv_id, title=body.title,
     )
 
 
@@ -652,6 +687,12 @@ def delete_equipment(equipment_id: int):
     return {"equipment_id": equipment_id, "action": "deleted"}
 
 
+@app.post("/api/equipment/{equipment_id}/move")
+def move_equipment(equipment_id: int, direction: Literal["up", "down"]):
+    moved = equipment.move_equipment(equipment_id, direction)
+    return {"equipment_id": equipment_id, "moved": moved}
+
+
 # 지식 노트(08-03) — /equipment와 같은 패턴이되, text는 편집이 일급 연산이라(RoadMap
 # "편집이 일급 연산이다" 참고) None 기본값으로 "명시 안 함"과 "빈 값" 구분 필요.
 class NoteRegistration(BaseModel):
@@ -661,8 +702,8 @@ class NoteRegistration(BaseModel):
 
 
 @app.get("/api/notes")
-def list_notes():
-    return {"notes": knowledge_notes.list_notes()}
+def list_notes(q: str | None = None):
+    return {"notes": knowledge_notes.list_notes(q=q)}
 
 
 @app.post("/api/notes")
@@ -688,6 +729,12 @@ def delete_note(note_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"노트 id={note_id}를 찾을 수 없습니다")
     return {"note_id": note_id, "action": "deleted"}
+
+
+@app.post("/api/notes/{note_id}/move")
+def move_note(note_id: int, direction: Literal["up", "down"]):
+    moved = knowledge_notes.move_note(note_id, direction)
+    return {"note_id": note_id, "moved": moved}
 
 
 # 설정 화면(08-05) — 사용자 API 키 입력. RoadMap "싱글 유저 로컬 앱 확정" 결정("API 키는

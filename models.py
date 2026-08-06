@@ -195,13 +195,35 @@ def _is_session_outage(exc: BaseException) -> bool:
     return False
 
 
-def _all_failed_error(attempted: list[str], errors: dict[str, str]) -> RuntimeError:
+class AllModelsFailedError(RuntimeError):
+    """model_map의 모든 후보가 실패했을 때 invoke_with_fallback()이 던진다(08-06,
+    disabled_models 세션 차단 정밀화 — RoadMap 참고).
+
+    disabled_models는 이 호출 체인이 실제로 세션 차단이 필요하다고(_is_session_outage)
+    판단한 모델만 담는다 — 요청 한정 실패(REQUEST_SCOPED_EXCEPTIONS)는 안 담긴다.
+    **이게 이 클래스를 만든 이유**: 예전엔 여기서 그냥 평범한 RuntimeError를 던져서,
+    "실패했다"는 사실만 남고 "왜, 어느 모델이 진짜 세션 차단감인지"가 사라졌다 — 그래서
+    호출부(graph.py)가 안전한 쪽으로 물러나 **전부 실패했으니 model_map 전체를 막는다**는
+    보수적인 선택을 했었다. 요청 자체가 잘못돼(길이 초과 등) 전 모델이 같은 이유로
+    실패한 경우까지 이걸로 덩달아 세션 내내 차단돼, 다음 턴에 사용자가 고른 모델이
+    조용히 사라지는 게 실제 피해였다. 이제 disabled_models를 그대로 들고 있으므로
+    호출부는 `except AllModelsFailedError as e: ... e.disabled_models`로 정확히
+    필요한 만큼만(세션 차단이 실제로 근거 있는 모델만) 반영할 수 있다."""
+
+    def __init__(self, attempted: list[str], errors: dict[str, str], disabled_models: list[str]):
+        self.attempted = attempted
+        self.errors = errors
+        self.disabled_models = disabled_models
+        detail = "; ".join(f"{m}: {errors[m]}" for m in attempted if m in errors)
+        super().__init__(f"tried {attempted} but all failed — {detail or '시도할 수 있는 모델이 없음'}")
+
+
+def _all_failed_error(attempted: list[str], errors: dict[str, str], disabled_models: list[str]) -> AllModelsFailedError:
     """모든 후보가 실패했을 때의 예외. 모델별 실패 사유를 메시지에 담는 이유는, 예전엔
     'tried [...] but all failed'만 남아서 **진짜 원인이 통째로 사라졌기** 때문이다 —
     요청 형식이 잘못돼 전 모델이 같은 이유로 실패한 경우와 정말 전 모델이 죽은 경우가
     호출부에서 구분이 안 됐다."""
-    detail = "; ".join(f"{m}: {errors[m]}" for m in attempted if m in errors)
-    return RuntimeError(f"tried {attempted} but all failed — {detail or '시도할 수 있는 모델이 없음'}")
+    return AllModelsFailedError(attempted, errors, disabled_models)
 
 
 def all_models_failed_message(exc: Exception) -> str:
@@ -244,7 +266,7 @@ def invoke_with_fallback(model,
 
     if primary_name in temp_models_skip:
         if secondary_name is None:  #다 돌아서 없어!
-            raise _all_failed_error(attempted, errors)
+            raise _all_failed_error(attempted, errors, disabled_models)
         else:
             return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured,
                                         models_skip=models_skip, disabled_models=disabled_models,
@@ -297,7 +319,7 @@ def invoke_with_fallback(model,
             print(f"이번 요청 실패(세션 차단 안 함) → fallback인 {secondary_name} 모델로 전환")
 
         if secondary_name is None:    #다 돌아서 없어!
-            raise _all_failed_error(attempted, errors) from exc
+            raise _all_failed_error(attempted, errors, disabled_models) from exc
         return invoke_with_fallback(secondary_name, messages, tools=tools, structured=structured,
                                     models_skip=models_skip, disabled_models=disabled_models,
                                     _attempted=attempted, _errors=errors)

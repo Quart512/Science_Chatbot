@@ -24,6 +24,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import interests
+import library_order
 
 APP_DB_PATH = interests.APP_DB_PATH
 
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS papers (
     file_path TEXT,
     content_sha256 TEXT,
     analysis_status TEXT NOT NULL DEFAULT 'untracked',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -79,6 +81,7 @@ _EXPECTED_COLUMNS = {
     "file_path": "TEXT",
     "content_sha256": "TEXT",
     "analysis_status": "TEXT NOT NULL DEFAULT 'untracked'",
+    "sort_order": "INTEGER NOT NULL DEFAULT 0",  # 08-06, library_order.py 참고
 }
 
 
@@ -88,6 +91,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     for name, ddl in _EXPECTED_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE papers ADD COLUMN {name} {ddl}")
+            if name == "sort_order":
+                # 기존 정렬(paper_id 문자열순 — DOI/arXiv id/해시가 섞여 사실상 무의미했다)
+                # 대신 삽입 순서(rowid)로 초기화 — 위 backfill_sort_order 참고.
+                library_order.backfill_sort_order("papers", "paper_id", conn=conn)
     conn.commit()
 
 
@@ -116,17 +123,59 @@ def get_paper(paper_id: str, *, conn: sqlite3.Connection | None = None) -> dict 
             conn.close()
 
 
-def list_papers(*, status: str | None = None, conn: sqlite3.Connection | None = None) -> list[dict]:
+# sort(08-06) — 기본(None)은 sort_order(수동 정렬, library_order.py). 나머지는 프론트
+# 정렬 드롭다운이 고를 수 있는 4가지뿐이라 화이트리스트 dict로 SQL을 고정(사용자 입력
+# 문자열을 ORDER BY에 직접 꽂지 않기 위함 — main.py의 Literal 타입이 이미 값 자체를
+# 막지만, 여기서도 dict 조회라 알 수 없는 키는 KeyError로 막힌다).
+_SORT_SQL = {
+    "created_desc": "created_at DESC",
+    "created_asc": "created_at ASC",
+    "updated_desc": "updated_at DESC",
+    "updated_asc": "updated_at ASC",
+}
+
+
+def list_papers(
+    *, status: str | None = None, sort: str | None = None, q: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """q(08-06)는 제목 부분 일치 검색뿐 — 저자·초록까지 넓히면 "제목 검색"이라는
+    사용자 기대와 어긋난다. sort가 None이면 수동 정렬(sort_order) — q나 sort 중
+    하나라도 켜지면 화면이 "위/아래 버튼 끄기"로 반응한다(main.py 주석 참고)."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
-        if status is None:
-            rows = conn.execute("SELECT * FROM papers ORDER BY paper_id").fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM papers WHERE status = ? ORDER BY paper_id", (status,)
-            ).fetchall()
+        where, params = [], []
+        if status is not None:
+            where.append("status = ?")
+            params.append(status)
+        if q:
+            where.append("title LIKE ? ESCAPE '\\'")
+            params.append(library_order.escape_like(q))
+        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+        order_sql = _SORT_SQL[sort] if sort is not None else "sort_order"
+        rows = conn.execute(f"SELECT * FROM papers{where_sql} ORDER BY {order_sql}", params).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def move_paper(paper_id: str, direction: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    """같은 status 안에서만 이웃을 찾는다(library_order.move_item의 scope_where) — 화면에
+    순서 버튼이 있는 "보유 논문" 목록은 status='owned'만 보여주는데, recommended/dismissed
+    논문까지 같은 sort_order 축을 공유하므로 필터 없이 이웃을 찾으면 화면에 안 보이는
+    다른 status 논문과 뒤바뀌어 버튼을 눌러도 목록이 그대로인 것처럼 보인다."""
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        status_row = conn.execute("SELECT status FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()
+        if status_row is None:
+            return False
+        return library_order.move_item(
+            "papers", "paper_id", paper_id, direction, conn=conn,
+            scope_where="status = ?", scope_params=(status_row["status"],),
+        )
     finally:
         if owns_conn:
             conn.close()
@@ -243,10 +292,11 @@ def upsert_recommended(
         if conn.execute("SELECT 1 FROM papers WHERE paper_id = ?", (paper_id,)).fetchone():
             return False
         now = _now()
+        sort_order = library_order.next_sort_order("papers", conn=conn)
         conn.execute(
-            "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'recommended', ?, ?)",
-            (paper_id, doi, arxiv_id, title, authors, year, now, now),
+            "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'recommended', ?, ?, ?)",
+            (paper_id, doi, arxiv_id, title, authors, year, sort_order, now, now),
         )
         conn.commit()
         return True
@@ -312,13 +362,14 @@ def mark_owned(
                 (title, authors, year, filename, file_path, content_sha256, analysis_status, now, paper_id),
             )
         else:
+            sort_order = library_order.next_sort_order("papers", conn=conn)
             conn.execute(
                 "INSERT INTO papers (paper_id, doi, arxiv_id, title, authors, year, status, filename, "
-                "file_path, content_sha256, analysis_status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?, ?, ?, ?)",
+                "file_path, content_sha256, analysis_status, sort_order, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'owned', ?, ?, ?, ?, ?, ?, ?)",
                 (
                     paper_id, doi, arxiv_id, title, authors, year, filename, file_path, content_sha256,
-                    analysis_status, now, now,
+                    analysis_status, sort_order, now, now,
                 ),
             )
         conn.commit()
@@ -342,6 +393,40 @@ def set_analysis_status(paper_id: str, status: str, *, conn: sqlite3.Connection 
         )
         conn.commit()
         return cur.rowcount > 0
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+def reset_stale_analysis_status(*, conn: sqlite3.Connection | None = None) -> list[str]:
+    """서버 기동 시(lifespan) 1회 호출 — "pending"/"analyzing"에 멈춰있는 행을 전부
+    "failed"로 되돌린다(RoadMap "논문 분석 — 서버가 죽으면 analysis_status가 '분석
+    중'에 영구히 멈추고 재시도도 안 됨" 항목).
+
+    paper_ingest._spawn_background()의 daemon thread는 프로세스가 죽으면 정리 코드
+    없이 그냥 죽는다 — 그래서 서버가 "analyzing"(또는 스레드가 뜨기도 전인 "pending")
+    상태에서 재시작되면(크래시·재배포 등) 그 논문은 영원히 이 상태에 멈춘다. 이 상태
+    자체가 track_in_background()의 "이미 진행 중이면 건너뛴다" 가드(analysis_status
+    in ("pending","analyzing"))에 걸려서 같은 파일을 다시 트래킹해도 재시도가 안
+    됐다 — "failed"로만 돌려놓으면 그 가드를 벗어나 POST /api/library/track가 다시
+    정상 동작한다(파일이 아직 거기 있다는 전제, 옮겨졌으면 사용자가 "다시 스캔" 필요).
+
+    반환값은 되돌린 paper_id 목록(로그 출력용) — 서버 재시작마다 매번 도는 함수라
+    빈 배열이 정상이고, 실제로 채워지면 "지난번에 뭔가 죽었다"는 신호라 print로 남긴다."""
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        stale = conn.execute(
+            "SELECT paper_id FROM papers WHERE analysis_status IN ('pending', 'analyzing')"
+        ).fetchall()
+        if stale:
+            conn.execute(
+                "UPDATE papers SET analysis_status = 'failed', updated_at = ? "
+                "WHERE analysis_status IN ('pending', 'analyzing')",
+                (_now(),),
+            )
+            conn.commit()
+        return [row["paper_id"] for row in stale]
     finally:
         if owns_conn:
             conn.close()

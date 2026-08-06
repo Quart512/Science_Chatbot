@@ -564,10 +564,13 @@ def test_track_library_file_forwards_to_track_in_background(monkeypatch, tmp_pat
 
     captured = {}
 
-    def _fake_track(pdf_path, *, file_path=None, filename=""):
+    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, title=None):
         captured["pdf_path"] = pdf_path
         captured["filename"] = filename
         captured["file_path"] = file_path
+        captured["doi"] = doi
+        captured["arxiv_id"] = arxiv_id
+        captured["title"] = title
         return {"paper_id": "hash:aaa", "analysis_status": "pending"}
 
     monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
@@ -580,6 +583,38 @@ def test_track_library_file_forwards_to_track_in_background(monkeypatch, tmp_pat
     assert captured["file_path"] == "quantum/paper.pdf"
     assert captured["filename"] == "paper.pdf"
     assert captured["pdf_path"] == str((tmp_path / "quantum" / "paper.pdf").resolve())
+    assert captured["doi"] is None
+    assert captured["arxiv_id"] is None
+    assert captured["title"] is None
+
+
+# 08-06, 논문 분석 멈춤 버그 대응 — 재시도가 doi/arxiv_id/title을 넘기면 그대로
+# track_in_background()까지 전달돼야 한다(안 그러면 normalize_paper_id가 원래 논문과
+# 다른 paper_id를 만들어 고아 중복이 생긴다 — 실제로 겪은 버그, RoadMap 참고).
+def test_track_library_file_forwards_doi_arxiv_title_for_retry(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "paper.pdf").write_bytes(b"%PDF-1.4 dummy")
+
+    captured = {}
+
+    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, title=None):
+        captured["doi"] = doi
+        captured["arxiv_id"] = arxiv_id
+        captured["title"] = title
+        return {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
+
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/track",
+            json={"path": "paper.pdf", "arxiv_id": "2401.12345", "title": "재시도 논문"},
+        )
+
+    assert resp.status_code == 200
+    assert captured["arxiv_id"] == "2401.12345"
+    assert captured["title"] == "재시도 논문"
+    assert captured["doi"] is None
 
 
 def test_track_library_file_404_when_missing(monkeypatch, tmp_path):
@@ -947,7 +982,7 @@ def test_get_paper_file_400_on_traversal(monkeypatch, tmp_path):
 
 def test_list_notes_returns_all(monkeypatch):
     fake_notes = [{"id": 1, "title": "노트1", "text": "내용"}]
-    monkeypatch.setattr(knowledge_notes, "list_notes", lambda: fake_notes)
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda q=None: fake_notes)
 
     with TestClient(main.app) as client:
         resp = client.get("/api/notes")
