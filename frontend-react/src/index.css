@@ -125,3 +125,32 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* 스크롤바 테마 대응(08-06) — 지금까지 브라우저 기본 스크롤바(회색/흰색)를 그대로
+   써서 다크·라이트 둘 다 배경과 안 어울렸다. 토큰을 그대로 참조해 테마 전환에 같이
+   따라가게 함 — Firefox는 scrollbar-color, WebKit(Chrome/Edge/Safari)은
+   ::-webkit-scrollbar 계열로 표준이 갈려 둘 다 선언(전역 * 하나로 왼쪽 네비·챗
+   패널·본문 스크롤 전부 커버). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) var(--color-bg);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 6px;
+  border: 2px solid var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-dim);
+}
