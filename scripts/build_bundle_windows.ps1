@@ -97,7 +97,7 @@ $Items = @(
     "arxiv_api.py", "paper_catalog.py", "paper_search.py", "paper_screening.py",
     "paper_recommend.py", "reference_recommender.py", "research_workflow.py",
     "research_sessions.py", "research_branches.py", "research_notes.py",
-    "equipment.py", "paper"
+    "equipment.py", "library_order.py", "paper"
 )
 foreach ($item in $Items) {
     $src = Join-Path $RepoRoot $item

@@ -83,7 +83,7 @@ for item in main.py graph.py models.py orchestrator.py retrieval.py embeddings.p
             arxiv_api.py paper_catalog.py paper_search.py paper_screening.py \
             paper_recommend.py reference_recommender.py research_workflow.py \
             research_sessions.py research_branches.py research_notes.py \
-            equipment.py paper; do
+            equipment.py library_order.py paper; do
     [ -e "$item" ] && cp -R "$item" "$BUNDLE/" || { echo "   빠진 파일: $item"; exit 1; }
 done
 mkdir -p "$BUNDLE/frontend-react"
@@ -108,20 +108,39 @@ set -uo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
 
-if lsof -i :8000 -sTCP:LISTEN &> /dev/null; then
-  osascript -e 'display alert "AIsaac" message "8000번 포트를 다른 프로그램이 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해주세요." as critical' &> /dev/null
+# lsof로 먼저 "비어있나?" 물어보고 나중에 uvicorn이 bind하는 방식은 그 사이에 다른
+# 프로세스가 끼어들 수 있는 확인-후-사용 레이스(TOCTOU)라 8000이 막혀도 자동으로
+# 복구가 안 됐다(08-06 논의). 대신 실제 bind를 직접 시도해 다음 포트로 넘어간다 —
+# 소켓을 열어보는 것 자체가 곧 "비어있는지 확인"이라 별도 사전 체크와 결과가 어긋날
+# 일이 없다. 8000~8049 안에서 못 찾으면(사실상 불가능한 상황) 빈 문자열을 낸다.
+PORT="$(runtime/python/bin/python3 -c '
+import socket
+for port in range(8000, 8050):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+    except OSError:
+        continue
+    finally:
+        s.close()
+    print(port)
+    break
+')"
+
+if [ -z "$PORT" ]; then
+  osascript -e 'display alert "AIsaac" message "8000~8049번 포트를 전부 다른 프로그램이 쓰고 있어 실행할 수 없습니다." as critical' &> /dev/null
   exit 1
 fi
 
 # --host 127.0.0.1 — Docker판은 컨테이너 네트워킹 때문에 0.0.0.0이 필수였지만, 번들은
 # 호스트에서 직접 도니 LAN에 노출할 이유가 없다. 터미널이 없으므로 출력은 로그 파일로.
 PYTHONPATH="runtime/lib" runtime/python/bin/python3 -m uvicorn main:app \
-  --host 127.0.0.1 --port 8000 >> logs/server.log 2>&1 &
+  --host 127.0.0.1 --port "$PORT" >> logs/server.log 2>&1 &
 SERVER_PID=$!
 
 ready=false
 for _ in $(seq 1 180); do
-  if [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health 2>/dev/null)" = "200" ]; then
+  if [ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/api/health" 2>/dev/null)" = "200" ]; then
     ready=true
     break
   fi
@@ -143,7 +162,7 @@ mkdir -p "$PROFILE_DIR"
 
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 EDGE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-APP_URL="http://127.0.0.1:8000"
+APP_URL="http://127.0.0.1:$PORT"
 
 BROWSER_APP=""
 if [ -x "$CHROME" ]; then
@@ -168,7 +187,7 @@ fi
 # 창이 실제로 열릴 시간을 준 뒤, 우리 URL을 가진 창이 남아있는 동안 폴링한다.
 sleep 3
 while true; do
-  count=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:8000\"))" 2>/dev/null)
+  count=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:$PORT\"))" 2>/dev/null)
   [ "${count:-0}" = "0" ] && break
   sleep 3
 done

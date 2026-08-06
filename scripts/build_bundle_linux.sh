@@ -69,7 +69,7 @@ for item in main.py graph.py models.py orchestrator.py retrieval.py embeddings.p
             arxiv_api.py paper_catalog.py paper_search.py paper_screening.py \
             paper_recommend.py reference_recommender.py research_workflow.py \
             research_sessions.py research_branches.py research_notes.py \
-            equipment.py paper; do
+            equipment.py library_order.py paper; do
     [ -e "$item" ] && cp -R "$item" "$BUNDLE/" || { echo "   빠진 파일: $item"; exit 1; }
 done
 mkdir -p "$BUNDLE/frontend-react"
@@ -83,18 +83,37 @@ set -uo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
 
-if (echo > /dev/tcp/127.0.0.1/8000) 2>/dev/null; then
-  command -v zenity &> /dev/null && zenity --error --text="8000번 포트를 다른 프로그램이 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해주세요." 2>/dev/null
+# /dev/tcp로 먼저 "비어있나?" 물어보고 나중에 uvicorn이 bind하는 방식은 그 사이에
+# 다른 프로세스가 끼어들 수 있는 확인-후-사용 레이스(TOCTOU)라 8000이 막혀도 자동으로
+# 복구가 안 됐다(macOS 스크립트와 같은 논의, 08-06). 대신 실제 bind를 직접 시도해
+# 다음 포트로 넘어간다 — 소켓을 열어보는 것 자체가 곧 "비어있는지 확인"이라 별도
+# 사전 체크와 결과가 어긋날 일이 없다. 8000~8049 안에서 못 찾으면 빈 문자열을 낸다.
+PORT="$(runtime/python/bin/python3 -c '
+import socket
+for port in range(8000, 8050):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+    except OSError:
+        continue
+    finally:
+        s.close()
+    print(port)
+    break
+')"
+
+if [ -z "$PORT" ]; then
+  command -v zenity &> /dev/null && zenity --error --text="8000~8049번 포트를 전부 다른 프로그램이 쓰고 있어 실행할 수 없습니다." 2>/dev/null
   exit 1
 fi
 
 PYTHONPATH="runtime/lib" runtime/python/bin/python3 -m uvicorn main:app \
-  --host 127.0.0.1 --port 8000 >> logs/server.log 2>&1 &
+  --host 127.0.0.1 --port "$PORT" >> logs/server.log 2>&1 &
 SERVER_PID=$!
 
 ready=false
 for _ in $(seq 1 180); do
-  if [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health 2>/dev/null)" = "200" ]; then
+  if [ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/api/health" 2>/dev/null)" = "200" ]; then
     ready=true
     break
   fi
@@ -107,7 +126,7 @@ if [ "$ready" != "true" ]; then
   exit 1
 fi
 
-APP_URL="http://127.0.0.1:8000"
+APP_URL="http://127.0.0.1:$PORT"
 # 매 실행마다 새 임시 프로필 — Chrome/Chromium의 프로필 싱글턴 락(같은 프로필로 재실행
 # 하면 새 창만 기존 프로세스에 얹고 새 프로세스는 곧장 종료됨, macOS에서 실측 확인된
 # Chromium 공통 동작)을 피해 `wait`를 그대로 믿을 수 있게 한다 — Windows 번들과 같은
