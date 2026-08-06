@@ -56,7 +56,10 @@ export function Equipment() {
       {isLoading && <p>불러오는 중...</p>}
       {isError && <p className="equipment-error">조회 실패: {(error as Error).message}</p>}
       {data && data.equipment.length === 0 && <p>등록된 실험도구가 없습니다.</p>}
-      {data && data.equipment.map((item) => <EquipmentRow key={item.id} item={item} />)}
+      {data &&
+        data.equipment.map((item, i) => (
+          <EquipmentRow key={item.id} item={item} isFirst={i === 0} isLast={i === data.equipment.length - 1} />
+        ))}
     </div>
   )
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { listChatSessions } from '../api/chat'
-import { CHAT_MODELS, CHAT_EFFORTS, useChatThread } from '../hooks/useChatThread'
+import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import './ChatPanel.css'
 
@@ -95,20 +95,24 @@ export function ChatPanel() {
       {chat.draftError && <p className="chat-panel-error">{chat.draftError}</p>}
 
       <div className="chat-panel-messages">
-        {chat.messages.map((m, i) => (
-          <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
-            <div className="chat-message-content">{m.content}</div>
-            {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
-            {m.id && (
-              <button
-                type="button"
-                className="chat-message-delete"
-                title="이 메시지 삭제"
-                onClick={() => chat.deleteMessage(m.id!)}
-              >
-                🗑
-              </button>
-            )}
+        {groupMessagesIntoTurns(chat.messages).map((turn, ti) => (
+          <div className="chat-turn" key={turn[0].id ?? `turn-${ti}`}>
+            {turn.map((m, i) => (
+              <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
+                <div className="chat-message-content">{m.content}</div>
+                {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
+                {m.id && (
+                  <button
+                    type="button"
+                    className="chat-message-delete"
+                    title="이 메시지 삭제"
+                    onClick={() => chat.deleteMessage(m.id!)}
+                  >
+                    🗑
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         ))}
         {chat.isStreaming && <div className="chat-panel-progress">⏳ {chat.progress || '진행 중...'}</div>}

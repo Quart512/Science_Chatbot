@@ -3,12 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   deleteInterest,
   listInterestPapers,
+  moveInterest,
   refreshInterest,
   saveInterest,
   searchInterest,
   type Interest,
   type RecommendResult,
 } from '../api/interests'
+import { ReorderButtons } from '../components/ReorderButtons'
 
 const SEARCH_PAGE_SIZE = 5 // paper_recommend.recommend_for_interest()의 max_results 기본값과 맞춤
 
@@ -17,7 +19,9 @@ const STATUS_LABELS: Record<string, string> = { recommended: '추천됨', owned:
 // EquipmentRow.tsx와 같은 인라인 편집 패턴(08-04) — "수정"을 누르면 그 자리에서 바로
 // 텍스트박스로 바뀌고 버튼이 "저장"으로 바뀐다. draft는 "수정" 클릭 순간에 interest에서
 // 다시 채워서 편집 중 다른 카드 조작으로 인한 리페치와 충돌하지 않는다.
-export function InterestCard({ interest }: { interest: Interest }) {
+export function InterestCard({
+  interest, isFirst, isLast,
+}: { interest: Interest; isFirst: boolean; isLast: boolean }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(interest.title)
@@ -58,6 +62,10 @@ export function InterestCard({ interest }: { interest: Interest }) {
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteInterest(interest.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['interests'] }),
+  })
+  const moveMutation = useMutation({
+    mutationFn: (direction: 'up' | 'down') => moveInterest(interest.id, direction),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['interests'] }),
   })
 
@@ -123,7 +131,15 @@ export function InterestCard({ interest }: { interest: Interest }) {
   const papers = papersQuery.data?.papers ?? []
 
   return (
-    <div className="interest-card">
+    <div className="library-reorder-row">
+      <ReorderButtons
+        isFirst={isFirst}
+        isLast={isLast}
+        pending={moveMutation.isPending}
+        onMoveUp={() => moveMutation.mutate('up')}
+        onMoveDown={() => moveMutation.mutate('down')}
+      />
+      <div className="interest-card">
       <h3>{interest.title}</h3>
       {interest.looking_for && <p className="interest-card-meta">찾는 것: {interest.looking_for}</p>}
 
@@ -185,6 +201,7 @@ export function InterestCard({ interest }: { interest: Interest }) {
           </table>
         )
       )}
+      </div>
     </div>
   )
 }

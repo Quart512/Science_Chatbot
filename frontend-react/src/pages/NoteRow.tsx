@@ -1,14 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { deleteNote, saveNote, type Note } from '../api/notes'
+import { deleteNote, moveNote, saveNote, type Note } from '../api/notes'
+import { FullscreenModal } from '../components/FullscreenModal'
+import { ReorderButtons } from '../components/ReorderButtons'
+
+const PREVIEW_LIMIT = 200
 
 // EquipmentRow.tsx와 같은 인라인 편집 패턴(08-04) — "수정" 클릭 순간에 draft를
 // note에서 다시 채워서, 그 사이 리페치가 와도 편집 중인 내용과 충돌하지 않는다.
-export function NoteRow({ note }: { note: Note }) {
+export function NoteRow({ note, isFirst, isLast }: { note: Note; isFirst: boolean; isLast: boolean }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(note.title)
   const [text, setText] = useState(note.text)
+  const [fullView, setFullView] = useState(false)
 
   const saveMutation = useMutation({
     mutationFn: () => saveNote({ title, text, update_existing_id: note.id }),
@@ -19,6 +24,10 @@ export function NoteRow({ note }: { note: Note }) {
   })
   const deleteMutation = useMutation({
     mutationFn: () => deleteNote(note.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
+  })
+  const moveMutation = useMutation({
+    mutationFn: (direction: 'up' | 'down') => moveNote(note.id, direction),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
   })
 
@@ -59,20 +68,44 @@ export function NoteRow({ note }: { note: Note }) {
     )
   }
 
-  const preview = note.text.length > 200 ? `${note.text.slice(0, 200)}...` : note.text
+  const truncated = note.text.length > PREVIEW_LIMIT
+  const preview = truncated ? `${note.text.slice(0, PREVIEW_LIMIT)}...` : note.text
 
   return (
-    <div className="note-row">
-      <h3>{note.title || '(제목 없음)'}</h3>
-      <p className="note-row-preview">{preview}</p>
+    <div className="library-reorder-row">
+      <ReorderButtons
+        isFirst={isFirst}
+        isLast={isLast}
+        pending={moveMutation.isPending}
+        onMoveUp={() => moveMutation.mutate('up')}
+        onMoveDown={() => moveMutation.mutate('down')}
+      />
+      <div className="note-row">
+        <h3>{note.title || '(제목 없음)'}</h3>
+        <p className="note-row-preview">{preview}</p>
+        {/* 200자 넘는 노트는 수정 모드에 들어가야만 전문을 볼 수 있었다(사용자 지적) —
+            읽기 전용 전문 뷰어를 따로 둔다. 짧은 노트는 preview가 이미 전문이라 버튼 자체가
+            불필요. */}
+        {truncated && (
+          <button type="button" className="note-row-expand" onClick={() => setFullView(true)}>
+            전문 보기
+          </button>
+        )}
 
-      <div className="note-row-actions">
-        <div className="note-row-actions-left">
-          <button onClick={startEditing}>수정</button>
+        <div className="note-row-actions">
+          <div className="note-row-actions-left">
+            <button onClick={startEditing}>수정</button>
+          </div>
+          <button className="note-delete" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
+            삭제
+          </button>
         </div>
-        <button className="note-delete" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
-          삭제
-        </button>
+
+        {fullView && (
+          <FullscreenModal title={note.title || '(제목 없음)'} onClose={() => setFullView(false)}>
+            <div className="note-row-fullview">{note.text}</div>
+          </FullscreenModal>
+        )}
       </div>
     </div>
   )

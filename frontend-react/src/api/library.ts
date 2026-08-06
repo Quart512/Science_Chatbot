@@ -13,10 +13,15 @@ export function listLibraryFiles() {
 // ④(08-05) 파싱 분리 후 응답이 바뀌었다 — 등록만 동기로 끝내고(analysis_status가
 // 항상 "pending"), 무거운 파싱·청킹·임베딩은 서버가 백그라운드로 돌린다. 완료 여부는
 // papers 목록을 다시 불러와 analysis_status로 확인한다(Papers.tsx의 폴링).
-export function trackLibraryFile(path: string) {
+//
+// identity(08-06, PaperRow "다시 시도" 재사용) — doi/arxiv_id를 안 넘기면(기존 "미추적
+// 파일에 추가" 경로) 예전과 동일하게 해시 기반 paper_id가 나온다. **실패한 논문을
+// 재시도할 땐 반드시 넘겨야 한다** — 안 그러면 원래 arxiv/doi로 등록됐던 행과 다른
+// 해시 기반 paper_id로 새 고아 행이 생긴다(실제로 겪은 버그, main.py 주석 참고).
+export function trackLibraryFile(path: string, identity?: { doi?: string; arxiv_id?: string; title?: string }) {
   return apiFetch<TrackResult>('/library/track', {
     method: 'POST',
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, ...identity }),
   })
 }
 

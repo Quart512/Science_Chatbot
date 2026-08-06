@@ -30,3 +30,9 @@ export function saveEquipment(body: SaveEquipmentBody) {
 export function deleteEquipment(id: number) {
   return apiFetch<{ equipment_id: number; action: string }>(`/equipment/${id}`, { method: 'DELETE' })
 }
+
+export function moveEquipment(id: number, direction: 'up' | 'down') {
+  return apiFetch<{ equipment_id: number; moved: boolean }>(`/equipment/${id}/move?direction=${direction}`, {
+    method: 'POST',
+  })
+}

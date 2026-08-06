@@ -1,0 +1,47 @@
+/* ReorderButtons를 쓰는 4곳(관심사·논문·실험도구·지식노트) 공용 래퍼 — 버튼을 행
+   왼쪽에 세로로 붙이고, 기존 행 콘텐츠는 남은 폭을 그대로 차지한다(기존 각 *-row
+   CSS를 안 건드리기 위해 flex:1만 얹음). */
+.library-reorder-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.library-reorder-row > .reorder-buttons {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.library-reorder-row > *:last-child {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.reorder-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.reorder-buttons button {
+  background: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+}
+
+.reorder-buttons button:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.reorder-buttons button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

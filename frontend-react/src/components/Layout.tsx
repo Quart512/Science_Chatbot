@@ -4,6 +4,7 @@ import { ChatPanel } from './ChatPanel'
 import { ChatSessionNav } from './ChatSessionNav'
 import { ResearchSessionNav } from './ResearchSessionNav'
 import { useScrollbarAutoHide } from '../hooks/useScrollbarAutoHide'
+import { LogoMark } from './Logo'
 import './Layout.css'
 
 // 셸 — 왼쪽 네비게이션 + 가운데 라우팅된 메인 콘텐츠 + 오른쪽 항상-떠-있는 챗 패널.
@@ -43,7 +44,10 @@ export function Layout() {
     <div className="app-shell">
       <nav className="app-nav">
         <div className="app-nav-title">
-          <span>🔬 AIsaac</span>
+          <span className="app-nav-brand">
+            <LogoMark size={20} />
+            AIsaac
+          </span>
           <button className="app-nav-close" onClick={() => setNavOpen(false)} aria-label="메뉴 닫기">
             ✕
           </button>

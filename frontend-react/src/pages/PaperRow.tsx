@@ -1,12 +1,16 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ANALYSIS_IN_PROGRESS,
   getPaperFileUrl,
   getPaperSummary,
+  movePaper,
   type Evidence,
   type PaperCatalogRow,
 } from '../api/papers'
+import { trackLibraryFile } from '../api/library'
+import { FullscreenModal } from '../components/FullscreenModal'
+import { ReorderButtons } from '../components/ReorderButtons'
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '대기 중',
@@ -51,21 +55,67 @@ function renderListProse(items: string[]): string {
 // fileMissing(08-05, 화면 개선 ⑩ 설계 노트) — 추적은 됐지만(paper.file_path가 있음)
 // library/ 스캔에서 그 경로가 더는 안 보이는 경우(사용자가 파일을 지우거나 옮김).
 // Papers.tsx가 papers·library/files 두 쿼리를 대조해 계산해서 넘긴다.
-export function PaperRow({ paper, fileMissing = false }: { paper: PaperCatalogRow; fileMissing?: boolean }) {
+// 확대(전체화면) 버튼 아이콘 — 코드베이스에 아이콘 라이브러리가 없어(▾/▸/✎/✕처럼
+// 전부 순수 글리프) 새 의존성 없이 SVG를 직접 인라인. 대각선 화살표 2개로 "넓히기"를
+// 표현하는 통상적인 fullscreen/expand 아이콘 모양(stroke만 있어 currentColor로 테마 대응).
+function ExpandIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  )
+}
+
+export function PaperRow({
+  paper, fileMissing = false, isFirst, isLast,
+}: { paper: PaperCatalogRow; fileMissing?: boolean; isFirst: boolean; isLast: boolean }) {
+  const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
-  // ④(08-05) — pending/analyzing이면 아직 청크가 없어 요약 조회가 에러로 끝난다(파싱이
-  // 안 끝났으므로). untracked(기존 업로드로 등록된, ① 마이그레이션 이후 아무도 이 컬럼을
-  // 안 채운 논문 — 실제로는 이미 분석 끝난 상태)·done·failed는 기존과 동일하게 시도한다.
+  const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const moveMutation = useMutation({
+    mutationFn: (direction: 'up' | 'down') => movePaper(paper.paper_id, direction),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['papers'] }),
+  })
+  // 논문 분석 멈춤 버그 대응(08-06, RoadMap 참고) — failed는 청크가 아예 없어 요약을
+  // 조회해봤자 항상 에러라 시도 자체를 건너뛴다(untracked/done만 기존처럼 시도).
+  // 재시도는 register_paper()를 다시 태우는 기존 트래킹 엔드포인트 재사용. doi/arxiv_id를
+  // 반드시 같이 넘겨야 한다 — 안 그러면 원래 arxiv/doi로 등록됐던 논문이 해시 기반의
+  // 다른 paper_id로 재계산돼 원본과 분리된 고아 중복이 생긴다(실제로 겪은 버그).
+  const retryMutation = useMutation({
+    mutationFn: () =>
+      trackLibraryFile(paper.file_path!, {
+        doi: paper.doi ?? undefined,
+        arxiv_id: paper.arxiv_id ?? undefined,
+        title: paper.title || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['papers'] })
+      queryClient.invalidateQueries({ queryKey: ['paper-summary', paper.paper_id] })
+    },
+  })
   const inProgress = ANALYSIS_IN_PROGRESS.includes(paper.analysis_status)
+  const failed = paper.analysis_status === 'failed'
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['paper-summary', paper.paper_id],
     queryFn: () => getPaperSummary(paper.paper_id),
-    enabled: expanded && !inProgress,
+    enabled: expanded && !inProgress && !failed,
   })
 
   return (
-    <div className="paper-row">
+    <div className="library-reorder-row">
+      <ReorderButtons
+        isFirst={isFirst}
+        isLast={isLast}
+        pending={moveMutation.isPending}
+        onMoveUp={() => moveMutation.mutate('up')}
+        onMoveDown={() => moveMutation.mutate('down')}
+      />
+      <div className="paper-row">
       <button className="paper-row-header" onClick={() => setExpanded((v) => !v)}>
         {/* 우선순위: title > filename > paper_id(해시) — 08-04 사용자 요청("해쉬값은
             최후순위, 파일명이 그 앞"). arxiv/DOI로 등록된 논문은 title이 항상 있어
@@ -112,7 +162,25 @@ export function PaperRow({ paper, fileMissing = false }: { paper: PaperCatalogRo
             </p>
           ) : (
             <details>
-              <summary>원본 PDF 보기</summary>
+              <summary className="paper-row-pdf-summary">
+                원본 PDF 보기
+                {/* details 안이라 summary 클릭 = 토글이라, 버튼 클릭이 그 토글까지
+                    같이 발동하지 않도록 preventDefault+stopPropagation 둘 다 필요
+                    (preventDefault 없으면 details가 그대로 열림/닫힘). */}
+                <button
+                  type="button"
+                  className="paper-row-pdf-expand"
+                  title="전체화면으로 보기"
+                  aria-label="PDF 전체화면으로 보기"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setPdfFullscreen(true)
+                  }}
+                >
+                  <ExpandIcon />
+                </button>
+              </summary>
               <iframe
                 className="paper-row-pdf-frame"
                 src={getPaperFileUrl(paper.paper_id)}
@@ -132,8 +200,22 @@ export function PaperRow({ paper, fileMissing = false }: { paper: PaperCatalogRo
                 : '분석 대기 중입니다 — 곧 시작됩니다.'}
             </p>
           )}
-          {!inProgress && isLoading && <p>요약 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
-          {!inProgress && isError && <p style={{ color: 'crimson' }}>요약 조회 실패: {(error as Error).message}</p>}
+          {failed && (
+            <div className="paper-message paper-message-error">
+              <p>
+                분석에 실패했습니다{fileMissing ? ' — 원본 파일도 찾을 수 없습니다.' : '.'}
+                {retryMutation.data && ' 다시 시도를 시작했습니다 — 잠시 후 상태가 갱신됩니다.'}
+              </p>
+              {!fileMissing && paper.file_path && (
+                <button type="button" onClick={() => retryMutation.mutate()} disabled={retryMutation.isPending}>
+                  {retryMutation.isPending ? '다시 시도 중...' : '다시 시도'}
+                </button>
+              )}
+              {retryMutation.isError && <p>재시도 요청 실패: {(retryMutation.error as Error).message}</p>}
+            </div>
+          )}
+          {!inProgress && !failed && isLoading && <p>요약 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
+          {!inProgress && !failed && isError && <p style={{ color: 'crimson' }}>요약 조회 실패: {(error as Error).message}</p>}
           {!inProgress && data && (
             <>
               <h4>핵심 주장</h4>
@@ -165,6 +247,19 @@ export function PaperRow({ paper, fileMissing = false }: { paper: PaperCatalogRo
           )}
         </div>
       )}
+
+      {/* expanded 상태와 별개로 둔다 — 전체화면을 연 채로 행이 접혀도(드문 경우) 뷰어가
+          갑자기 사라지지 않게. */}
+      {pdfFullscreen && paper.file_path && (
+        <FullscreenModal title={paper.title || paper.filename || paper.paper_id} onClose={() => setPdfFullscreen(false)}>
+          <iframe
+            className="pdf-fullscreen-frame"
+            src={getPaperFileUrl(paper.paper_id)}
+            title={`${paper.title || paper.filename || paper.paper_id} 원본 (전체화면)`}
+          />
+        </FullscreenModal>
+      )}
+      </div>
     </div>
   )
 }

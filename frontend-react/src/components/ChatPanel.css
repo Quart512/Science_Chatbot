@@ -87,6 +87,20 @@
   gap: 0.75rem;
 }
 
+/* 질문+답변 한 turn을 하나의 블록으로 묶는다(사용자 요청 — 예전엔 모든 메시지가
+   같은 간격으로 나열돼 turn 사이 구분이 안 갔음). 안쪽 메시지끼리는 더 촘촘하게,
+   turn과 turn 사이는 부모(.chat-page-messages/.chat-panel-messages)의 gap이 더
+   넓게 잡혀 있어(0.75~0.9rem) 자연히 벌어진다. */
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+}
+
 .chat-message {
   position: relative;
 }

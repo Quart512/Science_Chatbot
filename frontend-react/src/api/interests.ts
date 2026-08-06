@@ -64,6 +64,13 @@ export function deleteInterest(id: number) {
   return apiFetch<{ interest_id: number; action: string }>(`/interests/${id}`, { method: 'DELETE' })
 }
 
+// 라이브러리 수동 정렬(08-06) — 다른 3곳(equipment/papers/notes)과 같은 모양.
+export function moveInterest(id: number, direction: 'up' | 'down') {
+  return apiFetch<{ interest_id: number; moved: boolean }>(`/interests/${id}/move?direction=${direction}`, {
+    method: 'POST',
+  })
+}
+
 export function searchInterest(id: number, start: number) {
   return apiFetch<{ recommended: RecommendResult[] }>(`/interests/${id}/search?start=${start}`, {
     method: 'POST',

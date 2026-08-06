@@ -1,0 +1,55 @@
+/* Papers.css의 .pdf-fullscreen-*를 공용화(PaperRow의 PDF 뷰어·NoteRow의 전문 뷰어
+   공용) — 뷰포트 전체를 덮는 오버레이. z-index는 이 앱에서 다른 곳에 쓰는 값이 없어
+   (모달류가 이번이 처음) 넉넉히 큰 값으로 잡아 항상 최상단. */
+.fullscreen-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 1000;
+}
+
+.fullscreen-modal-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-width: 1100px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.fullscreen-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+
+.fullscreen-modal-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-modal-header button {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fullscreen-modal-header button:hover {
+  color: var(--color-text);
+}

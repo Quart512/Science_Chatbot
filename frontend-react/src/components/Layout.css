@@ -24,6 +24,16 @@
   justify-content: space-between;
 }
 
+.app-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.app-nav-brand svg {
+  color: var(--color-accent);
+}
+
 /* 무지개 스펙트럼(08-06) — ai-saac 브랜드 컨셉의 "프리즘" 모티프. ai-saac 자체 주석
    ("used only for prism/phase signature moments")을 그대로 따라 로고 바로 아래
    한 곳에만 얇게 쓴다 — 일반 UI 요소에 남용하면 보라 액센트의 강조력이 죽는다

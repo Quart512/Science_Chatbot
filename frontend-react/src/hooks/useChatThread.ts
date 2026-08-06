@@ -14,6 +14,23 @@ export interface ChatUIMessage {
 export const CHAT_MODELS = ['gemini', 'claude', 'Qwen-tuned'] as const
 export const CHAT_EFFORTS = ['low', 'medium', 'high'] as const
 
+// 화면에서 "질문 하나 + 그 답변"을 한 블록으로 묶어 보여주기 위한 그룹핑(사용자 요청 —
+// user/assistant는 색으로 구분되지만 turn 사이 구분이 안 갔음). messages는 항상
+// user로 시작해 user/assistant가 번갈아 온다(useChatThread가 보내는 순서·서버
+// 체크포인트 순서 둘 다) — user를 만날 때마다 새 turn을 열고, 그 외(assistant, 또는
+// 첫 메시지부터 assistant인 예외적인 경우)는 직전 turn에 이어붙인다.
+export function groupMessagesIntoTurns(messages: ChatUIMessage[]): ChatUIMessage[][] {
+  const turns: ChatUIMessage[][] = []
+  for (const m of messages) {
+    if (m.role === 'user' || turns.length === 0) {
+      turns.push([m])
+    } else {
+      turns[turns.length - 1].push(m)
+    }
+  }
+  return turns
+}
+
 // 챗 스레드 하나의 상태·전송 로직 — 원래 ChatPanel.tsx 하나에만 있던 걸 뽑았다.
 // 화면 개선 ⑤로 이 로직이 왼쪽 독립 화면(Chat.tsx)과 오른쪽 상시 패널(ChatPanel.tsx)
 // 두 곳에서 동시에 필요해진 시점이라 훅으로 분리 — 미리 예상해서 뽑은 게 아니라

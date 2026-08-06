@@ -30,6 +30,24 @@
   cursor: pointer;
 }
 
+.note-search {
+  display: block;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+  max-width: 320px;
+  margin-bottom: 0.5rem;
+}
+
+.library-hint {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+  max-width: 640px;
+}
+
 .note-row {
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -41,6 +59,28 @@
   color: var(--color-text-muted);
   font-size: 0.85rem;
   white-space: pre-wrap;
+}
+
+.note-row-expand {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  padding: 0.2rem 0 0;
+  cursor: pointer;
+}
+
+.note-row-expand:hover {
+  text-decoration: underline;
+}
+
+.note-row-fullview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  white-space: pre-wrap;
+  color: var(--color-text);
+  line-height: 1.6;
 }
 
 .note-row-actions {

@@ -39,9 +39,25 @@ export interface TrackResult {
   analysis_status: string
 }
 
-export function listPapers(status?: string) {
-  const query = status ? `?status=${encodeURIComponent(status)}` : ''
-  return apiFetch<{ papers: PaperCatalogRow[] }>(`/papers${query}`)
+// sort(08-06) — 생략하면 백엔드가 수동 정렬(sort_order)로 돌려준다. 정렬이나 검색어가
+// 켜지면 화면이 위/아래 순서 버튼을 꺼서(Papers.tsx) "정렬 기준이 sort_order가 아닌데
+// 버튼을 눌러도 눈에 보이는 변화가 없는" 혼란을 막는다.
+export type PaperSort = 'created_desc' | 'created_asc' | 'updated_desc' | 'updated_asc'
+
+export function listPapers(status?: string, sort?: PaperSort, q?: string) {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (sort) params.set('sort', sort)
+  if (q) params.set('q', q)
+  const query = params.toString()
+  return apiFetch<{ papers: PaperCatalogRow[] }>(`/papers${query ? `?${query}` : ''}`)
+}
+
+export function movePaper(paperId: string, direction: 'up' | 'down') {
+  return apiFetch<{ paper_id: string; moved: boolean }>(
+    `/papers/${encodeURIComponent(paperId)}/move?direction=${direction}`,
+    { method: 'POST' },
+  )
 }
 
 // multipart/form-data라 apiFetch(JSON 전용)를 못 쓴다 — Content-Type을 직접 안 정해야

@@ -1,9 +1,16 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ANALYSIS_IN_PROGRESS, listPapers, registerPaper } from '../api/papers'
+import { ANALYSIS_IN_PROGRESS, listPapers, registerPaper, type PaperSort } from '../api/papers'
 import { listLibraryFiles, trackLibraryFile } from '../api/library'
 import { PaperRow } from './PaperRow'
 import './Papers.css'
+
+const SORT_LABELS: Record<PaperSort, string> = {
+  created_desc: '등록 최신순',
+  created_asc: '등록 오래된순',
+  updated_desc: '수정 최신순',
+  updated_asc: '수정 오래된순',
+}
 
 // 08-04 라이브 테스트 피드백으로 재구성(RoadMap "라이브러리 — 논문 카탈로그 화면
 // 재구성" 참고): recommended/owned를 섞어 보여주던 걸 걷어내고 여기는 owned만.
@@ -14,10 +21,16 @@ export function Papers() {
   const [doi, setDoi] = useState('')
   const [arxivId, setArxivId] = useState('')
   const [title, setTitle] = useState('')
+  // sort는 빈 값(undefined)이 "사용자 지정 순서"(수동 정렬, sort_order) — 08-06.
+  // 정렬이나 검색어가 켜지면 위/아래 순서 버튼을 끈다(아래 manualOrder) — sort_order
+  // 기준이 아닌 화면에서 버튼을 눌러도 눈에 보이는 변화가 없는 혼란을 막기 위해서다.
+  const [sort, setSort] = useState<PaperSort | ''>('')
+  const [search, setSearch] = useState('')
+  const manualOrder = sort === '' && search === ''
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['papers', 'owned'],
-    queryFn: () => listPapers('owned'),
+    queryKey: ['papers', 'owned', sort, search],
+    queryFn: () => listPapers('owned', sort || undefined, search || undefined),
     // ④(08-05) — 트래킹은 이제 즉시 반환되고 분석(파싱·청킹·임베딩)은 서버 백그라운드에서
     // 돈다. pending/analyzing인 논문이 하나라도 있으면 2초마다 다시 불러 done/failed
     // 전환을 잡아낸다 — 없으면 폴링을 끈다(항상 켜두면 아무 일도 없을 때도 계속 조회하게 됨).
@@ -128,6 +141,8 @@ export function Papers() {
         </p>
       )}
 
+      <hr />
+
       {/* 화면 개선 ⑩(08-05, RoadMap "프론트 개선 백로그" 참고) — 예전엔 이 목록에
           추적된 파일까지 다 보여줘서 아래 "보유 논문"과 같은 논문이 두 번 나왔다.
           제3안(의미로 분리) 채택: 여기는 "아직 라이브러리에 안 넣은 파일"만 — 추적된
@@ -186,12 +201,33 @@ export function Papers() {
         </p>
       )}
 
+      <hr />
+
       <h2>보유 논문</h2>
+      <div className="paper-list-controls">
+        <input
+          type="search"
+          placeholder="제목으로 검색"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select value={sort} onChange={(e) => setSort(e.target.value as PaperSort | '')}>
+          <option value="">사용자 지정 순서</option>
+          {(Object.keys(SORT_LABELS) as PaperSort[]).map((s) => (
+            <option key={s} value={s}>
+              {SORT_LABELS[s]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {!manualOrder && (
+        <p className="library-hint">정렬·검색 중에는 순서 버튼이 꺼집니다 — "사용자 지정 순서"로 돌아가면 다시 켜집니다.</p>
+      )}
       {isLoading && <p>불러오는 중...</p>}
       {isError && <p className="paper-message paper-message-error">조회 실패: {(error as Error).message}</p>}
       {data && data.papers.length === 0 && <p>등록된 논문이 없습니다.</p>}
       {data &&
-        data.papers.map((p) => (
+        data.papers.map((p, i) => (
           // fileMissing — ⑩ 설계 노트가 같이 정하라고 남겨둔 "추적됐지만 파일이 사라진"
           // 경우. library/files 스캔 결과에 이 경로가 없으면 사용자가 파일을 지웠거나
           // 옮긴 것 — 새 백엔드 필드 없이 이미 불러온 두 쿼리(papers·library/files)를
@@ -201,6 +237,8 @@ export function Papers() {
             key={p.paper_id}
             paper={p}
             fileMissing={!!p.file_path && !!library && !library.files.some((f) => f.path === p.file_path)}
+            isFirst={manualOrder ? i === 0 : true}
+            isLast={manualOrder ? i === data.papers.length - 1 : true}
           />
         ))}
     </div>

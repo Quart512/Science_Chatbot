@@ -57,6 +57,29 @@
   color: var(--color-danger);
 }
 
+.paper-message p {
+  margin: 0 0 0.35rem;
+}
+
+.paper-message p:last-child {
+  margin-bottom: 0;
+}
+
+.paper-message button {
+  background: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.paper-message button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* 서버측 파일 브라우저 ②-C(08-05) — library/ 폴더 목록 */
 .library-section-header {
   display: flex;
@@ -77,6 +100,26 @@
 .library-section-header button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.paper-list-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.paper-list-controls input,
+.paper-list-controls select {
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+}
+
+.paper-list-controls input {
+  flex: 1;
+  max-width: 320px;
 }
 
 .library-hint {
@@ -233,4 +276,36 @@
   border: 1px solid var(--color-border);
   border-radius: 4px;
   margin-top: 0.5rem;
+}
+
+.paper-row-pdf-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.paper-row-pdf-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  padding: 0.2rem;
+  cursor: pointer;
+}
+
+.paper-row-pdf-expand:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+/* 전체화면 PDF 뷰어 — 오버레이/패널/헤더 뼈대는 공용 FullscreenModal(components/)로
+   옮겼고, 여기는 그 안에 들어가는 iframe 크기만 담당(PDF 전용이라 남겨둠). */
+.pdf-fullscreen-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
 }

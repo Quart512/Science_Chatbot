@@ -70,7 +70,15 @@ export function Interests() {
       {isLoading && <p>불러오는 중...</p>}
       {isError && <p className="interest-card-error">관심사 조회 실패: {(error as Error).message}</p>}
       {data && data.interests.length === 0 && <p>등록된 관심사가 없습니다.</p>}
-      {data && data.interests.map((i) => <InterestCard key={i.id} interest={i} />)}
+      {data &&
+        data.interests.map((interest, i) => (
+          <InterestCard
+            key={interest.id}
+            interest={interest}
+            isFirst={i === 0}
+            isLast={i === data.interests.length - 1}
+          />
+        ))}
     </div>
   )
 }
