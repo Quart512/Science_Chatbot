@@ -142,19 +142,26 @@ LAUNCHER
 chmod +x "$BUNDLE/run.sh"
 
 # AIsaac.desktop — freedesktop.org Desktop Entry(더블클릭 실행 표준). Terminal=false로
-# 터미널 창 없이 실행된다. Exec에 절대경로가 필요해서(스펙상 %-확장 외 상대경로를
-# 보장 안 함) 실제 절대경로는 사용자가 압축을 푼 뒤에야 정해지므로, run.sh 안에서
-# 자기 위치를 스스로 찾게 하고 .desktop은 같은 폴더의 run.sh를 상대 문법으로
-# 가리키는 대신 GNOME/KDE 대부분이 지원하는 %k(이 .desktop 파일 자신의 경로) 트릭 대신
-# "같은 폴더에서 run.sh를 실행"하는 아주 짧은 셸을 Exec에 직접 심는다.
+# 터미널 창 없이 실행된다. 사용자가 압축을 어디에 풀지 빌드 시점엔 모르므로 절대경로를
+# 못 박아 넣는다 — 대신 %k(이 .desktop 파일 자신의 절대경로, 스펙에 정의된 필드 코드)를
+# sh에 인자로 넘겨 실행 시점에 스스로 폴더를 찾게 한다.
+#
+# 08-06 첫 시도 실패 기록 — Exec에 `bash -c 'cd "$(dirname "%k")" && ./run.sh'`를 그대로
+# 넣었다가 desktop-file-validate가 즉시 잡아냈다: Exec 값의 따옴표·이스케이프 규칙은
+# **셸 문법이 아니라 Desktop Entry 스펙 자신의 규칙**이라 `&&`가 따옴표 밖에 있으면
+# "reserved character" 에러가 나고, 필드 코드(%k)는 따옴표 "안"에 못 들어간다(스펙
+# 명시: "Field codes must not be used inside a quoted argument"). 그래서 %k는 따옴표
+# 밖(마지막 인자)으로 빼고, 셸 스크립트 본문만 따옴표로 감싸 그 안의 `"`·`$`만
+# 스펙이 요구하는 대로 백슬래시 하나로 이스케이프했다(`&`·`(`·`)`는 따옴표 안에서는
+# 이스케이프 불필요 — 실제로 desktop-file-validate 통과로 확인).
 cat > "$BUNDLE/AIsaac.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=AIsaac
 Comment=물리 연구 어시스턴트
-Exec=bash -c 'cd "$(dirname "%k")" && ./run.sh'
+Exec=sh -c "cd \"\$(dirname \"\$1\")\" && exec ./run.sh" sh %k
 Terminal=false
-Categories=Education;Science;
+Categories=Education;
 DESKTOP
 chmod +x "$BUNDLE/AIsaac.desktop"
 
