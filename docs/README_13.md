@@ -592,3 +592,90 @@ RoadMap.md의 체크리스트는 항목명+상태(완료/미완료)만 남기고
 
 - **`equipment` 스키마 마이그레이션 — 08-05 해소(확인이 아니라 조건 소멸)**. EC2 배포 트랙을 폐지하면서 걱정하던 그 DB 자체가 배포 대상에서 빠졌다 — 로컬 배포판 사용자는 전부 빈 `data/`에서 시작하므로 구 스키마가 존재할 수 없다.
 - **`data/` 바인드 마운트에 새 체크포인트 파일 — 08-05에 마저 확인, 완료**. 저장소 밖 격리 폴더에서 Docker Hub 이미지로 실제 `docker compose up -d` — bge-m3 첫 다운로드까지 끝내고 헬스체크 200 확인 후 `data/`에 체크포인트 파일 둘 다 실제로 생성돼 있었다.
+
+## 16. portable 번들 조용한 런처 — 실기 디버깅 전 과정 (08-06, `feature/portable-python-bundle` 브랜치)
+
+RoadMap.md엔 결론(osacompile 채택, TCC 문제, 두 버그 수정)만 남기고, 여기엔 시행착오·실제로 돌려본 명령과 결과를 그대로 남긴다.
+
+### 16.1 1차 시도 — 손으로 만든 bash-as-.app, "응답하지 않습니다"
+
+설계 노트("패키징 재검토 ②")가 제안한 대로 `Info.plist`(`CFBundleExecutable=AIsaac`)+`Contents/MacOS/AIsaac`(순수 bash 스크립트)로 `.app`을 직접 만들어 `build_bundle_macos.sh`에 넣었다. 처음엔 서버 기동·헬스체크·브라우저 오픈·창 감시까지 전부 한 프로세스에서 순서대로 돌게 짰다.
+
+실제로 더블클릭(정확히는 `open`)해보니 **"'AIsaac' 응용 프로그램이 응답하지 않기 때문에 열 수 없습니다"**로 거부당했다. 처음엔 "프로세스가 너무 오래(서버 기동+브라우저 감시까지) 살아있어서 LaunchServices의 타임아웃에 걸리는 건가" 싶어 **①** 실제 작업을 통째로 별도 프로세스(`run.sh`)로 던지고 `AIsaac` 자신은 `nohup run.sh & disown; exit 0`으로 즉시 끝나게 재구성했다. 그런데도 같은 에러가 재현됐다 — 즉 "느려서"가 아니라 **순수 bash 실행파일이 CFBundleExecutable로 등록되는 것 자체가 문제**라는 뜻이었다. LaunchServices는 새로 띄운 GUI 앱이 살아있는지 Apple Event로 핑(ping)을 보내 확인하는데, 진짜 Cocoa 런타임(AppKit)이 없는 평범한 bash 프로세스는 그 핑에 답할 방법이 없다 — 프로세스가 1초 안에 끝나든 1시간을 살아있든 무관하게 원리적으로 안 되는 것.
+
+### 16.2 osacompile로 교체 — Automator 없이 headless로 만드는 법
+
+RoadMap 설계 노트가 "Automator '응용 프로그램'이나 `osacompile`로 셸 스크립트를 감싸면 된다"고 적어뒀던 두 옵션 중, Automator는 GUI 도구라 빌드 스크립트에서 못 쓰지만 **`osacompile`은 macOS 기본 내장 CLI 도구**(추가 설치 불필요)라 headless로 그대로 쓸 수 있다.
+
+```bash
+osacompile -o AIsaac.app <<'EOF'
+on run
+    do shell script "echo hi"
+end run
+EOF
+```
+
+이렇게 만든 앱의 `Info.plist`를 까보면 `CFBundleExecutable=applet`이라는 **컴파일된 바이너리**가 들어있다 — AppleScript 소스가 아니라 OSA 런타임 위에서 도는 진짜 Cocoa 실행파일이라, LaunchServices의 핑에 정상적으로 응답한다.
+
+**구조 재설계**: `run.sh`를 `Contents/MacOS/` 밑이 아니라 번들 루트(`$BUNDLE/run.sh`, `main.py`·`runtime/`와 같은 레벨)에 평범한 파일로 두고, `AIsaac.app`의 AppleScript 본문은 `path to me`로 자기 위치를 알아내 `run.sh`를 `nohup ... & disown`으로 던지기만 한다:
+
+```applescript
+on run
+    set appPosixPath to POSIX path of (path to me)
+    set bundleRoot to do shell script "dirname " & quoted form of (text 1 thru -2 of appPosixPath)
+    do shell script "mkdir -p " & quoted form of (bundleRoot & "/logs") & ¬
+        " && nohup " & quoted form of (bundleRoot & "/run.sh") & ¬
+        " >> " & quoted form of (bundleRoot & "/logs/launcher.log") & " 2>&1 & disown"
+end run
+```
+
+`do shell script`는 백그라운드로 던진 명령이 즉시 반환하므로 앱 자신은 순식간에 끝나고, 실제 작업은 `run.sh`가 완전히 분리된 프로세스로 계속한다.
+
+### 16.3 두 번째 벽 — 조용히 멈추거나 `getpath` 크래시(TCC)
+
+osacompile로 바꾼 뒤에도 두 가지 다른 증상이 번갈아 나타났다:
+
+1. **몇 분을 기다려도 로그 파일 하나 안 생김** — `mkdir -p logs`조차 실행이 안 된 것처럼 보임(bash 빌트인이라 정상이면 즉시 끝나야 함).
+2. **`server.log`에 크래시**:
+   ```
+   Fatal Python error: error evaluating path
+   pydantic_core... OSError: failed to make path absolute
+   ```
+   (사실은 `python3 -m uvicorn ...`이 아니라 `runtime/python/bin/python3`의 초기화 자체가 실패한 것 — CPython의 `getpath` 부트스트랩 단계.)
+
+**두 증상 다 같은 원인이었다** — `log show`로 macOS 통합 로그를 직접 뒤져 확인:
+
+```
+tccd[...]: AUTHREQ_PROMPTING: msgID=..., service=kTCCServiceSystemPolicyDocumentsFolder,
+    subject=Sub:{.../build/AIsaac/runtime/python/bin/python3}
+kernel[...]: (Sandbox) System Policy: python3(...) deny(1) file-read-data /Users/.../build/AIsaac
+```
+
+저장소가 `~/Documents/Science_Chatbot` 밑에 있어서, `open`으로(LaunchServices를 거쳐) 실행된 새 프로세스가 그 밑 파일을 처음 건드릴 때 macOS의 "문서 폴더 접근" TCC 권한 검사가 걸린다. **직접 셸에서 실행하면 이 검사 자체를 안 거친다**(Gatekeeper·TCC의 on-demand 평가는 LaunchServices 경로에서만 발동 — 이게 "내가 셸에서 돌리면 항상 되는데 더블클릭하면 안 된다"는 흔한 macOS 현상의 정체다). 백그라운드로 완전히 분리된 프로세스(`run.sh`, 더 나아가 그 안의 `python3`)는 권한 팝업을 띄울 포그라운드 UI 컨텍스트가 없어서, 요청이 **응답 없이 대기**하거나(1번 증상) **거부**된다(2번 증상, `getpath`가 `EPERM` 같은 걸 우아하게 처리 못 하고 그대로 죽음).
+
+**실측으로 확정**: 번들 전체(`cp -RL`, 682MB)를 `~/Documents` 밖(`/Users/jimmywon/AIsaac`)으로 복사해 똑같이 `open`으로 실행 — **12초 만에 헬스체크 200**, Chrome 앱모드 창까지 정상, 창을 닫으니 2초 안에 서버도 종료됐다. 문제는 코드가 아니라 **폴더 위치**였다.
+
+**함의**: 이건 개발 폴더 위치만의 문제가 아니다. 실제 배포판을 받는 사용자도 흔히 다운로드 폴더에 압축을 풀고 그대로 실행하는데, **바탕화면·문서·다운로드 폴더는 전부 같은 TCC 보호 대상**이라 똑같이 걸릴 수 있다. 근본 해결(코드서명+공증)은 08-05 결정대로 지금 범위 밖이라, `README.txt`에 "이 폴더를 바탕화면·문서·다운로드 밖으로 옮긴 뒤 실행하세요"라는 경고를 추가하는 선에서 마무리했다.
+
+**기각한 가설**: 처음엔 "macOS Gatekeeper가 새 바이너리를 처음 실행할 때 하는 온디맨드 악성코드 스캔이 느려서"라고 의심했다(실제로 간단한 `python3 -c "print(1)"` 테스트가 `open`을 거치면 1분 넘게 걸리는 걸 관찰했음). 하지만 TCC 로그를 직접 보고 나서 "느림"이 아니라 "권한 프롬프트가 응답을 못 받아 블록됨"이 진짜 원인이라는 걸 확인 — 최초 관찰(비정상적으로 느림)도 사실은 TCC 프롬프트가 결국 타임아웃/재시도되는 과정이었을 가능성이 높다.
+
+### 16.4 창 종료 감지 — `wait`가 아니라 `osascript`로 물어보는 이유
+
+서버 종료를 "브라우저 창이 닫혔는가"에 묶고 싶었다. 가장 직관적인 방법은 Chrome을 포그라운드로 띄우고 그 프로세스의 종료를 `wait`하는 것인데, 여기엔 함정이 있다: 이 런처는 **고정된 프로필 경로**(`~/Library/Application Support/AIsaac/chrome-profile`)를 쓰는데, 실측해보니 같은 프로필로 두 번째 Chrome 프로세스를 띄우면 **Chrome 자체의 싱글턴 락이 새 창만 기존 프로세스에 얹고 새로 띄운 프로세스는 곧장 종료**된다(`osascript -e 'tell application "Google Chrome" to count windows'`로 창 개수 1개 유지·메인 프로세스 1개 유지 확인). 즉 재실행 시나리오에서 `wait`를 쓰면, 창은 멀쩡히 열려 있는데 방금 띄운 프로세스는 즉시 죽어 `wait`가 곧장 반환 — 서버가 창이 열린 채로 조기 종료된다.
+
+그래서 프로세스 생사 대신 **창의 존재 자체**를 `osascript`로 직접 물어본다:
+
+```bash
+osascript -e 'tell application "Google Chrome" to count (windows whose (URL of active tab contains "127.0.0.1:8000"))'
+```
+
+주의점 하나 — Chrome의 AppleScript 딕셔너리에서 **URL은 `window`가 아니라 `tab`의 속성**이다. `windows whose URL contains ...`는 "Google Chrome에 오류 발생: URL of window을(를) 가져올 수 없습니다"로 실패하고, `windows whose (URL of active tab contains ...)`가 맞는 문법이다(실측으로 확인).
+
+### 16.5 CORS·API 키 버그 — 실기 스모크 테스트가 잡아낸 것
+
+런처 자체가 된 뒤 실제로 챗봇에 메시지를 보내보니 두 가지가 더 걸렸다. 상세 원인·수정은 RoadMap.md 완료 표("포터블 번들 실기 테스트로 발견한 크래시 2건 수정")에 결론만 남겨뒀고, 여기엔 발견 과정만 짧게: ① 브라우저 네트워크 로그에서 `OPTIONS ... 400` + 곧이어 `GET ... 200`이 같이 찍히는 걸 보고 "진짜 CORS 프리플라이트라면 GET 자체가 안 갔을 텐데" 하는 의문에서 `curl`로 직접 OPTIONS를 흉내내 재현. ② 챗봇에 메시지를 보냈는데 답변이 완전히 빈 채로 끝나는 걸 보고 `curl -N` 스트리밍으로 SSE 원본을 그대로 받아보니 `final: true` 청크 자체가 없었다 — `server.log`의 트레이스백을 따라가 `models.py`의 클라이언트 생성이 `try` 블록 밖에 있다는 구조적 버그까지 확인했다.
+
+### 16.6 남은 것
+
+- **Windows(`start.bat`)·Linux 번들**: 아직 조용한 런처 동등물이 없다(이 세션은 macOS만) — 착수 조건은 여전히 CI 플랫폼 4종 매트릭스(`[배포] 배포 자동화` 항목).
+- **코드서명·공증**: TCC 문제의 근본 해결책이지만 08-05 결정대로 범위 밖 — 지금은 문서 경고로만 대응.

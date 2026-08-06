@@ -12,7 +12,7 @@ from langgraph.graph.message import add_messages
 
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage, BaseMessage, RemoveMessage
 
-from models import add_tokens, invoke_with_fallback, model_map
+from models import add_tokens, all_models_failed_message, invoke_with_fallback, model_map
 from tool import tools_list, tool_map
 from retrieval import vectorstore, papers_vectorstore
 from paper import paper_ingest
@@ -223,10 +223,25 @@ def generate(state: State) -> dict:
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 
     # tool 써야 하는지 아닌지 판별해서 tool_calls 요청, 필요 없다고 판단되면 일반 텍스트 답변
-    response, generated_by, disabled_models, tokens_used = invoke_with_fallback(state.model,
-                                                                [system] + history + new_msgs,
-                                                                tools=active_tools,
-                                                                disabled_models=state.disabled_models)
+    try:
+        response, generated_by, disabled_models, tokens_used = invoke_with_fallback(state.model,
+                                                                    [system] + history + new_msgs,
+                                                                    tools=active_tools,
+                                                                    disabled_models=state.disabled_models)
+    except RuntimeError as e:
+        # 모델 전부 실패(API 키 없음 등, models.MissingAPIKeyError 포함) — verify()가 이미
+        # 쓰는 패턴과 동일하게 조용히 스트림을 끊지 않고 원인을 답변으로 그대로 보여준다
+        # (08-06, 포터블 번들 실기 테스트로 재현 — .env 없는 배포판 첫 실행에서 실제로 걸림).
+        # invoke_with_fallback이 실패 시 새로 disabled된 모델 목록을 안 돌려주는 문제는
+        # verify()와 동일해서(주석 참고) 같은 해법(model_map 전체를 막음)을 그대로 쓴다.
+        error_answer = all_models_failed_message(e)
+        return {"messages": new_msgs + [AIMessage(content=error_answer)],
+                "answer": error_answer,
+                "fix_needed": False,
+                "generated_by": state.model,
+                "disabled_models": list(model_map.keys()),
+                "tokens_used": state.tokens_used,
+                "trace": state.trace + f"""------\n{state.try_count+1}번째 generate 실패: {e}"""}
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
     answer = response.content if isinstance(response.content, str) else "".join(

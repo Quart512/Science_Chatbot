@@ -303,6 +303,20 @@ def test_trigger_recommend_search_404_when_interest_not_found(monkeypatch):
     assert resp.status_code == 404
 
 
+def test_trigger_recommend_search_503_when_all_models_fail(monkeypatch):
+    # 08-06 — _english_query()(한글→영어 검색어 변환)가 모델 전부 실패로 던지는
+    # RuntimeError를 예전엔 못 잡아 500(원인 불명)으로 끝났다.
+    def _boom(interest_id, **kw):
+        raise RuntimeError("tried ['gemini', 'claude'] but all failed — gemini: 키 없음")
+    monkeypatch.setattr(paper_recommend, "recommend_for_interest", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/interests/1/search")
+
+    assert resp.status_code == 503
+    assert "API" in resp.json()["detail"]
+
+
 # --- POST /interests/{id}/refresh (08-11② 호출 경로, 관심사 수정 시 자동 재검색) ---
 
 
@@ -348,6 +362,18 @@ def test_refresh_recommend_search_404_when_interest_not_found(monkeypatch):
         resp = client.post("/api/interests/999/refresh", json={})
 
     assert resp.status_code == 404
+
+
+def test_refresh_recommend_search_503_when_all_models_fail(monkeypatch):
+    def _boom(interest_id, existing_candidates, **kw):
+        raise RuntimeError("tried ['gemini', 'claude'] but all failed — gemini: 키 없음")
+    monkeypatch.setattr(paper_recommend, "refresh_for_interest", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/interests/1/refresh", json={})
+
+    assert resp.status_code == 503
+    assert "API" in resp.json()["detail"]
 
 
 # --- GET /interests/{id}/papers (08-03, interest_paper 조인 조회) -----------------
@@ -831,6 +857,20 @@ def test_get_paper_summary_endpoint_422_when_context_budget_exceeded(monkeypatch
     assert resp.status_code == 422
 
 
+def test_get_paper_summary_endpoint_503_when_all_models_fail(monkeypatch):
+    # 08-06 — invoke_with_fallback이 모델 전부 실패(API 키 없음 등)로 던지는 RuntimeError를
+    # 예전엔 못 잡아 500(원인 불명)으로 끝났다. 이제 원인이 담긴 503으로 보여준다.
+    def _boom(paper_id, **kw):
+        raise RuntimeError("tried ['gemini', 'claude'] but all failed — gemini: 키 없음")
+    monkeypatch.setattr(paper_ingest, "get_paper_summary", _boom)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/arxiv:1/summary")
+
+    assert resp.status_code == 503
+    assert "API" in resp.json()["detail"]
+
+
 # --- GET /api/papers/{id}/file (③, 08-05) ---------------------------------------
 # resolve_library_path()의 traversal 방어 자체는 test_paper_catalog.py가 이미 검증
 # 했으므로 여기선 엔드포인트 조립(조회→404 분기→파일 스트리밍)만 본다.
@@ -1291,6 +1331,25 @@ def test_advance_research_omits_user_guidance_when_not_given(monkeypatch):
         resp = client.post("/api/research/t1/advance", json={"stage": "design"})
 
     assert "user_guidance" not in fake_graph.invoked_with[0]
+
+
+def test_advance_research_503_when_all_models_fail(monkeypatch):
+    # 08-06 — research_workflow.py의 노드(가설·설계·분석·초안)가 invoke_with_fallback의
+    # RuntimeError(모델 전부 실패)를 그대로 전파하면 예전엔 500(원인 불명)으로 끝났다.
+    # 이제 원인이 담긴 503으로 보여준다.
+    fake_session = {"thread_id": "t1", "title": "제목", "topic": "주제", "stage": "design"}
+    monkeypatch.setattr(research_sessions, "get_session", lambda thread_id, **kw: fake_session)
+
+    class _FailingGraph:
+        async def ainvoke(self, inputs, config):
+            raise RuntimeError("tried ['gemini', 'claude'] but all failed — gemini: 키 없음")
+
+    with TestClient(main.app) as client:
+        main.app.state.research_graph = _FailingGraph()
+        resp = client.post("/api/research/t1/advance", json={"stage": "design"})
+
+    assert resp.status_code == 503
+    assert "API" in resp.json()["detail"]
 
 
 def test_advance_research_does_not_recreate_existing_session(monkeypatch):

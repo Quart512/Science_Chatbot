@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { listInterests, saveInterest, type InterestDraft } from '../api/interests'
+import { listInterests, saveInterest, type InterestDraftResponse } from '../api/interests'
 import { InterestCard } from './InterestCard'
 import './Interests.css'
 
@@ -12,7 +12,7 @@ import './Interests.css'
 export function Interests() {
   const queryClient = useQueryClient()
   const location = useLocation()
-  const draft = location.state as InterestDraft | undefined
+  const draft = location.state as InterestDraftResponse | undefined
 
   const [open, setOpen] = useState(Boolean(draft))
   const [title, setTitle] = useState(draft?.title ?? '')
@@ -43,6 +43,7 @@ export function Interests() {
 
       <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
         <summary>새 관심사 만들기</summary>
+        {draft?.warning && <p className="interest-card-error">{draft.warning}</p>}
         <form
           className="interest-form"
           onSubmit={(e) => {

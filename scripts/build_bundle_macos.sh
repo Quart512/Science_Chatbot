@@ -27,7 +27,14 @@ rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/runtime"
 
 echo "==> 1/5 프론트엔드 빌드"
-(cd frontend-react && npm ci --silent && npm run build)
+# VITE_BACKEND_URL을 빈 문자열로 명시 오버라이드 — frontend-react/.env의 로컬 개발용
+# 값(http://localhost:8000, Vite 5173 + 백엔드 8000 분리 실행 전제)이 그대로면 Vite가
+# 빌드 시점에 이 값을 번들 JS에 박아버린다. 번들 앱은 http://127.0.0.1:8000에서
+# 여는데 API는 http://localhost:8000으로 쏘게 돼 브라우저가 서로 다른 오리진으로 보고
+# 실제 CORS 프리플라이트를 걸고(서버는 localhost:5173만 허용) 전부 막힌다(08-06 실기
+# 테스트로 재현·확인). client.ts 주석이 말하는 "프로덕션은 같은 오리진, 빈 문자열
+# 기본값" 의도를 빌드 시점에 강제한다.
+(cd frontend-react && npm ci --silent && VITE_BACKEND_URL= npm run build)
 
 echo "==> 2/5 프로덕션 의존성 설치 (--no-dev)"
 # UV_PROJECT_ENVIRONMENT로 대상 venv를 따로 지정한다 — 이게 없으면 프로젝트의 .venv를
@@ -71,7 +78,8 @@ echo "==> 4/5 앱 소스 복사"
 # 일회성 스크립트라 모듈이 아니고, import되는 순간 Chroma.from_texts가 실행된다.
 # 나머지는 전부 런타임 모듈이다. 목록이 틀리면 아래 5/5의 스모크 테스트가 잡는다.
 for item in main.py graph.py models.py orchestrator.py retrieval.py embeddings.py \
-            tool.py interests.py knowledge_notes.py api_keys.py \
+            tool.py interests.py knowledge_notes.py api_keys.py chat_sessions.py \
+            wikipedia_api.py \
             arxiv_api.py paper_catalog.py paper_search.py paper_screening.py \
             paper_recommend.py reference_recommender.py research_workflow.py \
             research_sessions.py research_branches.py research_notes.py \
@@ -81,50 +89,118 @@ done
 mkdir -p "$BUNDLE/frontend-react"
 cp -R frontend-react/dist "$BUNDLE/frontend-react/dist"
 
-echo "==> 5/5 실행 스크립트 생성"
-cat > "$BUNDLE/start.command" <<'LAUNCHER'
+echo "==> 5/5 조용한 .app 런처 생성"
+# 손으로 만든 bash-as-.app(Info.plist + Contents/MacOS/<bash 스크립트>)은 08-06 실기
+# 테스트에서 "응답하지 않습니다"로 거부당했다 — LaunchServices가 살아있는지 확인하는
+# Apple Event ping에 답할 방법이 순수 bash 실행파일엔 없기 때문(실측으로 원인 확정,
+# 아래 README_13.md §10 참고). 대신 osacompile로 AppleScript 런처를 컴파일한다 —
+# 이건 macOS 기본 OSA 런타임 위에서 도는 진짜 Cocoa 앱이라 그 ping에 정상 응답한다.
+# 실제 작업(run.sh)은 여전히 번들 루트에 별도 파일로 두고 배경으로 던지기만 한다.
+APP="$BUNDLE/AIsaac.app"
+rm -rf "$APP"
+
+cat > "$BUNDLE/run.sh" <<'LAUNCHER'
 #!/bin/bash
-# AIsaac 실행 — 더블클릭하세요.
+# AIsaac 실제 작업 — AIsaac.app(osacompile 런처)이 백그라운드로 던지는 스크립트.
+# LaunchServices의 응답성 감시 대상이 아니라서 원하는 만큼 오래 떠 있어도 된다.
+set -uo pipefail
+
 cd "$(dirname "$0")"
+mkdir -p logs
 
 if lsof -i :8000 -sTCP:LISTEN &> /dev/null; then
-  echo "8000번 포트를 다른 프로그램이 이미 쓰고 있습니다."
-  echo "그 프로그램을 종료한 뒤 다시 실행해주세요."
-  read -p "엔터를 누르면 창이 닫힙니다..." _
+  osascript -e 'display alert "AIsaac" message "8000번 포트를 다른 프로그램이 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해주세요." as critical' &> /dev/null
   exit 1
 fi
 
-echo "AIsaac을 시작합니다..."
-echo "(처음 실행이면 AI 임베딩 모델을 내려받느라 몇 분 걸릴 수 있습니다 — 정상입니다)"
-echo
-echo "  ※ 종료하려면 이 창을 닫거나 Ctrl+C 를 누르세요."
-echo
-
-# 준비되면 브라우저를 여는 감시자를 백그라운드로 띄우고, 서버는 포그라운드로 실행한다.
-# 포그라운드가 핵심 — 창을 닫으면 서버도 같이 죽어서 Docker의 detached 컨테이너처럼
-# 프로세스가 남지 않는다(그래서 이 번들엔 stop 스크립트가 없다).
-(
-  for _ in $(seq 1 180); do
-    if [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health 2>/dev/null)" = "200" ]; then
-      open "http://127.0.0.1:8000"
-      exit 0
-    fi
-    sleep 2
-  done
-) &
-
 # --host 127.0.0.1 — Docker판은 컨테이너 네트워킹 때문에 0.0.0.0이 필수였지만, 번들은
-# 호스트에서 직접 도니 LAN에 노출할 이유가 없다(같은 와이파이의 다른 기기 접근 차단).
-PYTHONPATH="runtime/lib" exec runtime/python/bin/python3 -m uvicorn main:app \
-  --host 127.0.0.1 --port 8000
+# 호스트에서 직접 도니 LAN에 노출할 이유가 없다. 터미널이 없으므로 출력은 로그 파일로.
+PYTHONPATH="runtime/lib" runtime/python/bin/python3 -m uvicorn main:app \
+  --host 127.0.0.1 --port 8000 >> logs/server.log 2>&1 &
+SERVER_PID=$!
+
+ready=false
+for _ in $(seq 1 180); do
+  if [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health 2>/dev/null)" = "200" ]; then
+    ready=true
+    break
+  fi
+  sleep 2
+done
+
+if [ "$ready" != "true" ]; then
+  osascript -e 'display alert "AIsaac" message "서버가 응답하지 않습니다. logs/server.log 를 확인해주세요." as critical' &> /dev/null
+  kill "$SERVER_PID" 2>/dev/null
+  exit 1
+fi
+
+# 격리 프로필 — 고정 경로를 쓴다(재실행해도 로그인 세션이 유지됨). 같은 프로필로
+# 두 번째 실행이 걸리면 Chrome 자체 싱글턴 락이 새 창만 기존 프로세스에 얹고 반환하는
+# 걸 실측으로 확인했다(08-06) — 그래서 아래 "창이 살아있는지" 판정은 프로세스 종료
+# 대기(wait)가 아니라 AppleScript로 창 존재 자체를 직접 물어본다.
+PROFILE_DIR="$HOME/Library/Application Support/AIsaac/chrome-profile"
+mkdir -p "$PROFILE_DIR"
+
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+EDGE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+APP_URL="http://127.0.0.1:8000"
+
+BROWSER_APP=""
+if [ -x "$CHROME" ]; then
+  BROWSER_APP="Google Chrome"
+  BROWSER_BIN="$CHROME"
+elif [ -x "$EDGE" ]; then
+  BROWSER_APP="Microsoft Edge"
+  BROWSER_BIN="$EDGE"
+fi
+
+if [ -z "$BROWSER_APP" ]; then
+  # Chrome/Edge 둘 다 없으면 일반 브라우저 탭으로 폴백 — 앱모드도, 창 종료 감지도 못
+  # 하므로 서버는 계속 백그라운드에 남는다(다음 실행 시 포트 점유로 사용자가 알아챔).
+  open "$APP_URL"
+  disown "$SERVER_PID" 2>/dev/null
+  exit 0
+fi
+
+"$BROWSER_BIN" --app="$APP_URL" --user-data-dir="$PROFILE_DIR" \
+  --no-first-run --no-default-browser-check >> logs/browser.log 2>&1 &
+
+# 창이 실제로 열릴 시간을 준 뒤, 우리 URL을 가진 창이 남아있는 동안 폴링한다.
+sleep 3
+while true; do
+  count=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:8000\"))" 2>/dev/null)
+  [ "${count:-0}" = "0" ] && break
+  sleep 3
+done
+
+kill "$SERVER_PID" 2>/dev/null
 LAUNCHER
-chmod +x "$BUNDLE/start.command"
+chmod +x "$BUNDLE/run.sh"
+
+# osacompile 런처 — 진짜 하는 일은 "mkdir -p logs && nohup run.sh &"뿐이다. do shell
+# script는 백그라운드로 던진 뒤 즉시 반환하므로 이 앱 자신은 순식간에 끝나고, 그 사이
+# LaunchServices의 응답성 체크에 정상적으로 답한다(applet 바이너리가 원래 그렇게 동작).
+osacompile -o "$APP" <<'APPLESCRIPT'
+on run
+	set appPosixPath to POSIX path of (path to me)
+	set bundleRoot to do shell script "dirname " & quoted form of (text 1 thru -2 of appPosixPath)
+	do shell script "mkdir -p " & quoted form of (bundleRoot & "/logs") & ¬
+		" && nohup " & quoted form of (bundleRoot & "/run.sh") & ¬
+		" >> " & quoted form of (bundleRoot & "/logs/launcher.log") & " 2>&1 & disown"
+end run
+APPLESCRIPT
 
 cat > "$BUNDLE/README.txt" <<'READMEEOF'
 AIsaac — 물리 연구 어시스턴트
 
-실행: start.command 를 더블클릭하세요.
-종료: 실행 중 열린 터미널 창을 닫거나 Ctrl+C.
+중요: 이 AIsaac 폴더는 바탕화면·문서·다운로드 폴더 "안"에 두지 마세요.
+macOS 보안 정책 때문에 그 세 폴더 밑에서는 첫 실행이 멈추거나 실패할 수
+있습니다. 압축을 풀었다면 이 폴더를 사용자 폴더 바로 밑이나 별도 폴더로
+옮긴 뒤 실행하세요(예: 다운로드 폴더에서 사용자 홈 폴더로 드래그).
+
+실행: AIsaac.app 을 더블클릭하세요(Terminal 창이 뜨지 않습니다).
+종료: 열린 앱 창을 닫으면 서버도 함께 종료됩니다.
+로그: 문제가 있으면 logs/server.log 를 확인하세요.
 
 처음 실행할 때는 AI 임베딩 모델(약 2GB)을 내려받으므로 몇 분 걸립니다.
 두 번째부터는 바로 뜹니다.

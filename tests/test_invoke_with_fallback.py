@@ -196,6 +196,38 @@ def test_request_scoped_failure_on_every_model_terminates(monkeypatch):
     assert excinfo.value.__cause__ is not None  # raise ... from exc 로 원본 예외가 체인됨
 
 
+def test_client_construction_failure_falls_back(monkeypatch):
+    # 08-06 실기 발견 — model_map[name]()(클라이언트 생성)이 원래 try 블록 "밖"에 있어서
+    # MissingAPIKeyError(생성 시점에 남, invoke() 호출 전) 같은 FALLBACK_EXCEPTIONS가
+    # 못 잡고 그대로 새어나갔다(포터블 번들에 .env가 없어 실사용에서 실제로 걸림).
+    # 여기선 gemini의 "생성 함수 자체"가 실패하도록 만들어 재현·회귀 방지한다.
+    def _boom():
+        raise models.MissingAPIKeyError("gemini")
+    fake_claude = make_fake_model()
+    monkeypatch.setattr(models, "model_map", {"gemini": _boom, "claude": lambda: fake_claude})
+
+    response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    assert used_model == "claude"
+    assert disabled == ["gemini"]
+    fake_claude.invoke.assert_called_once()
+
+
+def test_client_construction_failure_on_every_model_raises_with_detail(monkeypatch):
+    def _boom_gemini():
+        raise models.MissingAPIKeyError("gemini")
+    def _boom_claude():
+        raise models.MissingAPIKeyError("claude")
+    monkeypatch.setattr(models, "model_map", {"gemini": _boom_gemini, "claude": _boom_claude})
+
+    with pytest.raises(RuntimeError) as excinfo:
+        models.invoke_with_fallback("gemini", messages=["dummy"])
+
+    message = str(excinfo.value)
+    assert "gemini" in message and "claude" in message
+    assert "API 키" in message
+
+
 def test_disabled_models_are_skipped_without_calling_invoke(monkeypatch):
     fake_gemini = make_fake_model()
     fake_claude = make_fake_model()
