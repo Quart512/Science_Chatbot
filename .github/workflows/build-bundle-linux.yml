@@ -1,0 +1,41 @@
+# Linux portable 번들 빌드 검증 — 08-06, Windows 번들(build-bundle-windows.yml)과 같은
+# 목적. CI 러너는 헤드리스라 .desktop 더블클릭 실행 같은 상호작용은 여기서도 못 잡는다 —
+# 확인하는 건 "번들이 만들어지고 스스로 import되는가"까지(build_bundle_linux.sh 마지막
+# 단계가 이미 그 검증을 함). RoadMap "[배포] 배포판 릴리즈 게이트" ① 참고.
+name: Linux 번들 빌드 검증
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/build_bundle_linux.sh
+      - .github/workflows/build-bundle-linux.yml
+      - pyproject.toml
+      - uv.lock
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+
+      - name: 파이썬 3.14 설치 (독립 실행 인터프리터 확보용)
+        run: uv python install 3.14
+
+      - name: Node 설치 (프론트 빌드용)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 번들 빌드
+        run: bash scripts/build_bundle_linux.sh
+
+      - name: .desktop 파일 문법 검증
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq desktop-file-utils
+          desktop-file-validate build/AIsaac/AIsaac.desktop
