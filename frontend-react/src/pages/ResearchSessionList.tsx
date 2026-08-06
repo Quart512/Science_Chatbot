@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -7,11 +6,16 @@ import {
   renameResearchSession,
   type ResearchSession,
 } from '../api/research'
+import { EditableSessionTitle } from '../components/EditableSessionTitle'
 import './SessionList.css'
 
 // 왼쪽 네비 "연구 워크플로우" 라벨을 눌렀을 때 뜨는 화면 — ChatSessionList.tsx와
 // 같은 이유·같은 패턴(08-06, 사용자 요청). 라벨=이 목록, "+"(Layout.tsx)=/research/new
 // (NewResearchForm, Research.tsx가 threadId 없을 때 이미 보여주던 것 그대로).
+//
+// 08-06 후속 — 제목 행을 EditableSessionTitle로. 연구는 챗봇과 달리
+// last_message_role 개념이 의미 없어서(사용자 결정 — "어느 단계인지가 이미
+// 상태 역할을 한다") 상태 점 대신 stage 배지를 그대로 아래 줄에 놓는다.
 export function ResearchSessionList() {
   const navigate = useNavigate()
   const { data, isLoading, isError } = useQuery({ queryKey: ['research-sessions'], queryFn: listResearchSessions })
@@ -43,61 +47,29 @@ export function ResearchSessionList() {
 
 function ResearchSessionCard({ session, onOpen }: { session: ResearchSession; onOpen: () => void }) {
   const queryClient = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [title, setTitle] = useState(session.title)
 
   const renameMutation = useMutation({
-    mutationFn: () => renameResearchSession(session.thread_id, title),
-    onSuccess: () => {
-      setEditing(false)
-      queryClient.invalidateQueries({ queryKey: ['research-sessions'] })
-    },
+    mutationFn: (title: string) => renameResearchSession(session.thread_id, title),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['research-sessions'] }),
   })
   const closeMutation = useMutation({
     mutationFn: () => closeResearchSession(session.thread_id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['research-sessions'] }),
   })
 
-  function startEditing() {
-    setTitle(session.title)
-    setEditing(true)
-  }
-
-  if (editing) {
-    return (
-      <div className="session-card">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            renameMutation.mutate()
-          }}
-        >
-          <input className="session-input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-          <div className="session-card-actions">
-            <button type="submit" disabled={renameMutation.isPending}>
-              {renameMutation.isPending ? '저장 중...' : '저장'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)}>
-              취소
-            </button>
-          </div>
-        </form>
-      </div>
-    )
-  }
-
   return (
     <div className="session-card">
-      <button className="session-card-open" onClick={onOpen}>
-        <strong>{session.title}</strong>
+      <EditableSessionTitle
+        title={session.title}
+        onOpen={onOpen}
+        onRename={(title) => renameMutation.mutate(title)}
+        onClose={() => closeMutation.mutate()}
+        renamePending={renameMutation.isPending}
+        closePending={closeMutation.isPending}
+      />
+      <div className="session-status-row">
         <span className="session-card-stage">{session.stage}</span>
-        <span className="session-card-meta">{session.updated_at.slice(0, 10)}</span>
-      </button>
-      <div className="session-card-actions">
-        <button onClick={startEditing}>수정</button>
-        <button className="session-card-close" onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending}>
-          닫기
-        </button>
+        <span className="session-status-time">{session.updated_at.slice(0, 10)}</span>
       </div>
     </div>
   )

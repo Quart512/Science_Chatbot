@@ -1,7 +1,7 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { closeChatSession, listChatSessions, renameChatSession, type ChatSession } from '../api/chat'
+import { EditableSessionTitle } from '../components/EditableSessionTitle'
 import './SessionList.css'
 
 // 왼쪽 네비 "챗봇" 라벨을 눌렀을 때 뜨는 화면(08-06, 사용자 요청) — 예전엔 라벨을
@@ -10,6 +10,10 @@ import './SessionList.css'
 // 이제 라벨=이 목록 화면, "+"(Layout.tsx)=/chat/new(새 대화 폼)로 의미를 분리한다.
 // 사이드바 ChatSessionNav.tsx와 같은 react-query 키('chat-sessions')를 써서 캐시를
 // 공유 — 어느 쪽에서 이름을 바꾸거나 닫아도 서로 즉시 반영된다.
+//
+// 08-06 후속 — 제목 행을 EditableSessionTitle로, 카드 아래 줄에 대기중/응답됨
+// 상태 점 + 최근 대화 미리보기(둘 다 /api/chat/sessions가 체크포인트에서 직접
+// 계산해 줌, main.py 참고)를 추가.
 export function ChatSessionList() {
   const navigate = useNavigate()
   const { data, isLoading, isError } = useQuery({ queryKey: ['chat-sessions'], queryFn: listChatSessions })
@@ -41,60 +45,33 @@ export function ChatSessionList() {
 
 function ChatSessionCard({ session, onOpen }: { session: ChatSession; onOpen: () => void }) {
   const queryClient = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [title, setTitle] = useState(session.title)
 
   const renameMutation = useMutation({
-    mutationFn: () => renameChatSession(session.thread_id, title),
-    onSuccess: () => {
-      setEditing(false)
-      queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
-    },
+    mutationFn: (title: string) => renameChatSession(session.thread_id, title),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chat-sessions'] }),
   })
   const closeMutation = useMutation({
     mutationFn: () => closeChatSession(session.thread_id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chat-sessions'] }),
   })
 
-  function startEditing() {
-    setTitle(session.title)
-    setEditing(true)
-  }
-
-  if (editing) {
-    return (
-      <div className="session-card">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            renameMutation.mutate()
-          }}
-        >
-          <input className="session-input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-          <div className="session-card-actions">
-            <button type="submit" disabled={renameMutation.isPending}>
-              {renameMutation.isPending ? '저장 중...' : '저장'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)}>
-              취소
-            </button>
-          </div>
-        </form>
-      </div>
-    )
-  }
-
   return (
     <div className="session-card">
-      <button className="session-card-open" onClick={onOpen}>
-        <strong>{session.title}</strong>
-        <span className="session-card-meta">{session.updated_at.slice(0, 10)}</span>
-      </button>
-      <div className="session-card-actions">
-        <button onClick={startEditing}>수정</button>
-        <button className="session-card-close" onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending}>
-          닫기
-        </button>
+      <EditableSessionTitle
+        title={session.title}
+        onOpen={onOpen}
+        onRename={(title) => renameMutation.mutate(title)}
+        onClose={() => closeMutation.mutate()}
+        renamePending={renameMutation.isPending}
+        closePending={closeMutation.isPending}
+      />
+      <div className="session-status-row">
+        <span
+          className={`session-status-dot session-status-dot-${session.last_message_role === 'user' ? 'waiting' : 'answered'}`}
+          title={session.last_message_role === 'user' ? '대기중 — 아직 답이 없습니다' : '응답됨'}
+        />
+        {session.last_message_preview && <span className="session-status-preview">{session.last_message_preview}</span>}
+        <span className="session-status-time">{session.updated_at.slice(0, 10)}</span>
       </div>
     </div>
   )

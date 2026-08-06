@@ -72,6 +72,11 @@ export interface ChatSession {
   title: string
   created_at: string
   updated_at: string
+  // 08-06 — 세션 카드 상태 아이콘·미리보기용. 스키마에 저장된 값이 아니라 매 조회마다
+  // 체크포인트에서 직접 계산해 오므로(main.py 참고) 항상 최신이지만, 체크포인트가
+  // 아예 없는 thread(이론상 없음, chat_sessions는 첫 메시지에서만 생기므로)면 null.
+  last_message_role: 'user' | 'assistant' | null
+  last_message_preview: string | null
 }
 
 export function listChatSessions() {

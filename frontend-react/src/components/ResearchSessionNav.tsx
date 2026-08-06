@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -7,7 +6,9 @@ import {
   renameResearchSession,
   type ResearchSession,
 } from '../api/research'
+import { EditableSessionTitle } from './EditableSessionTitle'
 import '../pages/Research.css'
+import '../pages/SessionList.css'
 
 // 연구 워크플로우 네비 항목 아래 중첩되는 세션 목록(08-04 사용자 지적 — "세션이
 // 왼쪽에 있는 게 낫다"는 게 전역 좌측 네비 컬럼 자체를 말한 것이었다. 예전엔
@@ -15,6 +16,11 @@ import '../pages/Research.css'
 // 갖고 있다는 걸 다시 고려 안 하고 Streamlit research.py의 st.sidebar 구조를
 // 그대로 포팅한 결과였다). 선택 상태는 URL(`/research/:threadId`)이 기준이라
 // 새로고침해도 안 날아간다.
+//
+// 08-06 화면 개선 — 제목 행이 EditableSessionTitle로 바뀌고, 예전엔 제목 옆
+// "(stage)"로만 붙던 단계 표시가 아래 배지 줄로 옮겨졌다(챗봇 쪽 상태 줄과 같은
+// 자리, 시각 언어 통일 — 연구는 last_message_role 개념이 의미 없어서
+// (사용자 결정) 대신 stage 배지를 놓는다).
 export function ResearchSessionNav() {
   const { threadId: selectedThreadId } = useParams<{ threadId?: string }>()
   const navigate = useNavigate()
@@ -53,15 +59,10 @@ function SessionNavItem({
   onClosed: () => void
 }) {
   const queryClient = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [title, setTitle] = useState(session.title)
 
   const renameMutation = useMutation({
-    mutationFn: () => renameResearchSession(session.thread_id, title),
-    onSuccess: () => {
-      setEditing(false)
-      queryClient.invalidateQueries({ queryKey: ['research-sessions'] })
-    },
+    mutationFn: (title: string) => renameResearchSession(session.thread_id, title),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['research-sessions'] }),
   })
   const closeMutation = useMutation({
     mutationFn: () => closeResearchSession(session.thread_id),
@@ -71,60 +72,19 @@ function SessionNavItem({
     },
   })
 
-  function startEditing() {
-    setTitle(session.title)
-    setEditing(true)
-  }
-
-  if (editing) {
-    return (
-      <div className={`research-session-card ${isSelected ? 'research-session-card-selected' : ''}`}>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            renameMutation.mutate()
-          }}
-        >
-          <input className="research-input" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <div className="research-session-actions">
-            <div className="research-session-actions-left">
-              <button type="submit" disabled={renameMutation.isPending}>
-                {renameMutation.isPending ? '저장 중...' : '저장'}
-              </button>
-              <button type="button" onClick={() => setEditing(false)}>
-                취소
-              </button>
-            </div>
-            <button
-              type="button"
-              className="research-session-close"
-              onClick={() => closeMutation.mutate()}
-              disabled={closeMutation.isPending}
-            >
-              닫기
-            </button>
-          </div>
-        </form>
-      </div>
-    )
-  }
-
   return (
     <div className={`research-session-card ${isSelected ? 'research-session-card-selected' : ''}`}>
-      <button className="research-session-select" onClick={onSelect}>
-        {session.title} ({session.stage})
-      </button>
-      <div className="research-session-actions">
-        <div className="research-session-actions-left">
-          <button onClick={startEditing}>수정</button>
-        </div>
-        <button
-          className="research-session-close"
-          onClick={() => closeMutation.mutate()}
-          disabled={closeMutation.isPending}
-        >
-          닫기
-        </button>
+      <EditableSessionTitle
+        title={session.title}
+        onOpen={onSelect}
+        onRename={(title) => renameMutation.mutate(title)}
+        onClose={() => closeMutation.mutate()}
+        renamePending={renameMutation.isPending}
+        closePending={closeMutation.isPending}
+      />
+      <div className="session-status-row">
+        <span className="session-card-stage">{session.stage}</span>
+        <span className="session-status-time">{session.updated_at.slice(0, 10)}</span>
       </div>
     </div>
   )

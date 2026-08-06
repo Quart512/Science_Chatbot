@@ -1,0 +1,70 @@
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0; /* 자식 버튼의 텍스트 말줄임(ellipsis)이 flex에서 실제로 먹히려면 필요 */
+}
+
+.session-title-open {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-title-icons {
+  display: flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.session-title-row:hover .session-title-icons,
+.session-title-row:focus-within .session-title-icons {
+  opacity: 1;
+}
+
+.session-icon-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.session-icon-btn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-surface);
+}
+
+.session-icon-btn-close:hover {
+  color: var(--color-danger);
+}
+
+.session-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-title-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+}

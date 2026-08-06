@@ -24,46 +24,6 @@
   border-color: var(--color-accent);
 }
 
-.research-session-select {
-  background: var(--color-bg-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  padding: 0.4rem;
-  cursor: pointer;
-  text-align: left;
-}
-
-.research-session-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.research-session-actions-left {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.research-session-actions button {
-  background: var(--color-bg-surface);
-  color: var(--color-text);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  padding: 0.3rem 0.6rem;
-  cursor: pointer;
-}
-
-.research-session-actions button[type='submit'] {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: white;
-}
-
-.research-session-close {
-  color: var(--color-text-muted);
-}
-
 /* 브랜치형 타임라인(BranchTimeline.tsx) — 예전 research-timeline(완료체크 5칸)과
    research-tabs(체크포인트 버튼 목록)를 하나로 합친 것. RoadMap "타임라인·체크
    결합(브랜치형)" 설계 노트 참고. */
