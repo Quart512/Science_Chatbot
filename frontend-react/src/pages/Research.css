@@ -18,6 +18,7 @@
   flex-direction: column;
   gap: 0.3rem;
   font-size: 0.85rem;
+  cursor: pointer; /* 08-06 — 카드 전체가 클릭 가능해짐(제목 줄만이 아니라) */
 }
 
 .research-session-card-selected {

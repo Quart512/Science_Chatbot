@@ -68,6 +68,10 @@ export function EditableSessionTitle({ title, onOpen, onRename, onClose, renameP
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
+          // 08-06 — 카드 전체가 클릭 가능해지면서(ChatSessionNav/ResearchSessionNav 참고)
+          // 이 입력창 안을 클릭(커서 이동 등)해도 부모로 버블링돼 onSelect가 발동,
+          // 수정 중에 다른 세션으로 이동해버리는 걸 막는다.
+          onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()

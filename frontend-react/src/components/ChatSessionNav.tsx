@@ -64,7 +64,13 @@ function ChatSessionNavItem({
   })
 
   return (
-    <div className={`research-session-card ${isSelected ? 'research-session-card-selected' : ''}`}>
+    // 08-06 — 제목 줄만 버튼이라 아래 상태 줄(상태 점·미리보기)을 클릭하면 아무 반응이
+    // 없던 버그(사용자 지적). 카드 전체에 onSelect를 걸어 어디를 눌러도 열리게 한다 —
+    // 수정/닫기 아이콘은 이미 자체 onClick에서 stopPropagation을 부르므로 안 겹친다.
+    <div
+      className={`research-session-card ${isSelected ? 'research-session-card-selected' : ''}`}
+      onClick={onSelect}
+    >
       <EditableSessionTitle
         title={session.title}
         onOpen={onSelect}
