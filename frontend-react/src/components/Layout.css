@@ -97,6 +97,7 @@
   border-radius: 4px;
   color: var(--color-text-muted);
   cursor: pointer;
+  text-decoration: none;
   width: 1.4rem;
   height: 1.4rem;
   display: flex;

@@ -57,6 +57,9 @@ export function Layout() {
             <NavLink to="/chat" className="app-nav-link app-nav-link-grow">
               💬 챗봇
             </NavLink>
+            <NavLink to="/chat/new" className="app-nav-new-session" title="새 대화 시작" aria-label="새 대화 시작">
+              +
+            </NavLink>
             <button
               type="button"
               className="app-nav-session-toggle"
@@ -71,7 +74,7 @@ export function Layout() {
             <NavLink to="/research" className="app-nav-link app-nav-link-grow">
               🧬 연구 워크플로우
             </NavLink>
-            <NavLink to="/research" className="app-nav-new-session" title="새 연구 시작" aria-label="새 연구 시작">
+            <NavLink to="/research/new" className="app-nav-new-session" title="새 연구 시작" aria-label="새 연구 시작">
               +
             </NavLink>
             <button

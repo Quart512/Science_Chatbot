@@ -1,0 +1,124 @@
+/* 챗봇·연구 워크플로우 네비 라벨 클릭 시 뜨는 "세션 목록" 화면(08-06) — 사이드바의
+   좁은 세션 목록(ChatSessionNav/ResearchSessionNav)과 시각 언어는 같은 계열이지만,
+   여긴 본문 영역 전체를 쓰는 카드 그리드라 클릭 영역이 더 넓고 한눈에 여러 세션을
+   훑어볼 수 있다. ChatSessionList.tsx·ResearchSessionList.tsx가 공유. */
+.session-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.session-list-new {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-list-new:hover {
+  box-shadow: 0 0 0 2px var(--color-accent-moon);
+}
+
+.session-list-empty,
+.session-list-error {
+  color: var(--color-text-muted);
+}
+
+.session-list-error {
+  color: var(--color-danger);
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.9rem;
+}
+
+.session-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--color-bg-elevated);
+}
+
+.session-card-open {
+  background: none;
+  border: none;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font: inherit;
+}
+
+.session-card-open strong {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.session-card-open:hover strong {
+  color: var(--color-accent);
+}
+
+.session-card-stage {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  color: var(--color-accent-moon);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.session-card-meta {
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+}
+
+.session-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.session-card-actions button {
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.session-card-actions button[type='submit'] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+}
+
+.session-card-close {
+  color: var(--color-text-muted);
+}
+
+.session-input {
+  display: block;
+  width: 100%;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+  margin-bottom: 0.5rem;
+}
