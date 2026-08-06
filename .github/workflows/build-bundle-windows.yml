@@ -1,0 +1,44 @@
+# Windows portable 번들 빌드 검증 — 08-06, macOS 번들(scripts/build_bundle_macos.sh)의
+# Windows 대응. 물리 Windows 머신이 없어 상호작용(더블클릭 실행 UX)은 이 워크플로우로
+# 못 잡는다 — 여기서 확인하는 건 "번들이 만들어지고 스스로 import되는가"까지다
+# (build_bundle_windows.ps1 마지막 단계가 이미 그 검증을 함, 실패하면 이 job도 실패).
+# RoadMap "[배포] 배포판 릴리즈 게이트" ①(portable 번들 CI 매트릭스) 참고.
+name: Windows 번들 빌드 검증
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/build_bundle_windows.ps1
+      - .github/workflows/build-bundle-windows.yml
+      - pyproject.toml
+      - uv.lock
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+
+      - name: 파이썬 3.14 설치 (독립 실행 인터프리터 확보용)
+        run: uv python install 3.14
+
+      - name: Node 설치 (프론트 빌드용)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 번들 빌드
+        shell: pwsh
+        run: ./scripts/build_bundle_windows.ps1
+
+      - name: 번들 크기 확인
+        shell: pwsh
+        run: |
+          $size = (Get-ChildItem -Recurse build/AIsaac | Measure-Object -Property Length -Sum).Sum / 1MB
+          Write-Host ("압축 전 크기: {0:N0} MB" -f $size)
