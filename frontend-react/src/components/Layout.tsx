@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { ChatPanel } from './ChatPanel'
 import { ChatSessionNav } from './ChatSessionNav'
 import { ResearchSessionNav } from './ResearchSessionNav'
+import { useScrollbarAutoHide } from '../hooks/useScrollbarAutoHide'
 import './Layout.css'
 
 // 셸 — 왼쪽 네비게이션 + 가운데 라우팅된 메인 콘텐츠 + 오른쪽 항상-떠-있는 챗 패널.
@@ -22,6 +23,7 @@ export function Layout() {
   const [navOpen, setNavOpen] = useState(true)
   const [chatSessionsOpen, setChatSessionsOpen] = useState(true)
   const [researchSessionsOpen, setResearchSessionsOpen] = useState(true)
+  useScrollbarAutoHide()
 
   if (!navOpen) {
     return (

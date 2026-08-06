@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteApiKey, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
 import { exportLibrary, importLibrary } from '../api/library'
 import { useTheme, type Theme } from '../hooks/useTheme'
+import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import './Settings.css'
 
 const THEME_OPTIONS: { key: Theme; label: string }[] = [
@@ -32,6 +33,40 @@ function ThemeCard() {
             {opt.label}
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// 08-06 신설 — ChatPanel.tsx "챗봇을 벗어날 때 다시 열지" 설정의 UI. 저장 위치는
+// ThemeCard와 같은 이유로 localStorage(useChatPanelAutoShow.ts) — 기기별 화면 취향.
+function ChatPanelAutoShowCard() {
+  const { autoShow, setAutoShow } = useChatPanelAutoShow()
+
+  return (
+    <div className="settings-card">
+      <h3>챗 패널 자동 열림</h3>
+      <p className="settings-card-meta">
+        챗봇 화면을 벗어날 때 오른쪽 챗 패널을 자동으로 다시 열지 정합니다. 껐다 켜는 건
+        오른쪽 버튼으로 이 설정과 상관없이 항상 가능합니다.
+      </p>
+      <div className="settings-card-actions">
+        <button
+          className={autoShow ? 'settings-theme-active' : undefined}
+          onClick={() => setAutoShow(true)}
+          disabled={autoShow}
+          aria-pressed={autoShow}
+        >
+          자동으로 열기
+        </button>
+        <button
+          className={!autoShow ? 'settings-theme-active' : undefined}
+          onClick={() => setAutoShow(false)}
+          disabled={!autoShow}
+          aria-pressed={!autoShow}
+        >
+          버튼으로만
+        </button>
       </div>
     </div>
   )
@@ -278,6 +313,7 @@ export function Settings() {
       <h1>⚙️ 설정</h1>
 
       <ThemeCard />
+      <ChatPanelAutoShowCard />
 
       <p className="settings-intro">
         여기서 입력한 키는 이 컴퓨터에 저장되고, 다음 질문부터(서버 재시작 없이) 바로
