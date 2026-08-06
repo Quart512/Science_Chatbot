@@ -1,0 +1,41 @@
+# macOS portable 번들 빌드 검증 — 08-06, Windows/Linux 번들과 같은 목적으로 뒤늦게
+# 추가(macOS는 개발자가 직접 실기로 이미 여러 번 검증했지만, CI 검증이 없으면 이
+# 스크립트가 나중에 깨져도 아무도 모른다 — 회귀 방지 목적이 크다). CI 러너는 GUI
+# 세션이 없어 실제 더블클릭·TCC 권한 팝업 같은 상호작용은 여전히 못 잡는다 —
+# 확인하는 건 "번들이 만들어지고 스스로 import되는가"까지(build_bundle_macos.sh
+# 마지막 단계가 이미 그 검증을 함). RoadMap "[배포] 배포판 릴리즈 게이트" 참고.
+name: macOS 번들 빌드 검증
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/build_bundle_macos.sh
+      - .github/workflows/build-bundle-macos.yml
+      - pyproject.toml
+      - uv.lock
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+
+      - name: 파이썬 3.14 설치 (독립 실행 인터프리터 확보용)
+        run: uv python install 3.14
+
+      - name: Node 설치 (프론트 빌드용)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 번들 빌드
+        run: bash scripts/build_bundle_macos.sh
+
+      - name: 번들 크기 확인
+        run: du -sh build/AIsaac
