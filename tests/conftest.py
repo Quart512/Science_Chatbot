@@ -40,7 +40,15 @@ import pytest
 os.environ.setdefault("GOOGLE_API_KEY", "test-dummy-key")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-dummy-key")
 
-sys.modules.setdefault("retrieval", SimpleNamespace(vectorstore=None, papers_vectorstore=None, notes_vectorstore=None))
+sys.modules.setdefault(
+    "retrieval",
+    # persist_directory(08-05, ⑥-A export)는 main.py가 실제 값(문자열 경로)을 그대로
+    # 참조하므로("./chroma_db"), None이 아니라 실제 retrieval.py와 같은 기본값을 흉내낸다
+    # — 개별 테스트가 monkeypatch.setattr(retrieval, "persist_directory", ...)로 갈아끼움.
+    SimpleNamespace(
+        vectorstore=None, papers_vectorstore=None, notes_vectorstore=None, persist_directory="./chroma_db"
+    ),
+)
 
 
 @pytest.fixture

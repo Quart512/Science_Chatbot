@@ -6,12 +6,14 @@ TestClient(main.app)는 lifespan(AsyncSqliteSaver)도 함께 돈다 — /query�
 """
 import asyncio
 import uuid
+import zipfile
+from io import BytesIO
 
-import fitz
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
 import api_keys
+import chat_sessions
 import equipment
 import interests
 import knowledge_notes
@@ -24,6 +26,7 @@ import research_branches
 import research_notes
 import research_sessions
 import research_workflow
+import retrieval
 
 
 # --- GET/DELETE /query/{thread_id}/messages (08-13 메시지 트리밍 2단계, 수동 삭제) ---
@@ -389,43 +392,73 @@ def test_list_interest_papers_404_when_interest_not_found(monkeypatch):
 # --- POST /papers (08-11① 호출 경로) -----------------------------------------
 
 
-def test_register_paper_endpoint_forwards_doi_and_arxiv_id(monkeypatch):
-    # register_paper() 자체(파싱·임베딩)는 몽키패치로 갈아끼운다 — 여기서 보는 건
-    # 엔드포인트가 업로드 바이트를 임시 파일 경로로 바꿔 doi/arxiv_id와 함께 그대로
-    # 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
+def test_register_paper_endpoint_writes_to_library_and_forwards_to_track(monkeypatch, tmp_path):
+    # ⑤(08-05) — 업로드가 library/에 파일을 남기고 track_in_background()로 넘어간다.
+    # track_in_background() 자체(파싱·임베딩)는 몽키패치로 갈아끼운다 — 여기서 보는 건
+    # 엔드포인트가 업로드 바이트를 실제로 library/에 써넣고, doi/arxiv_id·filename·
+    # file_path를 그대로 넘기고, 반환값을 그대로 응답으로 relay하는지뿐이다.
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
     captured = {}
 
-    def _fake_register(pdf_path, *, doi=None, arxiv_id=None, filename="", **kw):
+    def _fake_track(pdf_path, *, file_path=None, filename="", doi=None, arxiv_id=None, title=None, **kw):
         captured["pdf_path"] = pdf_path
+        captured["file_path"] = file_path
+        captured["filename"] = filename
         captured["doi"] = doi
         captured["arxiv_id"] = arxiv_id
-        captured["filename"] = filename
-        return {"paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1}
+        captured["title"] = title
+        with open(pdf_path, "rb") as f:
+            captured["bytes_on_disk"] = f.read()
+        return {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
 
-    monkeypatch.setattr(paper_ingest, "register_paper", _fake_register)
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
 
     with TestClient(main.app) as client:
         resp = client.post(
             "/api/papers",
             files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")},
-            data={"arxiv_id": "2401.12345"},
+            data={"arxiv_id": "2401.12345", "title": "비-arXiv 논문용 수동 제목"},
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {
-        "paper_id": "arxiv:2401.12345", "text_extractable": True, "chunk_count": 3, "page_count": 1
-    }
+    assert resp.json() == {"paper_id": "arxiv:2401.12345", "analysis_status": "pending"}
     assert captured["arxiv_id"] == "2401.12345"
     assert captured["doi"] is None
-    assert captured["pdf_path"]  # 임시 파일 경로(내용은 register_paper()가 몽키패치돼 안 쓰임)
-    assert captured["filename"] == "paper.pdf"  # 업로드 원본 파일명이 그대로 전달됨
+    assert captured["title"] == "비-arXiv 논문용 수동 제목"
+    assert captured["filename"] == "paper.pdf"
+    assert captured["file_path"] == "paper.pdf"  # library/ 루트 기준 상대경로(충돌 없음)
+    assert captured["bytes_on_disk"] == b"%PDF-1.4 dummy"  # 실제로 library/에 써짐
 
 
-def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
+def test_register_paper_endpoint_avoids_filename_collision(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "paper.pdf").write_bytes(b"already here")  # 같은 이름의 기존 파일
+
+    captured = {}
+
+    def _fake_track(pdf_path, *, file_path=None, **kw):
+        captured["file_path"] = file_path
+        return {"paper_id": "hash:x", "analysis_status": "pending"}
+
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/papers", files={"file": ("paper.pdf", b"%PDF-1.4 dummy", "application/pdf")})
+
+    assert resp.status_code == 200
+    assert captured["file_path"] == "paper_2.pdf"  # 기존 paper.pdf를 안 덮어씀
+    assert (tmp_path / "paper.pdf").read_bytes() == b"already here"  # 기존 파일 그대로
+
+
+def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch, tmp_path):
+    # 매직바이트(%PDF-) 검증만으로 즉시 거절 — track_in_background까지 안 감(파싱은
+    # 이제 백그라운드에서만 검증되므로 여기서 걸러지는 건 매직바이트 수준뿐).
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+
     def _boom(pdf_path, **kw):
-        raise fitz.FileDataError("cannot open broken document")
+        raise AssertionError("매직바이트 검증에서 걸러졌어야 함 — track_in_background까지 오면 안 됨")
 
-    monkeypatch.setattr(paper_ingest, "register_paper", _boom)
+    monkeypatch.setattr(paper_ingest, "track_in_background", _boom)
 
     with TestClient(main.app) as client:
         resp = client.post(
@@ -433,6 +466,7 @@ def test_register_paper_endpoint_400_on_invalid_pdf(monkeypatch):
         )
 
     assert resp.status_code == 400
+    assert list(tmp_path.iterdir()) == []  # 거절된 파일은 library/에 안 남음
 
 
 # --- GET /papers (08-11③ 호출 경로) -------------------------------------------
@@ -471,6 +505,279 @@ def test_list_papers_rejects_invalid_status():
         resp = client.get("/api/papers", params={"status": "bogus"})
 
     assert resp.status_code == 422
+
+
+# --- GET /api/library/files (②-A, 08-05) ----------------------------------------
+# 얇은 통로 — scan_library_files()가 실제 스캔·traversal 방어를 맡고(test_paper_catalog.py),
+# 여기서는 엔드포인트가 그 반환값을 그대로 넘기는지만 확인.
+
+
+def test_list_library_files_returns_scan_result(monkeypatch):
+    fake_files = [{"path": "quantum/foo.pdf", "tracked": True}]
+    monkeypatch.setattr(paper_catalog, "scan_library_files", lambda **kw: fake_files)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/library/files")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"files": fake_files}
+
+
+# --- POST /api/library/track (②-B, 08-05 / ④에서 비동기로 전환, 08-05) ----------
+# track_in_background() 자체는 몽키패치로 갈아끼운다 — 여기서 보는 건 엔드포인트가
+# 상대경로를 library/ 기준 절대경로로 바꿔 file_path와 함께 그대로 넘기는지, 그
+# 반환값을 그대로 relay하는지, traversal·파일없음을 올바른 상태 코드로 거절하는지뿐.
+# 파싱 실패(fitz.FileDataError)는 이제 백그라운드 스레드 안에서만 일어나므로 여기서
+# 400으로 안 잡힌다 — 그 경로는 test_paper_ingest.py의 track_in_background 테스트가 본다.
+
+
+def test_track_library_file_forwards_to_track_in_background(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 dummy")
+
+    captured = {}
+
+    def _fake_track(pdf_path, *, file_path=None, filename=""):
+        captured["pdf_path"] = pdf_path
+        captured["filename"] = filename
+        captured["file_path"] = file_path
+        return {"paper_id": "hash:aaa", "analysis_status": "pending"}
+
+    monkeypatch.setattr(paper_ingest, "track_in_background", _fake_track)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "quantum/paper.pdf"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"paper_id": "hash:aaa", "analysis_status": "pending"}
+    assert captured["file_path"] == "quantum/paper.pdf"
+    assert captured["filename"] == "paper.pdf"
+    assert captured["pdf_path"] == str((tmp_path / "quantum" / "paper.pdf").resolve())
+
+
+def test_track_library_file_404_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "does-not-exist.pdf"})
+
+    assert resp.status_code == 404
+
+
+def test_track_library_file_400_on_traversal(monkeypatch, tmp_path):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/track", json={"path": "../outside.pdf"})
+
+    assert resp.status_code == 400
+
+
+# --- POST /api/library/export (⑥-A, 08-05) ---------------------------------------
+# ZIP 안 경로는 저장소 루트 기준 상대경로 그대로(예: "data/app.db") — export/import가
+# 대칭이 되도록 하는 설계라, 여기서도 그 상대경로로 담기는지가 핵심 확인 대상이다.
+
+
+def test_export_library_includes_app_db_only_by_default(monkeypatch, tmp_path):
+    db_path = tmp_path / "app.db"
+    db_path.write_bytes(b"fake sqlite bytes")
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(db_path))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert zf.namelist() == [str(db_path).lstrip("/")]
+        assert zf.read(str(db_path).lstrip("/")) == b"fake sqlite bytes"
+
+
+def test_export_library_includes_index_when_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    index_dir = tmp_path / "chroma_db"
+    index_dir.mkdir()
+    (index_dir / "chroma.sqlite3").write_bytes(b"fake index bytes")
+    monkeypatch.setattr(retrieval, "persist_directory", str(index_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_index": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        names = zf.namelist()
+        assert any(n.endswith("chroma.sqlite3") for n in names)
+
+
+def test_export_library_includes_library_when_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    (library_dir / "quantum").mkdir(parents=True)
+    (library_dir / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        names = zf.namelist()
+        assert any(n.endswith("quantum/paper.pdf") for n in names)
+
+
+def test_export_library_omits_index_and_library_when_not_requested(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    index_dir = tmp_path / "chroma_db"
+    index_dir.mkdir()
+    (index_dir / "chroma.sqlite3").write_bytes(b"fake index bytes")
+    monkeypatch.setattr(retrieval, "persist_directory", str(index_dir))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert zf.namelist() == []  # app.db도 없고(위에서 존재하지 않는 경로로 돌림) 나머지도 제외
+
+
+def test_export_library_follows_symlinked_folder_in_library(monkeypatch, tmp_path):
+    # 포터블 번들 "라이브러리 외부 경로 추적" 기능(심볼릭 링크)으로 연결된 파일도
+    # 완전 백업(본인용)에는 같이 담겨야 한다 — scan_library_files()와 같은 이유.
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "foo.pdf").write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})
+
+    with zipfile.ZipFile(BytesIO(resp.content)) as zf:
+        assert any(n.endswith("linked/foo.pdf") for n in zf.namelist())
+
+
+def test_export_library_avoids_infinite_loop_on_cyclic_symlink(monkeypatch, tmp_path):
+    monkeypatch.setattr(interests, "APP_DB_PATH", str(tmp_path / "does-not-exist.db"))
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "self").symlink_to(library_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/library/export", json={"include_library": True})  # 순환을 못 막으면 여기서 무한 루프
+
+    assert resp.status_code == 200
+
+
+# --- POST /api/library/import (⑥-B, 08-05) ---------------------------------------
+# 병합은 안 만든다(사용자 결정) — papers/interests/equipment/notes 중 하나라도 있으면
+# 거부. extractall(path=".")이 실제 CWD 기준으로 파일을 쓰므로 monkeypatch.chdir()로
+# 격리(pytest가 테스트 종료 시 자동으로 원래 cwd로 되돌림 — 저장소를 안 건드림).
+
+
+def _build_zip(entries: dict) -> bytes:
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _stub_empty_catalog(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "list_papers", lambda **kw: [])
+    monkeypatch.setattr(interests, "list_interests", lambda **kw: [])
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda **kw: [])
+
+
+def test_import_library_rejects_when_papers_exist(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "list_papers", lambda **kw: [{"paper_id": "hash:x"}])
+    monkeypatch.setattr(interests, "list_interests", lambda **kw: [])
+    monkeypatch.setattr(equipment, "list_equipment", lambda **kw: [])
+    monkeypatch.setattr(knowledge_notes, "list_notes", lambda **kw: [])
+
+    zip_bytes = _build_zip({"data/app.db": b"fake"})
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 400
+
+
+def test_import_library_rejects_invalid_zip(monkeypatch):
+    _stub_empty_catalog(monkeypatch)
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("bad.zip", b"not a zip file", "application/zip")}
+        )
+
+    assert resp.status_code == 400
+
+
+def test_import_library_rejects_unexpected_paths_in_zip(monkeypatch, tmp_path):
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({"../outside.txt": b"malicious"})
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("evil.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 400
+    assert not (tmp_path.parent / "outside.txt").exists()
+
+
+def test_import_library_extracts_zip_when_empty(monkeypatch, tmp_path):
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({
+        "data/app.db": b"fake app db bytes",
+        "library/quantum/paper.pdf": b"%PDF-1.4 fake",
+    })
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "papers": 0, "interests": 0, "equipment": 0, "notes": 0, "restart_required": False,
+    }
+    assert (tmp_path / "data" / "app.db").read_bytes() == b"fake app db bytes"
+    assert (tmp_path / "library" / "quantum" / "paper.pdf").read_bytes() == b"%PDF-1.4 fake"
+
+
+def test_import_library_flags_restart_required_when_index_included(monkeypatch, tmp_path):
+    # retrieval.py의 Chroma 클라이언트가 프로세스 시작 시점에 한 번만 만들어져 여러
+    # 모듈이 그 객체를 그대로 들고 있으므로, chroma_db를 갈아치워도 재시작 전까지는
+    # 검색·요약이 깨진다(실제 재현 확인 — RoadMap 완료 표 참고). 이 신호가 응답에
+    # 정직하게 실리는지만 본다.
+    _stub_empty_catalog(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    zip_bytes = _build_zip({
+        "data/app.db": b"fake app db bytes",
+        "chroma_db/chroma.sqlite3": b"fake index bytes",
+    })
+
+    with TestClient(main.app) as client:
+        resp = client.post(
+            "/api/library/import", files={"file": ("export.zip", zip_bytes, "application/zip")}
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["restart_required"] is True
 
 
 # --- GET /papers/{paper_id}/summary (08-03) -------------------------------------
@@ -522,6 +829,77 @@ def test_get_paper_summary_endpoint_422_when_context_budget_exceeded(monkeypatch
         resp = client.get("/api/papers/arxiv:1/summary")
 
     assert resp.status_code == 422
+
+
+# --- GET /api/papers/{id}/file (③, 08-05) ---------------------------------------
+# resolve_library_path()의 traversal 방어 자체는 test_paper_catalog.py가 이미 검증
+# 했으므로 여기선 엔드포인트 조립(조회→404 분기→파일 스트리밍)만 본다.
+
+
+def test_get_paper_file_streams_pdf_bytes(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 dummy bytes")
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "quantum/paper.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 200
+    assert resp.content == b"%PDF-1.4 dummy bytes"
+    assert resp.headers["content-type"] == "application/pdf"
+    assert 'inline; filename="paper.pdf"' in resp.headers["content-disposition"]
+
+
+def test_get_paper_file_404_when_paper_not_found(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "get_paper", lambda paper_id: None)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:없음/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_404_when_file_path_not_tracked(monkeypatch):
+    monkeypatch.setattr(
+        paper_catalog, "get_paper", lambda paper_id: {"paper_id": paper_id, "file_path": None}
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_404_when_file_missing_from_disk(monkeypatch, tmp_path):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "quantum/gone.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 404
+
+
+def test_get_paper_file_400_on_traversal(monkeypatch, tmp_path):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+    monkeypatch.setattr(
+        paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "file_path": "../outside.pdf"},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/papers/hash:aaa/file")
+
+    assert resp.status_code == 400
 
 
 # --- /notes (지식 노트, 08-03) — /equipment와 완전히 같은 패턴 -------------------
@@ -1027,6 +1405,108 @@ def test_close_research_session_404_when_not_found(monkeypatch):
         resp = client.delete("/api/research/sessions/no-such-thread")
 
     assert resp.status_code == 404
+
+
+# --- 챗(④) 세션 목록 (08-06, 화면 개선 ⑤) — research_sessions 테스트와 같은 패턴 ---
+
+def test_list_chat_sessions_returns_all(monkeypatch):
+    fake_rows = [{"thread_id": "t1", "title": "대화1"}, {"thread_id": "t2", "title": "대화2"}]
+    monkeypatch.setattr(chat_sessions, "list_sessions", lambda **kw: fake_rows)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/chat/sessions")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"sessions": fake_rows}
+
+
+def test_rename_chat_session_updates_title(monkeypatch):
+    captured = {}
+    def _fake_update(thread_id, title, **kw):
+        captured["args"] = (thread_id, title)
+        return True
+    monkeypatch.setattr(chat_sessions, "update_title", _fake_update)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/chat/sessions/t1/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 200
+    assert captured["args"] == ("t1", "새 제목")
+
+
+def test_rename_chat_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "update_title", lambda thread_id, title, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/chat/sessions/no-such-thread/title", json={"title": "새 제목"})
+
+    assert resp.status_code == 404
+
+
+def test_close_chat_session_deletes_row(monkeypatch):
+    captured = {}
+    def _fake_delete(thread_id, **kw):
+        captured["thread_id"] = thread_id
+        return True
+    monkeypatch.setattr(chat_sessions, "delete_session", _fake_delete)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/chat/sessions/t1")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"thread_id": "t1", "action": "deleted"}
+    assert captured["thread_id"] == "t1"
+
+
+def test_close_chat_session_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "delete_session", lambda thread_id, **kw: False)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/chat/sessions/no-such-thread")
+
+    assert resp.status_code == 404
+
+
+# /query가 첫 메시지에서 chat_sessions 행을 lazy 생성하고, 기존 세션이면 touch만
+# 하는지 검증 — 실제 그래프 호출(astream)은 orchestrator 쪽 계약이라 여기선
+# 몽키패치로 건너뛰고 chat_sessions 호출 여부·인자만 본다.
+def test_query_creates_chat_session_when_new(monkeypatch):
+    created = {}
+    monkeypatch.setattr(chat_sessions, "get_session", lambda thread_id, **kw: None)
+    monkeypatch.setattr(
+        chat_sessions, "create_session",
+        lambda thread_id, title, **kw: created.update(thread_id=thread_id, title=title),
+    )
+
+    class _FakeGraph:
+        async def astream(self, *a, **kw):
+            return
+            yield  # pragma: no cover - 제너레이터 형태만 맞추기 위함
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _FakeGraph()
+        resp = client.post("/api/query", json={"prompt": "중력파가 뭐야?", "thread_id": "new-thread"})
+
+    assert resp.status_code == 200
+    assert created == {"thread_id": "new-thread", "title": "중력파가 뭐야?"}
+
+
+def test_query_touches_chat_session_when_existing(monkeypatch):
+    touched = []
+    monkeypatch.setattr(chat_sessions, "get_session", lambda thread_id, **kw: {"thread_id": thread_id})
+    monkeypatch.setattr(chat_sessions, "touch_session", lambda thread_id, **kw: touched.append(thread_id))
+
+    class _FakeGraph:
+        async def astream(self, *a, **kw):
+            return
+            yield  # pragma: no cover
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _FakeGraph()
+        resp = client.post("/api/query", json={"prompt": "후속 질문", "thread_id": "existing-thread"})
+
+    assert resp.status_code == 200
+    assert touched == ["existing-thread"]
 
 
 # --- 체크포인트 히스토리·복원(08-04 후속, "탭처럼 왔다갔다") -----------------------

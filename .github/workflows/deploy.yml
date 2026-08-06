@@ -1,4 +1,4 @@
-name: Deploy Science Chatbot
+name: Publish Science Chatbot Image
 
 on:
   push:
@@ -12,8 +12,18 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
-  deploy:
+  # 08-05에 EC2 배포 트랙을 폐지하면서 job 이름을 deploy → publish로 바꿨다. 이 job이
+  # 실제로 하는 일은 "Docker Hub에 이미지를 올리는 것"까지이고, 그 뒤(사용자가 pull해서
+  # 자기 컴퓨터에서 compose로 띄우는 것)는 CI 밖이다 — 08-04 싱글 유저 로컬 앱 확정의
+  # 귀결(RoadMap 설계 노트 "EC2 배포 트랙 폐지" 참고). 원래 있던 scp/ssh 두 스텝(EC2로
+  # docker-compose.yml 전송 → 원격에서 pull·up)은 그때 삭제했다.
+  publish:
     needs: test # test job이 실패(또는 취소)하면 이 job은 시작조차 안 함
+    # arm64 러너를 쓰는 이유가 원래는 "EC2가 Graviton(arm64)이라 아키텍처를 맞춘다"였는데,
+    # EC2 폐지로 그 근거가 사라졌다 — 지금은 이 러너의 네이티브 아키텍처로만 빌드돼
+    # 이미지가 arm64 전용이 되는 게 오히려 문제다(Windows·Intel Mac 사용자가 못 씀).
+    # 멀티아키텍처(linux/amd64,linux/arm64) 전환은 예정 표 "[배포] 릴리즈 게이트" 참고 —
+    # 러너·buildx 설정을 같이 바꿔야 해서 이번 폐지 작업과 분리했다.
     runs-on: ubuntu-24.04-arm
     steps:
       - name: 코드 체크아웃
@@ -31,24 +41,3 @@ jobs:
           context: .
           push: true
           tags: quart512/science-chatbot:latest
-
-      - name: docker-compose.yml EC2로 전송
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "docker-compose.yml"
-          target: "~/science-chatbot"
-
-      - name: EC2 배포
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            cd ~/science-chatbot
-            docker compose pull
-            docker compose up -d
-            docker image prune -f

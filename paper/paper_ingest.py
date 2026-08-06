@@ -1,9 +1,13 @@
 # 논문 요약기(②a) 오케스트레이션 — pdf_parse → paper_chunking → paper_id →
 # paper_extraction(LLM 구조화 추출) → 논문 VDB(retrieval.papers_vectorstore)를 잇는다.
 #
-# 세 진입점, 시점이 다르다:
+# 네 진입점, 시점이 다르다:
 #   register_paper() — 등록 시점. PDF를 파싱해 fulltext_chunk로 저장(LLM 호출 없음,
-#     PDF 파싱+로컬 임베딩만). 요약은 여기서 안 만든다(등록과 요약 생성을 분리).
+#     PDF 파싱+로컬 임베딩만). 요약은 여기서 안 만든다(등록과 요약 생성을 분리). 동기 —
+#     끝나야 반환되는 무거운 호출.
+#   track_in_background() — ②-B "트래킹에 추가"·⑤ 업로드(08-05)가 부르는 비동기 진입점.
+#     해시 계산 + papers 행 생성(analysis_status="pending")만 동기로 하고 register_paper()
+#     전체는 daemon thread로 넘긴다 — 상태는 papers.analysis_status(DB)로 추적.
 #   get_paper_summary() — 조회 시점(lazy). 캐시(doc_type=summary)가 있으면 그대로 반환
 #     (추가 호출 0), 없으면 fulltext_chunk를 모아 구조화 추출을 한 번 호출한다. 재귀
 #     분할(map-reduce)은 미구현 — 예산 초과 시 ContextBudgetExceeded를 그대로 전파해
@@ -21,6 +25,7 @@
 # 가져옴 — 모듈 최상단 import 시 BAAI/bge-m3가 로딩되는 걸 피하려고). 테스트는 가짜
 # vectorstore를 주입하고 parse_pdf/invoke_with_fallback은 monkeypatch로 갈아끼운다.
 
+import hashlib
 import threading
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -31,7 +36,6 @@ from models import ContextBudgetExceeded, check_context_budget, invoke_with_fall
 from paper.paper_extraction import PaperExtraction
 from paper.paper_id import normalize_paper_id
 from paper.paper_chunking import extract_abstract, split_for_embedding  # 구 paper_sections.py
-from paper.title_check import classify_title_match
 from paper.pdf_parse import parse_pdf
 
 FORMULA_DISCLAIMER = "(주의: 수식·이미지는 파싱 과정에서 신뢰할 수 없어 이 요약에 반영하지 않았습니다.)"
@@ -96,6 +100,7 @@ def register_paper(
     arxiv_id: str | None = None,
     bibliographic: dict | None = None,
     filename: str = "",
+    file_path: str | None = None,
     vectorstore=None,
 ) -> dict:
     """PDF를 파싱해 임베딩용 청크(doc_type=fulltext_chunk)로 등록한다. 요약은 lazy
@@ -107,11 +112,14 @@ def register_paper(
     등록을 막지 않는다. filename(업로드 원본 파일명)은 카탈로그에만 저장되고 파싱에는
     안 쓰인다 — title이 비어있는 논문을 화면에서 해시 대신 보여줄 차선책(08-04 참고).
 
-    반환: {"paper_id", "text_extractable", "chunk_count", "page_count", "title_check":
-    {"status", "given_title", "pdf_title"}}. 스캔본은 chunk_count=0으로 정직하게 보고하고
-    아무것도 저장 안 함(title_check 없음). title_check는 서지 title과 PDF 자체 제목을
-    대조한 결과(classify_title_match 참고) — "different_paper"여도 등록은 그대로 진행,
-    판정만 반환값에 실어 보낸다(경고 표시는 호출하는 쪽 몫).
+    file_path(08-05, ②-B — RoadMap "논문 파일 경로 추적 재설계" 참고)는 library/ 루트
+    기준 상대경로다 — ⑤ 업로드 재정의 이후로는 호출자(track_in_background())가 항상
+    넘긴다(업로드도 library/에 파일을 남기므로). content_sha256은 file_path 유무와
+    무관하게 항상 계산해 카탈로그에 남긴다 — DOI/arXiv 논문은 paper_id가 해시가 아니라서
+    (normalize_paper_id: DOI>arXiv>해시) 파일↔레코드를 내용으로 매칭할 별도 컬럼이 필요.
+
+    반환: {"paper_id", "text_extractable", "chunk_count", "page_count"}. 스캔본은
+    chunk_count=0으로 정직하게 보고하고 아무것도 저장 안 함.
     """
     # file_bytes를 paper_id 해시 계산과 parse_pdf() 양쪽에 재사용 — 같은 파일 중복 I/O 방지.
     with open(pdf_path, "rb") as f:
@@ -119,6 +127,7 @@ def register_paper(
 
     parsed = parse_pdf(file_bytes)
     paper_id = normalize_paper_id(doi=doi, arxiv_id=arxiv_id, file_bytes=file_bytes)
+    content_sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     if not parsed["text_extractable"]:
         # 스캔본은 저장할 청크가 없으므로 vectorstore를 아예 건드리지 않는다 —
@@ -201,11 +210,6 @@ def register_paper(
     # 바뀌면 전에 예산 초과였던 논문이 이번엔 안 넘을 수 있다.
     _PERMANENTLY_FAILED.discard(paper_id)
 
-    # 제목 검증 — 등록을 막지 않는다. 판정만 반환값에 실어 보내고, 경고 표시 여부는
-    # 소비하는 쪽(라이브러리 UI) 몫(title_check.py 참고).
-    given_title = (bibliographic or {}).get("title")
-    title_check = classify_title_match(given_title, parsed.get("pdf_title"))
-
     # 카탈로그 연동 — 추천 검색이 이미 심어둔 recommended 행이 있으면 owned로 전환,
     # 없으면 새로 만든다(paper_catalog.mark_owned() 참고). cross-id 매칭(추천 시점
     # arxiv_id만 있었는데 등록 시점에 다른 DOI가 들어와 paper_id가 바뀌는 경우)은
@@ -218,6 +222,8 @@ def register_paper(
         authors=bib_meta.get("authors", ""),
         year=bib_meta.get("year", ""),
         filename=filename,
+        file_path=file_path,
+        content_sha256=content_sha256,
     )
 
     return {
@@ -225,7 +231,6 @@ def register_paper(
         "text_extractable": True,
         "chunk_count": len(pieces),
         "page_count": parsed["page_count"],
-        "title_check": {"status": title_check, "given_title": given_title, "pdf_title": parsed.get("pdf_title")},
     }
 
 
@@ -437,6 +442,63 @@ def ensure_summary_in_background(paper_id: str, *, model: str = BACKGROUND_SUMMA
 
     _spawn_background(_run)
     return True
+
+
+def track_in_background(
+    pdf_path: str, *, file_path: str, filename: str,
+    doi: str | None = None, arxiv_id: str | None = None, title: str | None = None, vectorstore=None,
+) -> dict:
+    """②-B "트래킹에 추가"·⑤ 업로드(08-05)가 부르는 진입점(④ 파싱 분리 — RoadMap
+    설계 노트 항목 G). 무거운 파싱·청킹·임베딩(register_paper() 전체)을 동기로 안
+    기다리고, 해시 계산 + papers 행 생성(analysis_status="pending")만 동기로 끝낸 뒤
+    나머지는 ensure_summary_in_background()와 같은 daemon thread 패턴으로 넘긴다.
+    다른 점은 진행 상태를 프로세스 메모리(_IN_FLIGHT)가 아니라 papers.analysis_status
+    (DB)에 두는 것 — 그래야 서버 재시작에도 "분석 중" 표시가 안 증발한다.
+
+    doi/arxiv_id(⑤부터 선택적으로 받음 — ②-B는 여전히 안 넘김, 파일 선택만으로 호출)가
+    있으면 paper_id가 그걸 우선 쓰고(normalize_paper_id: DOI>arXiv>해시), 없으면
+    파일 해시 기반이다. 반환: {"paper_id", "analysis_status"} — 이미 pending/analyzing
+    중이면 새로 스폰하지 않고 그 상태를 그대로 돌려준다(같은 파일을 중복 클릭해도 안전).
+
+    title(08-05, mark_owned() title 버그 수정 후속)은 arxiv_id가 없는(자동 조회가 안
+    걸리는) 논문에 제목을 넣을 유일한 방법이다. 아래 첫 mark_owned() 호출에 그대로
+    넘겨 pending 상태에서도 곧바로 화면에 보이게 하고, register_paper()에는
+    bibliographic로 넘겨 "명시값이 arXiv 조회보다 우선" 규칙을 그대로 태운다 — arxiv_id를
+    같이 줬어도 사용자가 직접 적은 제목이 fetch_by_id() 결과를 덮어쓴다."""
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+    content_sha256 = hashlib.sha256(file_bytes).hexdigest()
+    paper_id = normalize_paper_id(doi=doi, arxiv_id=arxiv_id, file_bytes=file_bytes)
+
+    existing = paper_catalog.get_paper(paper_id)
+    if existing and existing["analysis_status"] in ("pending", "analyzing"):
+        return {"paper_id": paper_id, "analysis_status": existing["analysis_status"]}
+
+    paper_catalog.mark_owned(
+        paper_id, doi=doi, arxiv_id=arxiv_id, title=title or "", filename=filename, file_path=file_path,
+        content_sha256=content_sha256, analysis_status="pending",
+    )
+
+    def _run():
+        paper_catalog.set_analysis_status(paper_id, "analyzing")
+        try:
+            result = register_paper(
+                pdf_path, doi=doi, arxiv_id=arxiv_id, filename=filename,
+                file_path=file_path, vectorstore=vectorstore,
+                bibliographic={"title": title} if title else None,
+            )
+            if not result["text_extractable"]:
+                # 스캔본 — register_paper()가 mark_owned()를 안 타서 "done"이 자동으로
+                # 안 찍힌다(②-B에서 "④가 다룰 문제"로 미뤄뒀던 그 간극). file_path는 위에서
+                # 이미 채웠으니 tracked 목록엔 정상 노출되고, analysis_status만 failed로
+                # 남겨 "분석은 못 했다"를 정직하게 알린다.
+                paper_catalog.set_analysis_status(paper_id, "failed")
+        except Exception as e:
+            paper_catalog.set_analysis_status(paper_id, "failed")
+            print(f"백그라운드 분석 실패 (paper_id={paper_id}): {type(e).__name__}: {e}")
+
+    _spawn_background(_run)
+    return {"paper_id": paper_id, "analysis_status": "pending"}
 
 
 if __name__ == "__main__":

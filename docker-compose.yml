@@ -36,6 +36,11 @@ services:
       # papers.file_path(paper_catalog.py)가 이 루트 기준 상대경로를 저장하므로, 마운트
       # 지점이 바뀌어도(호스트 경로 vs portable 번들 실행 경로) DB 값은 안 깨진다.
       - "./library:/app/library"
+      # library/ 밖 폴더를 원래 경로 그대로 추적하고 싶다면(08-05, RoadMap "라이브러리
+      # 외부 경로 추적" 참고) — 컨테이너는 바인드 마운트 안 된 호스트 경로를 못 보므로
+      # library/ 안 심볼릭 링크로는 안 풀린다. 대신 아래처럼 그 폴더를 library/ 밑의
+      # 새 하위 경로로 직접 마운트하고 컨테이너를 재시작하면 된다(파일은 원래 위치 그대로):
+      #   - "~/Documents/내논문:/app/library/외부논문"
       # 네임드 볼륨 — bge-m3 다운로드 캐시(자동 생성, 사람이 안 들여다봄).
       # 프로젝트 폴더 밖 Docker 관리 영역에 저장 → git/폴더 오염 없이 재시작해도 재사용
       - "huggingface-cache:/root/.cache/huggingface"

@@ -8,9 +8,9 @@
 
 .interest-form input,
 .interest-form textarea {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
   font-family: inherit;
@@ -22,7 +22,7 @@
 
 .interest-form button {
   align-self: flex-start;
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
   border: none;
   border-radius: 4px;
@@ -31,14 +31,14 @@
 }
 
 .interest-card {
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 1rem;
   margin-bottom: 1rem;
 }
 
 .interest-card-meta {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
@@ -63,26 +63,26 @@
 }
 
 .interest-card-actions button {
-  background: #2e313d;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.8rem;
   cursor: pointer;
 }
 
 .interest-card-actions button[type='submit'] {
-  background: #3b5bdb;
-  border-color: #3b5bdb;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: white;
 }
 
 .interest-card-delete {
-  color: #ff7b72 !important;
+  color: var(--color-danger) !important;
 }
 
 .interest-card-error {
-  color: #ff7b72;
+  color: var(--color-danger);
 }
 
 .interest-results-table {
@@ -93,7 +93,7 @@
 
 .interest-results-table th,
 .interest-results-table td {
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   padding: 0.4rem 0.5rem;
   text-align: left;
 }

@@ -101,6 +101,22 @@ def test_mark_owned_transitions_existing_recommended_to_owned(conn):
     assert row["title"] == "추천됨"  # mark_owned가 title을 안 넘겼으면 기존 값 유지
 
 
+def test_mark_owned_backfills_title_on_second_call_without_dropping_it(conn):
+    # 08-05 버그 재현 — track_in_background()가 파싱 전에 title 없이 먼저 mark_owned()로
+    # pending 행을 만들고, 파싱이 끝난 뒤 register_paper()가 실제 title로 다시 부르는
+    # 2단계 호출 패턴. 두 번째 호출은 항상 UPDATE 분기를 타는데, 예전 UPDATE문은
+    # title/authors/year를 SET 절에 아예 안 넣어서 이 실제 title이 조용히 유실됐었다.
+    paper_catalog.mark_owned("arxiv:2401.1", arxiv_id="2401.1", analysis_status="pending", conn=conn)
+    paper_catalog.mark_owned(
+        "arxiv:2401.1", arxiv_id="2401.1", title="진짜 논문 제목", authors="김철수", year="2024", conn=conn
+    )
+
+    row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
+    assert row["title"] == "진짜 논문 제목"
+    assert row["authors"] == "김철수"
+    assert row["year"] == "2024"
+
+
 def test_mark_owned_stores_filename_on_new_row(conn):
     # title이 비어있는 논문(서지정보를 못 찾은 경우) 화면 표시용 차선책 — 08-04 사용자 요청.
     paper_catalog.mark_owned("hash:abcd", filename="내논문.pdf", conn=conn)
@@ -117,6 +133,31 @@ def test_mark_owned_backfills_filename_on_promoted_row(conn):
 
     row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
     assert row["filename"] == "업로드한파일.pdf"
+
+
+def test_mark_owned_stores_file_path_and_content_sha256_on_new_row(conn):
+    # ②-B(08-05) — library/ 경유 등록 시 file_path·content_sha256이 filename과 같은
+    # 방식으로 저장돼야 한다.
+    paper_catalog.mark_owned(
+        "hash:abcd", file_path="quantum/paper.pdf", content_sha256="deadbeef", conn=conn
+    )
+    row = paper_catalog.get_paper("hash:abcd", conn=conn)
+
+    assert row["file_path"] == "quantum/paper.pdf"
+    assert row["content_sha256"] == "deadbeef"
+
+
+def test_mark_owned_backfills_file_path_on_promoted_row(conn):
+    # filename과 같은 이유(추천 경로엔 파일이 없어 채울 기회가 없었음) — library/에서
+    # "트래킹에 추가"로 승격할 때도 file_path가 누락되지 않아야 한다.
+    paper_catalog.upsert_recommended("arxiv:2401.1", title="추천됨", conn=conn)
+    paper_catalog.mark_owned(
+        "arxiv:2401.1", file_path="quantum/paper.pdf", content_sha256="deadbeef", conn=conn
+    )
+
+    row = paper_catalog.get_paper("arxiv:2401.1", conn=conn)
+    assert row["file_path"] == "quantum/paper.pdf"
+    assert row["content_sha256"] == "deadbeef"
 
 
 def test_dismiss_marks_status_and_returns_true(conn):
@@ -246,3 +287,154 @@ def test_doi_and_arxiv_id_uniqueness_allows_multiple_nulls(conn):
     paper_catalog.upsert_recommended("hash:bbb", title="해시 기반 2", conn=conn)
 
     assert len(paper_catalog.list_papers(conn=conn)) == 2
+
+
+def test_scan_library_files_marks_tracked_by_file_path(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "tracked.pdf").write_bytes(b"%PDF-1.4 fake")
+    (tmp_path / "untracked.pdf").write_bytes(b"%PDF-1.4 fake")
+    conn.execute(
+        "INSERT INTO papers (paper_id, file_path, created_at, updated_at) VALUES (?, ?, 'x', 'x')",
+        ("hash:aaa", "quantum/tracked.pdf"),
+    )
+
+    files = paper_catalog.scan_library_files(conn=conn)
+
+    assert files == [
+        {"path": "quantum/tracked.pdf", "tracked": True},
+        {"path": "untracked.pdf", "tracked": False},
+    ]
+
+
+def test_scan_library_files_ignores_non_pdf(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "notes.txt").write_bytes(b"not a pdf")
+
+    assert paper_catalog.scan_library_files(conn=conn) == []
+
+
+def test_scan_library_files_empty_when_library_dir_missing(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path / "does-not-exist"))
+
+    assert paper_catalog.scan_library_files(conn=conn) == []
+
+
+def test_resolve_library_path_returns_absolute_path_inside_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(tmp_path))
+    (tmp_path / "quantum").mkdir()
+    (tmp_path / "quantum" / "paper.pdf").write_bytes(b"%PDF-1.4 fake")
+
+    resolved = paper_catalog.resolve_library_path("quantum/paper.pdf")
+
+    assert resolved == str((tmp_path / "quantum" / "paper.pdf").resolve())
+
+
+def test_resolve_library_path_rejects_traversal_outside_root(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    with pytest.raises(ValueError):
+        paper_catalog.resolve_library_path("../outside.pdf")
+
+
+# --- 심볼릭 링크로 library/ 외부 경로 추적 (④ 후속, 08-05) -----------------------
+# portable 번들(컨테이너 경계 없음)에서 library/ 밖 폴더·파일을 원래 경로 그대로
+# 추적하는 수단 — RoadMap 설계 노트 "라이브러리 외부 경로 추적" 참고. Docker에서는
+# 같은 심볼릭 링크가 컨테이너 밖 경로를 가리켜 깨진 링크가 되므로 별도 분기 없이도
+# 자연히 무해하다(아래 test_scan_library_files_ignores_broken_symlink가 그 상황을 흉내).
+
+
+def test_scan_library_files_follows_symlinked_directory(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "foo.pdf").write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    files = paper_catalog.scan_library_files()
+
+    assert files == [{"path": "linked/foo.pdf", "tracked": False}]
+
+
+def test_scan_library_files_follows_symlinked_file(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_file = tmp_path / "external.pdf"
+    external_file.write_bytes(b"%PDF-1.4 fake")
+    (library_dir / "linked.pdf").symlink_to(external_file)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    files = paper_catalog.scan_library_files()
+
+    assert files == [{"path": "linked.pdf", "tracked": False}]
+
+
+def test_scan_library_files_ignores_broken_symlink(tmp_path, monkeypatch):
+    # Docker 배포에서 실제로 벌어지는 상황을 흉내 — 컨테이너가 못 보는 호스트 경로를
+    # 가리키는 심볼릭 링크는 존재하지 않는 대상을 가리키는 것과 동치.
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "broken.pdf").symlink_to(tmp_path / "does-not-exist.pdf")
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    assert paper_catalog.scan_library_files() == []
+
+
+def test_scan_library_files_avoids_infinite_loop_on_cyclic_symlink(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    (library_dir / "self").symlink_to(library_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    result = paper_catalog.scan_library_files()  # 순환을 못 막으면 여기서 무한 루프
+
+    assert result == []
+
+
+def test_resolve_library_path_allows_symlink_pointing_outside_root(tmp_path, monkeypatch):
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (library_dir / "linked").symlink_to(external_dir)
+    monkeypatch.setattr(paper_catalog, "LIBRARY_DIR", str(library_dir))
+
+    resolved = paper_catalog.resolve_library_path("linked/foo.pdf")
+
+    assert resolved == str(library_dir / "linked" / "foo.pdf")
+
+
+def test_mark_owned_defaults_analysis_status_to_done(conn):
+    # ④(08-05) — 기존 호출부(register_paper()가 분석을 이미 마친 뒤 호출)는 인자를
+    # 안 줘도 done이 자동으로 찍혀야 기존 동작이 안 깨진다.
+    paper_catalog.mark_owned("hash:abcd", conn=conn)
+
+    assert paper_catalog.get_paper("hash:abcd", conn=conn)["analysis_status"] == "done"
+
+
+def test_mark_owned_stores_explicit_analysis_status(conn):
+    paper_catalog.mark_owned("hash:abcd", analysis_status="pending", conn=conn)
+
+    assert paper_catalog.get_paper("hash:abcd", conn=conn)["analysis_status"] == "pending"
+
+
+def test_set_analysis_status_updates_only_that_column(conn):
+    paper_catalog.mark_owned(
+        "hash:abcd", title="원제목", file_path="quantum/a.pdf", analysis_status="pending", conn=conn
+    )
+
+    updated = paper_catalog.set_analysis_status("hash:abcd", "analyzing", conn=conn)
+
+    row = paper_catalog.get_paper("hash:abcd", conn=conn)
+    assert updated is True
+    assert row["analysis_status"] == "analyzing"
+    assert row["title"] == "원제목"  # 다른 필드는 안 건드림
+    assert row["file_path"] == "quantum/a.pdf"
+
+
+def test_set_analysis_status_returns_false_when_paper_not_found(conn):
+    assert paper_catalog.set_analysis_status("hash:없음", "failed", conn=conn) is False

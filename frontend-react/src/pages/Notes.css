@@ -8,9 +8,9 @@
 
 .note-form input,
 .note-form textarea {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
   font-family: inherit;
@@ -22,7 +22,7 @@
 
 .note-form button {
   align-self: flex-start;
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
   border: none;
   border-radius: 4px;
@@ -31,14 +31,14 @@
 }
 
 .note-row {
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 1rem;
   margin-bottom: 1rem;
 }
 
 .note-row-preview {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
   white-space: pre-wrap;
 }
@@ -56,29 +56,29 @@
 }
 
 .note-row-actions button {
-  background: #2e313d;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.3rem 0.8rem;
   cursor: pointer;
 }
 
 .note-row-actions button[type='submit'] {
-  background: #3b5bdb;
-  border-color: #3b5bdb;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: white;
 }
 
 .note-delete {
   background: none;
-  border: 1px solid #40434f;
-  color: #ff7b72;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-danger);
   border-radius: 4px;
   padding: 0.3rem 0.7rem;
   cursor: pointer;
 }
 
 .note-error {
-  color: #ff7b72;
+  color: var(--color-danger);
 }

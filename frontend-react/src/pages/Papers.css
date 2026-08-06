@@ -13,9 +13,9 @@
 
 .paper-register-form input[type='text'],
 .paper-register-form-row input {
-  background: #22242e;
-  color: #e6e6e6;
-  border: 1px solid #40434f;
+  background: var(--color-bg-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   padding: 0.4rem 0.6rem;
   flex: 1;
@@ -23,7 +23,7 @@
 
 .paper-register-form button {
   align-self: flex-start;
-  background: #3b5bdb;
+  background: var(--color-accent);
   color: white;
   border: none;
   border-radius: 4px;
@@ -43,22 +43,95 @@
 }
 
 .paper-message-success {
-  background: rgba(46, 160, 67, 0.15);
-  color: #7ee787;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .paper-message-warning {
-  background: rgba(210, 153, 34, 0.15);
-  color: #e3b341;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
 }
 
 .paper-message-error {
-  background: rgba(248, 81, 73, 0.15);
-  color: #ff7b72;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* 서버측 파일 브라우저 ②-C(08-05) — library/ 폴더 목록 */
+.library-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.library-section-header button {
+  background: none;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.library-section-header button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.library-hint {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0.75rem;
+  max-width: 640px;
+}
+
+.library-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.35rem;
+  max-width: 640px;
+}
+
+/* 경로가 길면 줄바꿈 없이 넘치는 대신 잘라서 보여준다 — 목록 행 높이를 일정하게
+   유지하려는 것. 전체 경로는 title 속성(마우스 올리면 보임)으로 남긴다. */
+.library-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.library-file-tracked {
+  color: var(--color-success);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.library-file button {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.library-file button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .paper-row {
-  border: 1px solid #2e313d;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 0.75rem 1rem;
   margin-bottom: 0.5rem;
@@ -70,7 +143,7 @@
   width: 100%;
   background: none;
   border: none;
-  color: #e6e6e6;
+  color: var(--color-text);
   font-size: 1rem;
   text-align: left;
   cursor: pointer;
@@ -78,23 +151,86 @@
 }
 
 .paper-row-meta {
-  color: #a0a4b0;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
   margin: 0.25rem 0 0;
 }
 
+.paper-row-status {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: normal;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.paper-row-status-pending,
+.paper-row-status-analyzing {
+  background: var(--color-info-bg);
+  color: var(--color-info-alt);
+}
+
+.paper-row-status-failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
 .paper-row-dates {
-  color: #6b7080;
+  color: var(--color-text-dim);
   font-size: 0.75rem;
   margin: 0.15rem 0 0;
 }
 
 .paper-row-summary {
   margin-top: 0.75rem;
-  border-top: 1px solid #2e313d;
+  border-top: 1px solid var(--color-border);
   padding-top: 0.75rem;
 }
 
 .paper-row-summary h4 {
   margin: 0.5rem 0 0.25rem;
+}
+
+/* 요약 표시 형식 — 산문 렌더링(08-05). 목록 대신 문단이라 줄간격을 넉넉히,
+   너비를 제한해 한 줄이 너무 길어지지 않게(가독성). */
+.paper-row-prose {
+  max-width: 640px;
+  line-height: 1.6;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.paper-row-file {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.75rem;
+}
+
+.paper-row-file .paper-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.paper-row-file code {
+  overflow-wrap: anywhere;
+}
+
+.paper-row-file button {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.paper-row-pdf-frame {
+  width: 100%;
+  height: 600px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin-top: 0.5rem;
 }

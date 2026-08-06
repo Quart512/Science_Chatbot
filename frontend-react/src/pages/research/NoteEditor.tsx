@@ -14,9 +14,13 @@ interface Props {
 // 고칠 수 있다(research_notes.py가 체크포인트를 안 건드리는 별도 테이블이라 가능).
 // key={checkpointId}로 호출부에서 렌더링 — 다른 체크포인트로 옮기면 draft가 그
 // 시점의 저장된 메모로 다시 초기화된다(DraftEditor의 key={checkpointId}와 같은 이유).
+// 화면 개선 ②(08-06) — 항상 펼쳐져 있던 걸 접을 수 있게. 기본값은 열림(예전과 같은
+// 화면)이라 기존 사용자 흐름을 안 깬다 — 메모가 필요 없는 단계를 지나칠 때만 접어서
+// 화면을 아낄 수 있게 하는 게 목적이지, 기본으로 숨기는 게 목적이 아니다.
 export function NoteEditor({ threadId, checkpointId, initialNote }: Props) {
   const queryClient = useQueryClient()
   const [note, setNote] = useState(initialNote)
+  const [open, setOpen] = useState(true)
 
   const mutation = useMutation({
     mutationFn: () => saveResearchNote(threadId, checkpointId, note),
@@ -29,17 +33,31 @@ export function NoteEditor({ threadId, checkpointId, initialNote }: Props) {
 
   return (
     <div className="research-note-editor">
-      <label className="research-caption">📝 메모</label>
-      <textarea
-        className="research-textarea"
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="이 시점에 대한 메모(장비 주의사항, 다음에 시도할 것 등)"
-      />
-      <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending || !dirty}>
-        {mutation.isPending ? '저장 중...' : '메모 저장'}
-      </button>
-      {mutation.isError && <p className="research-warning">저장 실패: {(mutation.error as Error).message}</p>}
+      <div className="research-note-editor-header">
+        <label className="research-caption">📝 메모</label>
+        <button
+          type="button"
+          className="research-note-editor-toggle"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? '메모창 접기' : '메모창 펼치기'}
+        >
+          {open ? '▾' : '▸'}
+        </button>
+      </div>
+      {open && (
+        <>
+          <textarea
+            className="research-textarea"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="이 시점에 대한 메모(장비 주의사항, 다음에 시도할 것 등)"
+          />
+          <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending || !dirty}>
+            {mutation.isPending ? '저장 중...' : '메모 저장'}
+          </button>
+          {mutation.isError && <p className="research-warning">저장 실패: {(mutation.error as Error).message}</p>}
+        </>
+      )}
     </div>
   )
 }

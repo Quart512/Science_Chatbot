@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { advanceResearch, type ResearchState } from '../../api/research'
-import { nextOptions, stageIndex, STAGE_FIELD_LABELS, buildRetryGuidance } from './constants'
+import { STAGES, cellStatus, nextOptions, stageIndex, STAGE_FIELD_LABELS, buildRetryGuidance, type NextOption } from './constants'
 
 interface Props {
   threadId: string
@@ -12,17 +12,21 @@ interface Props {
   onAdvanced: () => void
 }
 
-// frontend/views/research.py의 _render_next_options()에서 한 단계 더 나간 계약(08-04
-// 사용자 지적) — 옵션마다 낡은-값 경고가 반복돼서 거슬렸던 걸, "진행"(정방향, 경고
-// 없음)과 "재시도"(같은/이전 단계로, 경고는 그룹 전체에 한 번만)로 나눔. 목표 단계가
-// 현재 단계보다 뒤면 진행, 아니면(같거나 앞) 재시도 — 이 인덱스 비교가 예전의
-// hasStaleDownstream 판정과 동치다(각 단계 진입 노드가 자기보다 뒤 단계 필드를 항상
-// 리셋하므로, "재시도" 대상은 반드시 지금 값이 이미 채워져 있어 경고가 항상 뜬다).
+// 라벨이 옵션 안에서 유일하다는 게 nextOptions()의 실제 계약(같은 target을 공유하는
+// 옵션끼리도 문구는 항상 다르다 — 예: "같은 설계로 재실험" vs "결과 다시 입력해 재분석")
+// 이라 target+label 조합이면 이 화면 안에서 충분히 유일한 key가 된다.
+function optionKey(opt: NextOption): string {
+  return `${opt.target}_${opt.label}`
+}
+
+// 화면 개선 ③④(08-06, RoadMap "프론트 개선 백로그" 참고) — 예전엔 모든 방향의
+// 입력창을 한꺼번에 펼쳐놓고 그중 하나를 버튼으로 고르게 했다. 이제는 각 옵션을
+// BranchTimeline과 같은 5칸 다이어그램으로 미리 보여주고("이걸 고르면 이렇게 된다"),
+// 고른 것 하나만 아래에 입력창이 뜬다 — 목업(사용자와 함께 설계)에서 검증한 그대로.
+// 대상 목업 문서 참고: 03-05 다이어그램 미리보기 + 04-08 열린 질문 논의.
 export function NextOptions({ threadId, values, tipValues, fromCheckpointId, viewedCheckpointId, onAdvanced }: Props) {
   const options = nextOptions(values)
-  const currentIndex = stageIndex(values.stage)
-  const forwardOptions = options.filter((o) => stageIndex(o.target) > currentIndex)
-  const retryOptions = options.filter((o) => stageIndex(o.target) <= currentIndex)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
 
   let newRefs: ResearchState['references'] = []
   if (fromCheckpointId !== null) {
@@ -30,49 +34,56 @@ export function NextOptions({ threadId, values, tipValues, fromCheckpointId, vie
     newRefs = (tipValues.references ?? []).filter((r) => !pastIds.has(r.paper_id))
   }
 
-  return (
-    <>
-      {forwardOptions.length > 0 && (
-        <div className="research-option-group">
-          <h4>진행</h4>
-          {forwardOptions.map((opt) => (
-            <OptionForm
-              key={`${viewedCheckpointId}_${opt.target}_${opt.label}`}
-              threadId={threadId}
-              opt={opt}
-              values={values}
-              isRetry={false}
-              fromCheckpointId={fromCheckpointId}
-              newRefs={newRefs}
-              onAdvanced={onAdvanced}
-            />
-          ))}
-        </div>
-      )}
+  if (options.length === 0) return null
 
-      {retryOptions.length > 0 && (
-        <div className="research-option-group">
-          <h4>재시도</h4>
-          {fromCheckpointId === null && (
-            <p className="research-warning">
-              ⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)
-            </p>
-          )}
-          {retryOptions.map((opt) => (
-            <OptionForm
-              key={`${viewedCheckpointId}_${opt.target}_${opt.label}`}
-              threadId={threadId}
-              opt={opt}
-              values={values}
-              isRetry
-              fromCheckpointId={fromCheckpointId}
-              newRefs={newRefs}
-              onAdvanced={onAdvanced}
-            />
-          ))}
-        </div>
+  const selected = options.find((opt) => optionKey(opt) === selectedKey) ?? null
+
+  return (
+    <div className="research-next-options">
+      <div className="research-candidate-list">
+        {options.map((opt) => {
+          const key = optionKey(opt)
+          return (
+            <button
+              type="button"
+              key={key}
+              className={[
+                'research-candidate-row',
+                opt.recommended && 'research-candidate-row-recommended',
+                selectedKey === key && 'research-candidate-row-selected',
+              ].filter(Boolean).join(' ')}
+              onClick={() => setSelectedKey((k) => (k === key ? null : key))}
+            >
+              <span className="research-candidate-cells">
+                {STAGES.map(([stageKey, label]) => (
+                  <span key={stageKey} className={`research-branch-cell research-branch-cell-${cellStatus(opt.target, stageKey)}`}>
+                    {label}
+                  </span>
+                ))}
+              </span>
+              <span className="research-candidate-label">{opt.label}</span>
+              {opt.recommended && <span className="research-candidate-badge">추천</span>}
+            </button>
+          )
+        })}
+      </div>
+
+      {selected ? (
+        <OptionForm
+          key={`${viewedCheckpointId}_${selectedKey}`}
+          threadId={threadId}
+          opt={selected}
+          values={values}
+          isRetry={stageIndex(selected.target) <= stageIndex(values.stage)}
+          fromCheckpointId={fromCheckpointId}
+          newRefs={newRefs}
+          onAdvanced={onAdvanced}
+          onDeselect={() => setSelectedKey(null)}
+        />
+      ) : (
+        <p className="research-candidate-empty">위에서 다이어그램을 하나 고르면 여기에 그 단계에 맞는 입력창이 뜹니다.</p>
       )}
-    </>
+    </div>
   )
 }
 
@@ -84,14 +95,16 @@ function OptionForm({
   fromCheckpointId,
   newRefs,
   onAdvanced,
+  onDeselect,
 }: {
   threadId: string
-  opt: ReturnType<typeof nextOptions>[number]
+  opt: NextOption
   values: ResearchState
   isRetry: boolean
   fromCheckpointId: string | null
   newRefs: ResearchState['references']
   onAdvanced: () => void
+  onDeselect: () => void
 }) {
   const queryClient = useQueryClient()
   const [resultsText, setResultsText] = useState('')
@@ -133,6 +146,12 @@ function OptionForm({
 
   return (
     <div className="research-option">
+      <div className="research-option-header">
+        <strong>{label}</strong>
+        <button type="button" className="research-option-deselect" onClick={onDeselect}>
+          ✕ 선택 해제
+        </button>
+      </div>
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -140,6 +159,12 @@ function OptionForm({
           mutation.mutate()
         }}
       >
+        {isRetry && (
+          <p className="research-warning">
+            ⚠️ 재생성하면 이후 단계에 이미 만들어둔 값이 낡은 채로 남습니다(자동으로 지워지지 않음)
+          </p>
+        )}
+
         {opt.needsResults && (
           <textarea
             className="research-textarea"

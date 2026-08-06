@@ -1,15 +1,15 @@
 import asyncio
+import io
 import json
-import tempfile
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import os
 
-import fitz
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
@@ -20,6 +20,7 @@ from langchain_core.messages import RemoveMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import api_keys
+import chat_sessions
 import equipment
 import interests
 import knowledge_notes
@@ -31,6 +32,7 @@ import research_branches
 import research_notes
 import research_sessions
 import research_workflow
+import retrieval
 from models import ContextBudgetExceeded
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
@@ -100,12 +102,29 @@ class Query(BaseModel):
     effort: Literal["low", "medium", "high"] = "medium"
     thread_id: str = Field(default_factory=lambda: str(uuid4()))
 
+def _title_from_prompt(prompt: str, limit: int = 40) -> str:
+    stripped = prompt.strip()
+    return stripped if len(stripped) <= limit else stripped[:limit].rstrip() + "…"
+
+
 # astream(stream_mode="custom") + SSE — "custom"은 physics_qa_node가 get_stream_writer()로
 # 명시적으로 흘려보낸 값만 받는 채널이라 능력 내부 State가 새지 않는다. final=False는
 # 진행 로그, final=True가 최종 answer. request는 lifespan이 올려둔 컴파일된 그래프를
 # 꺼내 쓰기 위함.
+#
+# chat_sessions 갱신은 스트리밍 시작 전에 동기적으로 끝낸다 — research_sessions와 달리
+# "생성"과 "그래프 호출"이 같은 요청 안에서 한 번에 일어난다(research는 advance
+# 엔드포인트가 topic·stage를 이미 body로 받아 조건 분기하지만, 챗은 첫 메시지 자체가
+# 곧 세션 시작 신호라 존재 여부만 보면 된다). sqlite3는 동기 라이브러리라
+# asyncio.to_thread로 감싸 이벤트 루프를 안 막는다(/interests/draft와 같은 이유).
 @app.post("/api/query")
 async def query(request: Request, body: Query):
+    session = await asyncio.to_thread(chat_sessions.get_session, body.thread_id)
+    if session is None:
+        await asyncio.to_thread(chat_sessions.create_session, body.thread_id, _title_from_prompt(body.prompt))
+    else:
+        await asyncio.to_thread(chat_sessions.touch_session, body.thread_id)
+
     config = {"configurable": {"thread_id": body.thread_id}}
     inputs = {"question": body.prompt, "model": body.model, "effort": body.effort}
 
@@ -152,6 +171,37 @@ async def delete_query_message(request: Request, thread_id: str, message_id: str
         config, {"messages": [RemoveMessage(id=message_id)]}, as_node="__start__"
     )
     return {"deleted_id": message_id}
+
+
+# 챗(④) 세션 목록 — research_sessions의 3개 엔드포인트와 완전히 같은 패턴
+# (research_sessions.py 상단 주석·main.py 위쪽 "/research/sessions" 라우트 순서
+# 주석 참고). 여기도 리터럴 경로("/chat/sessions")가 유일해서 지금은 순서 충돌이
+# 없지만, 나중에 "/chat/{thread_id}" 계열이 추가되면 이 라우트가 먼저 와야 한다.
+@app.get("/api/chat/sessions")
+def list_chat_sessions():
+    return {"sessions": chat_sessions.list_sessions()}
+
+
+class ChatSessionTitleUpdate(BaseModel):
+    title: str
+
+
+@app.post("/api/chat/sessions/{thread_id}/title")
+def rename_chat_session(thread_id: str, body: ChatSessionTitleUpdate):
+    updated = chat_sessions.update_title(thread_id, body.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"챗 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "updated"}
+
+
+# 세션 목록에서만 지운다 — 실제 체크포인트는 안 지운다(chat_sessions.delete_session()
+# docstring 참고).
+@app.delete("/api/chat/sessions/{thread_id}")
+def close_chat_session(thread_id: str):
+    deleted = chat_sessions.delete_session(thread_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"챗 세션 thread_id={thread_id}를 찾을 수 없습니다")
+    return {"thread_id": thread_id, "action": "deleted"}
 
 
 # "관심사 등록" 버튼(라이브러리 폼)이 부르는 엔드포인트 — GET /interests/draft가 만든
@@ -280,24 +330,37 @@ def list_interest_papers(interest_id: int, only_relevant: bool = False):
     return {"papers": paper_catalog.list_papers_for_interest(interest_id, only_relevant=only_relevant)}
 
 
-# register_paper()가 pdf_path(디스크 경로)를 받으므로 업로드 바이트를 임시 파일에
-# 써서 넘긴다. fitz.FileDataError(유효하지 않은 PDF)는 사용자 입력 검증 경계라 400으로.
+# ⑤ 업로드 재정의(08-05, RoadMap 설계 노트 참고) — 예전엔 tempfile에 썼다가 버렸지만,
+# 이제 "앱 내부로 복제하지 않는다" 원칙을 지키면서(library/가 곧 사용자 폴더) 업로드
+# 바이트를 library/ 안에 그대로 남긴다. 이름이 겹치면 unique_library_filename()이
+# _2, _3...을 붙인다. 매직바이트(%PDF-)만 즉시 확인하고 나머지 검증(파싱 가능 여부)은
+# track_in_background()의 백그라운드 스레드로 넘긴다 — ②-B/④와 동일한 경계.
+# title(08-05, mark_owned() title 버그 수정 후속) — arxiv_id가 없는 논문은 자동 조회
+# (fetch_by_id())가 안 걸려 제목을 넣을 방법이 API에 전혀 없었다(RoadMap 예정 표
+# "논문 등록 — 비-arXiv 논문은 제목을 수동으로 넣을 방법이 없음" 항목). 선택 필드로
+# 추가 — arxiv_id가 있어도 넘기면 register_paper()의 "명시값 우선" 규칙에 따라
+# arXiv 조회 결과보다 우선한다(register_paper() docstring 참고).
 @app.post("/api/papers")
 def register_paper_endpoint(
     file: UploadFile = File(...),
     doi: str | None = Form(None),
     arxiv_id: str | None = Form(None),
+    title: str | None = Form(None),
 ):
     file_bytes = file.file.read()
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
-        tmp.write(file_bytes)
-        tmp.flush()
-        try:
-            return paper_ingest.register_paper(
-                tmp.name, doi=doi, arxiv_id=arxiv_id, filename=file.filename or ""
-            )
-        except fitz.FileDataError:
-            raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+    if not file_bytes.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="PDF로 열 수 없는 파일입니다")
+
+    dest_rel_path = paper_catalog.unique_library_filename(file.filename or "업로드.pdf")
+    dest_abs_path = paper_catalog.resolve_library_path(dest_rel_path)
+    os.makedirs(os.path.dirname(dest_abs_path), exist_ok=True)
+    with open(dest_abs_path, "wb") as f:
+        f.write(file_bytes)
+
+    return paper_ingest.track_in_background(
+        dest_abs_path, file_path=dest_rel_path, filename=file.filename or "",
+        doi=doi, arxiv_id=arxiv_id, title=title,
+    )
 
 
 # status로 필터링(recommended/owned/dismissed) — 관심사별 필터는 interest_paper 조인
@@ -319,6 +382,195 @@ def get_paper_summary_endpoint(paper_id: str):
     except ContextBudgetExceeded as e:
         raise HTTPException(status_code=422, detail=f"논문이 길어 요약을 생성할 수 없습니다: {e}")
     return {**result, "extraction": result["extraction"].model_dump()}
+
+
+# 원본 조회 ③(08-05) — 화면에 [CITE:...] 마커·재청킹된 조각 대신 원문 그대로를 보여준다
+# (설계 노트 "논문·노트 저장 방식 재설계" 참고). ⑤(업로드 재정의) 이후로는 /api/papers·
+# /api/library/track 둘 다 library/에 파일을 남기므로 file_path가 거의 항상 있다 —
+# None인 경우는 그 전에(⑤ 이전, tempfile만 쓰고 버리던 시절) 등록된 옛 레코드뿐이라
+# 그런 논문만 원본이 없어 404. resolve_library_path()는 file_path가 DB에서 온 값이라
+# 신뢰할 수 있는 입력이지만, ②-B가 쓰는 것과 같은 함수를 그대로 재사용해 방어를
+# 이중으로 겹치는 값이 크다("경로 검증은 한 곳"이 깨질 위험 없이 공짜로 붙음).
+@app.get("/api/papers/{paper_id}/file")
+def get_paper_file(paper_id: str):
+    paper = paper_catalog.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail=f"paper_id={paper_id}가 등록돼 있지 않습니다")
+    if not paper["file_path"]:
+        raise HTTPException(status_code=404, detail="이 논문은 원본 파일이 추적되어 있지 않습니다")
+    try:
+        abs_path = paper_catalog.resolve_library_path(paper["file_path"])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="library/ 루트를 벗어난 경로입니다")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="원본 파일을 찾을 수 없습니다 — 이동되었거나 삭제되었을 수 있습니다")
+    return FileResponse(
+        abs_path,
+        media_type="application/pdf",
+        filename=os.path.basename(paper["file_path"]),
+        content_disposition_type="inline",
+    )
+
+
+# 서버측 파일 브라우저 ②-A(08-05) — library/를 스캔만 한다. 브라우저가 파일의 전체
+# 경로를 안 줘서 업로드 다이얼로그로 library/를 열 방법이 없다는 게 이 방식으로 간
+# 이유(RoadMap 설계 노트 항목 A). "트래킹에 추가"(②-B)는 아직 없고 이 엔드포인트는
+# 목록만 보여준다.
+@app.get("/api/library/files")
+def list_library_files():
+    return {"files": paper_catalog.scan_library_files()}
+
+
+# "트래킹에 추가" ②-B(08-05), ④에서 비동기로 전환(08-05) — 여기서는 사용자가 준
+# 상대경로를 검증해 절대경로로 바꾸는 것까지만 동기로 하고, 무거운 파싱·청킹·임베딩은
+# paper_ingest.track_in_background()가 백그라운드 스레드로 넘긴다(설계 노트 항목 G).
+# 그래서 fitz.FileDataError 같은 파싱 실패는 더 이상 여기서 400으로 안 잡힌다 — 그
+# 시점엔 이미 응답이 나간 뒤라 analysis_status="failed"로만 반영된다(폴링으로 확인).
+class LibraryTrackRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/library/track")
+def track_library_file(body: LibraryTrackRequest):
+    try:
+        abs_path = paper_catalog.resolve_library_path(body.path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="library/ 루트를 벗어난 경로입니다")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail=f"library/{body.path} 파일을 찾을 수 없습니다")
+    return paper_ingest.track_in_background(
+        abs_path, file_path=body.path, filename=os.path.basename(body.path)
+    )
+
+
+# 라이브러리 export ⑥-A(08-05, RoadMap "논문·노트 저장 방식 재설계" 참고) — 3단계
+# 누적 범위. 메타데이터(data/app.db — 논문 서지·상태·관심사·실험도구·노트)는 항상
+# 포함하고, include_index(+chroma_db, 기기 이전용)·include_library(+library/ 원본,
+# 완전 백업)는 선택. ZIP 안 경로를 저장소 루트 기준 상대경로 그대로 담아(예: "data/
+# app.db", "library/quantum/foo.pdf") export/import가 대칭이 되게 한다 — import는
+# 이 상대경로를 그대로 다시 그 자리에 풀면 끝(②-A/②-B가 이미 상대경로로 file_path를
+# 저장해두는 것과 같은 이유).
+def _add_dir_to_zip(zf: zipfile.ZipFile, root_dir: str) -> None:
+    """root_dir 밑의 모든 파일을 root_dir 자체를 포함한 상대경로(arcname)로 zip에 담는다.
+    library/의 심볼릭 링크(포터블 번들 "라이브러리 외부 경로 추적" 기능)도 따라간다 —
+    완전 백업(본인용)이라면 그렇게 연결해둔 원본도 같이 담기는 게 맞다. scan_library_files()
+    와 같은 순환 방지(실제 경로 기준 이미 방문한 디렉터리는 다시 안 내려감).
+
+    arcname은 "/"로 강제 통일한다 — os.path.join의 구분자는 플랫폼마다 다른데(Windows는
+    "\\"), zip 표준 관례는 "/"뿐이다. Windows에서 만든 백업을 그대로 두면(실제 최대
+    사용자층이 Windows — RoadMap 참고) 항목 이름에 "\\"가 그대로 박혀 다른 플랫폼은
+    물론 같은 Windows에서도 zipfile.extractall()이 폴더로 안 풀고 "chroma_db\\chroma.
+    sqlite3"라는 이름의 파일 하나로 잘못 풀 수 있다."""
+    if not os.path.isdir(root_dir):
+        return
+    seen_dirs = set()
+    for dirpath, dirnames, filenames in os.walk(root_dir, followlinks=True):
+        real_dirpath = os.path.realpath(dirpath)
+        if real_dirpath in seen_dirs:
+            dirnames[:] = []
+            continue
+        seen_dirs.add(real_dirpath)
+        for name in filenames:
+            full_path = os.path.join(dirpath, name)
+            if os.path.isfile(full_path):  # 깨진 심볼릭 링크(Docker 등) 무시
+                zf.write(full_path, arcname=full_path.replace(os.sep, "/"))
+
+
+class LibraryExportRequest(BaseModel):
+    include_index: bool = False
+    include_library: bool = False
+
+
+@app.post("/api/library/export")
+def export_library(body: LibraryExportRequest):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.isfile(interests.APP_DB_PATH):
+            zf.write(interests.APP_DB_PATH, arcname=interests.APP_DB_PATH)
+        if body.include_index:
+            _add_dir_to_zip(zf, retrieval.persist_directory)
+        if body.include_library:
+            _add_dir_to_zip(zf, paper_catalog.LIBRARY_DIR)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="library_export.zip"'},
+    )
+
+
+# 라이브러리 import ⑥-B(08-05) — 병합은 안 만든다(사용자 결정, RoadMap "라이브러리
+# import" 행 참고). papers/interests/equipment/notes 중 하나라도 있으면 거부하고,
+# 그래서 paper_id 충돌 처리 자체가 필요 없다(빈 상태로 풀리므로 충돌할 게 없음) —
+# 병합이 실제로 필요해지면 그때 별도 설계.
+_IMPORT_ALLOWED_ROOTS = ("data", "chroma_db", "library")
+
+
+def _is_existing_data_present() -> bool:
+    return bool(
+        paper_catalog.list_papers()
+        or interests.list_interests()
+        or equipment.list_equipment()
+        or knowledge_notes.list_notes()
+    )
+
+
+def _safe_import_entries(zf: zipfile.ZipFile) -> list[str]:
+    """ZIP 안 모든 항목이 export가 실제로 만드는 구조("data/"·"chroma_db/"·"library/"
+    밑)인지 확인한다 — 조작된 zip이 "../../etc/passwd" 같은 경로로 임의 파일을 덮어쓰지
+    못하게. resolve_library_path()가 realpath 대신 normpath를 쓰는 것과 같은 이유로
+    문자열 구조만 정규화해서 본다(심볼릭 링크 여부와 무관하게 ".." 탈출만 판별하면 됨 —
+    여기선 애초에 심볼릭 링크를 만들 상황이 아니라 단순화해도 안전). 하나라도 안전하지
+    않으면 빈 리스트를 돌려줘 호출자가 통째로 거부하게 한다("일부만 거르고 계속"이 아니라
+    전부 거절 — 조작된 zip을 부분적으로라도 신뢰하지 않는다)."""
+    names = zf.namelist()
+    for name in names:
+        normalized = os.path.normpath(name)
+        if os.path.isabs(normalized) or normalized.startswith(".."):
+            return []
+        top = normalized.split(os.sep)[0]
+        if top not in _IMPORT_ALLOWED_ROOTS:
+            return []
+    return names
+
+
+@app.post("/api/library/import")
+async def import_library(file: UploadFile = File(...)):
+    if _is_existing_data_present():
+        raise HTTPException(
+            status_code=400,
+            detail="기존 논문·관심사·실험도구·노트가 있어 가져올 수 없습니다 — 새로 설치한 상태에서만 가능합니다",
+        )
+
+    file_bytes = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(file_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="올바른 백업 파일(.zip)이 아닙니다")
+
+    with zf:
+        entries = _safe_import_entries(zf)
+        if not entries:
+            raise HTTPException(status_code=400, detail="백업 파일 안에 예상 밖의 경로가 있어 가져올 수 없습니다")
+        # chroma_db 포함 여부만 별도로 남긴다 — extractall() 전에 확인해야 entries가
+        # 아직 원본 zip 이름(항상 "/" 구분자, _add_dir_to_zip 참고) 그대로다.
+        includes_index = any(name.startswith("chroma_db/") for name in entries)
+        zf.extractall(path=".", members=entries)
+
+    return {
+        "papers": len(paper_catalog.list_papers()),
+        "interests": len(interests.list_interests()),
+        "equipment": len(equipment.list_equipment()),
+        "notes": len(knowledge_notes.list_notes()),
+        # retrieval.py의 Chroma 클라이언트는 프로세스 시작 시점에 한 번만 만들어져
+        # graph.py·paper_ingest.py 등 여러 모듈이 `from retrieval import ...`로 그
+        # 객체를 그대로 들고 있다(재할당해도 이미 import한 다른 모듈엔 안 퍼짐 — 파이썬
+        # import 의미론). chroma_db 파일을 방금 갈아치웠어도 그 객체들이 들고 있는
+        # 컬렉션 참조는 여전히 옛 파일 기준이라, 재시작 전까지는 검색·요약이 "Collection
+        # ... does not exist"로 깨진다(실제 재현·확인함) — 그래서 이 신호를 정직하게
+        # 알린다. RDB(data/app.db)는 매 요청마다 새 sqlite3 연결을 여는 구조라 이
+        # 문제가 없다(같은 이유로 재시작 불필요).
+        "restart_required": includes_index,
+    }
 
 
 # 실험도구 DB(⑤) — /interests와 완전히 같은 패턴(그래프도 LLM 호출도 없는 순수 CRUD).

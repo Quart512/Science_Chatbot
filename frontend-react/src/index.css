@@ -1,3 +1,114 @@
+/* 색상 토큰 (08-05, 브랜드 색감 병합 — docs/RoadMap.md "브랜드 색감·카피 병합 —
+   설계 명세" 참고). 지금 쓰던 값을 대부분 그대로 변수로 승격했고, accent(주 액센트)만
+   파랑(#3b5bdb)에서 보라(ai-saac 다크 팔레트)로 바뀐다. moon(보조 액센트)은 이번에
+   새로 추가 — 채도를 낮게 잡아 이미 있는 warning(#e3b341, 쨍한 경고 노랑)과 헷갈리지
+   않게 분리했다.
+
+   08-06 — 라이트 모드 + 무지개 스펙트럼 변수 추가(설정 화면 테마 전환과 함께).
+   :root는 다크(기존 기본값, 유지)이고 :root[data-theme="light"]가 오버라이드한다 —
+   기본값을 안 바꾼 이유는 지금까지 이 값으로 봐온 화면이 그대로 유지되게 하기 위함
+   (테마를 명시적으로 고르지 않은 기존 사용은 그대로 다크). 라이트 값은 ai-saac
+   (v0.app, /Users/jimmywon/Documents/ai-saac/app/globals.css)의 실제 라이트 토큰
+   ("Minimal science" — 차가운 종이 배경·잉크 전경)을 그대로 가져와 이 저장소 변수
+   이름에 맞춰 옮겼다 — 그 파일엔 없는 세부 변수(border-strong/faint,
+   text-muted-light/dim/disabled, accent-moon, 상태색)만 같은 역할·명도 관계를
+   유지하며 새로 골랐다. */
+:root {
+  color-scheme: dark;
+
+  --color-bg: #0e0f13;
+  --color-bg-elevated: #1a1c24;
+  --color-bg-surface: #22242e;
+
+  --color-border: #2e313d;
+  --color-border-strong: #40434f;
+  --color-border-faint: #3a3d48;
+
+  --color-text: #e6e6e6;
+  --color-text-muted: #a0a4b0;
+  --color-text-muted-light: #c7c9d1;
+  --color-text-dim: #6b7080;
+  --color-text-disabled: #5a5e6b;
+
+  /* 상태 색상 — 성공/경고/위험/정보. 브랜드 액센트(accent/moon)와는 별개 축이라
+     헷갈리지 않게 이름을 분리해뒀다(경고 노랑을 달빛 노랑으로 착각하지 않도록). */
+  --color-success: #7ee787;
+  --color-success-bg: rgba(46, 160, 67, 0.15);
+  --color-warning: #e3b341;
+  --color-warning-bg: rgba(210, 153, 34, 0.15);
+  --color-danger: #ff7b72;
+  --color-danger-bg: rgba(248, 81, 73, 0.15);
+  --color-info: #8ab4ff;
+  --color-info-alt: #79c0ff;
+  --color-info-bg: rgba(88, 166, 255, 0.15);
+
+  /* 주 액센트 — 보라(프리즘/주요 강조: 버튼, 선택 상태) */
+  --color-accent: oklch(0.62 0.2 292);
+  --color-accent-15: oklch(0.62 0.2 292 / 15%);
+  --color-accent-20: oklch(0.62 0.2 292 / 20%);
+  --color-accent-25: oklch(0.62 0.2 292 / 25%);
+
+  /* 보조 액센트 — 달빛 노랑(호버·조용한 화면의 포인트) */
+  --color-accent-moon: oklch(0.82 0.06 90);
+
+  /* 무지개 스펙트럼 — ai-saac의 "prism/phase signature moments에만 쓴다" 원칙 그대로,
+     이 저장소에서도 장식적 강조(로고 아래 얇은 띠 하나) 한 곳에만 쓴다. 일반 UI
+     색상으로 남용 안 함 — 남용하면 accent(보라)의 강조력이 죽는다(위 설계 노트
+     "보조 액센트" 항목이 이미 짚은 것과 같은 이유). */
+  --color-spectrum-violet: oklch(0.62 0.22 300);
+  --color-spectrum-indigo: oklch(0.6 0.2 275);
+  --color-spectrum-blue: oklch(0.7 0.17 245);
+  --color-spectrum-green: oklch(0.78 0.18 155);
+  --color-spectrum-yellow: oklch(0.88 0.17 95);
+  --color-spectrum-orange: oklch(0.76 0.19 55);
+  --color-spectrum-red: oklch(0.68 0.23 27);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --color-bg: oklch(0.985 0.003 250);
+  --color-bg-elevated: oklch(1 0 0);
+  --color-bg-surface: oklch(0.955 0.004 250);
+
+  --color-border: oklch(0.905 0.006 258);
+  --color-border-strong: oklch(0.8 0.008 258);
+  --color-border-faint: oklch(0.94 0.004 258);
+
+  --color-text: oklch(0.19 0.02 265);
+  --color-text-muted: oklch(0.505 0.02 262);
+  --color-text-muted-light: oklch(0.35 0.02 264);
+  --color-text-dim: oklch(0.6 0.015 262);
+  --color-text-disabled: oklch(0.72 0.01 260);
+
+  /* 상태 색상 — 흰 배경에서 읽히도록 GitHub 라이트 테마의 대응 색을 그대로 씀
+     (다크 쪽 값도 원래 GitHub 다크 테마 팔레트라 같은 계보로 맞춤). */
+  --color-success: #1a7f37;
+  --color-success-bg: rgba(26, 127, 55, 0.1);
+  --color-warning: #9a6700;
+  --color-warning-bg: rgba(154, 103, 0, 0.1);
+  --color-danger: #cf222e;
+  --color-danger-bg: rgba(207, 34, 46, 0.1);
+  --color-info: #0969da;
+  --color-info-alt: #218bff;
+  --color-info-bg: rgba(9, 105, 218, 0.1);
+
+  --color-accent: oklch(0.55 0.19 288);
+  --color-accent-15: oklch(0.55 0.19 288 / 15%);
+  --color-accent-20: oklch(0.55 0.19 288 / 20%);
+  --color-accent-25: oklch(0.55 0.19 288 / 25%);
+
+  --color-accent-moon: oklch(0.6 0.11 85);
+
+  --color-spectrum-violet: oklch(0.52 0.2 300);
+  --color-spectrum-indigo: oklch(0.5 0.19 275);
+  --color-spectrum-blue: oklch(0.62 0.16 245);
+  --color-spectrum-green: oklch(0.72 0.17 155);
+  --color-spectrum-yellow: oklch(0.85 0.16 95);
+  --color-spectrum-orange: oklch(0.72 0.18 55);
+  --color-spectrum-red: oklch(0.63 0.22 27);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -5,8 +116,41 @@
 body {
   margin: 0;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* .app-shell(Layout.css)이 실제 배경을 칠하지만, 그게 그리기 전(첫 페인트)이나
+     .app-shell 밖 여백이 잠깐이라도 보일 때 테마와 다른 색(브라우저 기본 흰색)이
+     번쩍이지 않도록 body도 같은 토큰을 따라간다. */
+  background: var(--color-bg);
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* 스크롤바 테마 대응(08-06) — 지금까지 브라우저 기본 스크롤바(회색/흰색)를 그대로
+   써서 다크·라이트 둘 다 배경과 안 어울렸다. 토큰을 그대로 참조해 테마 전환에 같이
+   따라가게 함 — Firefox는 scrollbar-color, WebKit(Chrome/Edge/Safari)은
+   ::-webkit-scrollbar 계열로 표준이 갈려 둘 다 선언(전역 * 하나로 왼쪽 네비·챗
+   패널·본문 스크롤 전부 커버). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) var(--color-bg);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 6px;
+  border: 2px solid var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-dim);
 }

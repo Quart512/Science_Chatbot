@@ -187,11 +187,11 @@ def generate_hypothesis(state: WorkflowState) -> dict:
 
 
 def _make_reference_node(get_text: Callable[["WorkflowState"], str], stage_name: str):
-    """참고문헌 추천 노드를 찍어내는 클로저 팩토리 — tool.py의 make_search_tool과 같은
-    패턴(그쪽은 site별 검색 tool, 여긴 단계별 참고문헌 노드). 스테이지마다 하는 일은
-    "자기 산출물 텍스트로 검색해서 공유 references에 누적"으로 완전히 같고, 다른 건
-    어느 필드(들)를 검색어로 쓰는지와 added_by_stage 값뿐이라 그때그때 복붙하는 대신
-    get_text(state)로 위임한다.
+    """참고문헌 추천 노드를 찍어내는 클로저 팩토리 — tool.py의 make_search_tool(wikipedia
+    tool을 requests 기반으로 직접 구현하며 08-05에 제거됨)과 같은 클로저 팩토리 패턴이었다.
+    스테이지마다 하는 일은 "자기 산출물 텍스트로 검색해서 공유 references에 누적"으로
+    완전히 같고, 다른 건 어느 필드(들)를 검색어로 쓰는지와 added_by_stage 값뿐이라
+    그때그때 복붙하는 대신 get_text(state)로 위임한다.
 
     실패는 이 단계만 건너뛴다 — 앞 단계 산출물은 이미 나왔으므로 참고문헌 하나 못
     찾았다고 워크플로우 전체를 실패시킬 이유가 없다(삭제된 관심사 자동 제안 훅이 쓰던

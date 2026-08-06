@@ -46,12 +46,11 @@ class FakeVectorstore:
         self.metadatas += list(metadatas)
 
 
-def _fake_parse_pdf(scanned=False, markdown="# Title\n\n## Body\n\n" + "내용입니다. " * 50, pdf_title=None):
+def _fake_parse_pdf(scanned=False, markdown="# Title\n\n## Body\n\n" + "내용입니다. " * 50):
     return {
         "text_extractable": not scanned,
         "markdown": markdown,
         "page_count": 3,
-        "pdf_title": pdf_title,
     }
 
 
@@ -166,6 +165,46 @@ def test_register_paper_defaults_filename_to_empty_string(monkeypatch, tmp_path)
     paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.12346", vectorstore=FakeVectorstore())
 
     assert calls[0]["filename"] == ""
+
+
+def test_register_paper_passes_file_path_to_catalog(monkeypatch, tmp_path):
+    # ②-B(08-05) — library/ 경유 등록("트래킹에 추가")이면 file_path가 그대로 mark_owned에
+    # 전달돼야 한다. 기존 업로드 다이얼로그 경로는 file_path를 안 넘기므로 기본값 None이
+    # 그대로 전달되는지는 아래 별도 테스트에서 확인.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: calls.append(kwargs)
+    )
+
+    paper_ingest.register_paper(
+        str(pdf_path), arxiv_id="2401.12347", file_path="quantum/paper.pdf", vectorstore=FakeVectorstore()
+    )
+
+    assert calls[0]["file_path"] == "quantum/paper.pdf"
+
+
+def test_register_paper_computes_content_sha256_even_without_file_path(monkeypatch, tmp_path):
+    # content_sha256(설계 노트 항목 C)은 file_path 유무와 무관하게 항상 계산된다 —
+    # DOI/arXiv 논문은 paper_id가 해시가 아니라 이 컬럼이 유일한 내용 매칭 수단이므로.
+    import hashlib
+
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: calls.append(kwargs)
+    )
+
+    paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.12348", vectorstore=FakeVectorstore())
+
+    assert calls[0]["file_path"] is None
+    assert calls[0]["content_sha256"] == hashlib.sha256(b"dummy").hexdigest()
 
 
 def test_register_paper_scanned_pdf_skips_catalog(monkeypatch, tmp_path):
@@ -504,89 +543,6 @@ def test_register_paper_skips_abstract_doc_when_none_found(monkeypatch, tmp_path
     assert not any(m["doc_type"] == "abstract" for m in vs.metadatas)
 
 
-# --- title_check (07-29, 6-3b③) --------------------------------------------
-
-
-def test_register_paper_reports_match_when_titles_agree(monkeypatch, tmp_path):
-    pdf_path = tmp_path / "paper.pdf"
-    pdf_path.write_bytes(b"dummy")
-    monkeypatch.setattr(
-        paper_ingest, "parse_pdf",
-        lambda file_bytes: _fake_parse_pdf(pdf_title="Quantum Entanglement Review"),
-    )
-
-    vs = FakeVectorstore()
-    result = paper_ingest.register_paper(
-        str(pdf_path), arxiv_id="2401.77771",
-        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
-    )
-
-    assert result["title_check"]["status"] == "match"
-    assert result["title_check"]["given_title"] == "Quantum Entanglement Review"
-    assert result["title_check"]["pdf_title"] == "Quantum Entanglement Review"
-
-
-def test_register_paper_reports_different_paper_when_titles_disagree(monkeypatch, tmp_path):
-    pdf_path = tmp_path / "paper.pdf"
-    pdf_path.write_bytes(b"dummy")
-    monkeypatch.setattr(
-        paper_ingest, "parse_pdf",
-        lambda file_bytes: _fake_parse_pdf(pdf_title="A Survey of Kubernetes Deployment Strategies"),
-    )
-
-    vs = FakeVectorstore()
-    result = paper_ingest.register_paper(
-        str(pdf_path), arxiv_id="2401.77772",
-        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
-    )
-
-    # 딴 논문일 가능성이 있다는 판정만 반환할 뿐, 등록 자체는 그대로 진행된다(막지 않음)
-    assert result["title_check"]["status"] == "different_paper"
-    assert result["text_extractable"] is True
-    assert result["chunk_count"] > 0
-
-
-def test_register_paper_reports_no_comparison_when_pdf_title_missing(monkeypatch, tmp_path):
-    # PDF 제목 추출 실패는 불일치가 아니다(title_check.py 모듈 docstring 참고) — 조용히 건너뜀
-    pdf_path = tmp_path / "paper.pdf"
-    pdf_path.write_bytes(b"dummy")
-    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(pdf_title=None))
-
-    vs = FakeVectorstore()
-    result = paper_ingest.register_paper(
-        str(pdf_path), arxiv_id="2401.77773",
-        bibliographic={"title": "Quantum Entanglement Review"}, vectorstore=vs,
-    )
-
-    assert result["title_check"]["status"] == "no_comparison"
-
-
-def test_register_paper_reports_no_comparison_when_no_given_title(monkeypatch, tmp_path):
-    # bibliographic 자체가 없는 경우(해시 기반 paper_id) — 대조할 기준이 없음
-    pdf_path = tmp_path / "paper.pdf"
-    pdf_path.write_bytes(b"dummy")
-    monkeypatch.setattr(
-        paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(pdf_title="Some PDF Title")
-    )
-
-    vs = FakeVectorstore()
-    result = paper_ingest.register_paper(str(pdf_path), vectorstore=vs)
-
-    assert result["title_check"]["status"] == "no_comparison"
-
-
-def test_register_paper_scanned_pdf_has_no_title_check(monkeypatch, tmp_path):
-    # 스캔본은 저장할 게 없으니 검증도 의미가 없다(모듈 docstring 참고) — title_check 자체가 반환값에 없음
-    pdf_path = tmp_path / "scanned.pdf"
-    pdf_path.write_bytes(b"dummy")
-    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(scanned=True))
-
-    vs = FakeVectorstore()
-    result = paper_ingest.register_paper(str(pdf_path), arxiv_id="2401.77774", vectorstore=vs)
-
-    assert "title_check" not in result
-
-
 # --- get_paper_summary() --------------------------------------------------
 
 
@@ -899,3 +855,184 @@ def test_ensure_summary_in_background_context_budget_exceeded_is_not_retried(mon
     second = paper_ingest.ensure_summary_in_background("arxiv:budget", model="Qwen-tuned", vectorstore=vs)
     assert second is False  # 영구 실패로 기록됐으므로 다시 스레드를 안 띄움
     assert len(spawn_calls) == 1  # 두 번째 호출에서 _spawn_background가 다시 불리지 않음
+
+
+# --- track_in_background() (④ 파싱 분리, 08-05) ----------------------------
+
+
+def test_track_in_background_creates_pending_row_and_returns_immediately(monkeypatch, tmp_path):
+    import hashlib
+
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    expected_hash = hashlib.sha256(b"dummy content").hexdigest()
+
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append((paper_id, kwargs)),
+    )
+    # 스레드를 아예 안 돌린다 — 이 테스트는 "빠른 등록" 단계만 본다.
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: None)
+
+    result = paper_ingest.track_in_background(str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf")
+
+    assert result == {"paper_id": f"hash:{expected_hash}", "analysis_status": "pending"}
+    assert len(calls) == 1
+    paper_id, kwargs = calls[0]
+    assert paper_id == f"hash:{expected_hash}"
+    assert kwargs["file_path"] == "quantum/paper.pdf"
+    assert kwargs["content_sha256"] == expected_hash
+    assert kwargs["analysis_status"] == "pending"
+    assert kwargs["filename"] == "paper.pdf"
+
+
+def test_track_in_background_passes_title_to_initial_mark_owned(monkeypatch, tmp_path):
+    # 08-05, 비-arXiv 논문 제목 수동 입력 — pending 행을 만드는 첫 mark_owned() 호출에도
+    # title이 그대로 들어가야 분석이 끝나기 전에도 화면에 사용자가 적은 제목이 보인다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: None)
+
+    paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf", title="사용자가 직접 적은 제목"
+    )
+
+    assert calls[0]["title"] == "사용자가 직접 적은 제목"
+
+
+def test_track_in_background_carries_title_into_register_paper_bibliographic(monkeypatch, tmp_path):
+    # register_paper()가 arxiv_id로 자동 조회를 해도 사용자가 명시한 title이 우선해야
+    # 한다("명시값 우선" — register_paper() docstring과 같은 규칙) — bibliographic으로
+    # 넘겨야 그 규칙을 그대로 태울 수 있다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "set_analysis_status", lambda paper_id, status, **kw: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(
+        paper_ingest, "fetch_by_id",
+        lambda arxiv_id: {"title": "arxiv에서 가져온 제목", "abstract": "arxiv 초록"},
+    )
+
+    captured = {}
+    real_register_paper = paper_ingest.register_paper
+
+    def _spy_register_paper(*args, **kwargs):
+        captured.update(kwargs)
+        return real_register_paper(*args, **kwargs)
+    monkeypatch.setattr(paper_ingest, "register_paper", _spy_register_paper)
+
+    paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf",
+        arxiv_id="2401.1", title="사용자가 직접 적은 제목", vectorstore=FakeVectorstore(),
+    )
+
+    assert captured["bibliographic"] == {"title": "사용자가 직접 적은 제목"}
+
+
+def test_track_in_background_skips_spawn_when_already_in_progress(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "get_paper",
+        lambda paper_id: {"paper_id": paper_id, "analysis_status": "analyzing"},
+    )
+
+    def _boom_mark_owned(*a, **kw):
+        raise AssertionError("이미 진행 중이면 mark_owned를 다시 부르면 안 됨")
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", _boom_mark_owned)
+
+    def _boom_spawn(fn):
+        raise AssertionError("이미 진행 중이면 스레드를 새로 띄우면 안 됨")
+    monkeypatch.setattr(paper_ingest, "_spawn_background", _boom_spawn)
+
+    result = paper_ingest.track_in_background(str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf")
+
+    assert result["analysis_status"] == "analyzing"  # 기존 상태를 그대로 돌려줌(재시도 아님)
+
+
+def test_track_in_background_completes_full_pipeline_synchronously(monkeypatch, tmp_path):
+    # _spawn_background를 동기 실행으로 갈아끼워 register_paper() 전체(파싱만 몽키패치,
+    # 나머지는 진짜)가 끝까지 돌고 analysis_status가 pending → analyzing → (register_paper의
+    # mark_owned 기본값)done 순서로 찍히는지 확인한다.
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+
+    calls = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "mark_owned",
+        lambda paper_id, **kwargs: calls.append(("mark_owned", paper_id, kwargs)),
+    )
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: calls.append(("set_analysis_status", paper_id, status)),
+    )
+
+    result = paper_ingest.track_in_background(
+        str(pdf_path), file_path="quantum/paper.pdf", filename="paper.pdf", vectorstore=FakeVectorstore()
+    )
+
+    assert result["analysis_status"] == "pending"
+    kinds = [c[0] for c in calls]
+    assert kinds == ["mark_owned", "set_analysis_status", "mark_owned"]
+    assert calls[0][2]["analysis_status"] == "pending"
+    assert calls[1][2] == "analyzing"
+    assert "analysis_status" not in calls[2][2]  # register_paper()는 mark_owned 기본값(done)에 맡김
+
+
+def test_track_in_background_marks_failed_on_scanned_pdf(monkeypatch, tmp_path):
+    # ②-B에서 "④가 다룰 문제"로 미뤄뒀던 간극 — 스캔본은 register_paper()가 mark_owned()를
+    # 안 타서 done이 자동으로 안 찍히므로, track_in_background()가 명시적으로 failed 처리한다.
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"dummy content")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", lambda file_bytes: _fake_parse_pdf(scanned=True))
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+
+    statuses = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: statuses.append(status),
+    )
+
+    paper_ingest.track_in_background(str(pdf_path), file_path="quantum/scanned.pdf", filename="scanned.pdf")
+
+    assert statuses == ["analyzing", "failed"]
+
+
+def test_track_in_background_marks_failed_on_exception(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "broken.pdf"
+    pdf_path.write_bytes(b"dummy content")
+
+    def _boom_parse(file_bytes):
+        raise RuntimeError("파싱 실패")
+    monkeypatch.setattr(paper_ingest, "parse_pdf", _boom_parse)
+    monkeypatch.setattr(paper_ingest.paper_catalog, "get_paper", lambda paper_id: None)
+    monkeypatch.setattr(paper_ingest, "_spawn_background", lambda fn: fn())
+    monkeypatch.setattr(paper_ingest.paper_catalog, "mark_owned", lambda paper_id, **kwargs: None)
+
+    statuses = []
+    monkeypatch.setattr(
+        paper_ingest.paper_catalog, "set_analysis_status",
+        lambda paper_id, status, **kw: statuses.append(status),
+    )
+
+    paper_ingest.track_in_background(str(pdf_path), file_path="quantum/broken.pdf", filename="broken.pdf")
+
+    assert statuses == ["analyzing", "failed"]

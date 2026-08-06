@@ -4,11 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { advanceResearch, getResearchHistory, type HistoryEntry } from '../api/research'
 import { StageContent } from './research/StageContent'
 import { NextOptions } from './research/NextOptions'
-import { DraftEditor } from './research/DraftEditor'
 import { BranchTimeline } from './research/BranchTimeline'
 import { RetryReferencesButton } from './research/RetryReferencesButton'
 import { NoteEditor } from './research/NoteEditor'
-import { nextOptions, STAGES_WITH_REFERENCES } from './research/constants'
+import { STAGES_WITH_REFERENCES } from './research/constants'
 import './Research.css'
 
 // frontend/views/research.py 전체와 같은 계약이었던 데서 출발 — 브랜치형 타임라인
@@ -116,31 +115,23 @@ function ResearchThreadView({
 
   return (
     <>
-      <BranchTimeline
-        history={history}
-        selectedCheckpointId={effectiveViewId}
-        onSelect={setViewCheckpointId}
-        nextOpts={nextOptions(tip.values)}
-      />
+      <BranchTimeline history={history} selectedCheckpointId={effectiveViewId} onSelect={setViewCheckpointId} />
 
-      <NoteEditor key={selected.checkpoint_id} threadId={threadId} checkpointId={selected.checkpoint_id} initialNote={selected.note} />
+      <NoteEditor key={`note-${selected.checkpoint_id}`} threadId={threadId} checkpointId={selected.checkpoint_id} initialNote={selected.note} />
 
       {!isTip && <p className="research-caption">과거 시점입니다 — 여기서 진행하면 이 시점을 기준으로 새로 이어집니다.</p>}
       {values.comment && <p className="research-comment">{values.comment}</p>}
 
-      <StageContent values={values} />
+      <StageContent key={`stage-${selected.checkpoint_id}`} values={values} threadId={threadId} canEdit={isTip} />
 
       {isTip && STAGES_WITH_REFERENCES.has(values.stage) && (
         <RetryReferencesButton threadId={threadId} onRetried={() => setViewCheckpointId(null)} />
       )}
 
-      {values.stage === 'writing' && values.abstract && isTip && (
-        <DraftEditor threadId={threadId} values={values} checkpointId={selected.checkpoint_id} />
-      )}
-
       <hr />
       <h3>다음으로 갈 수 있는 곳</h3>
       <NextOptions
+        key={`next-${selected.checkpoint_id}`}
         threadId={threadId}
         values={values}
         tipValues={tip.values}

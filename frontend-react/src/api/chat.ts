@@ -63,3 +63,28 @@ export function getQueryMessages(threadId: string) {
 export function deleteQueryMessage(threadId: string, messageId: string) {
   return apiFetch<{ deleted_id: string }>(`/query/${threadId}/messages/${messageId}`, { method: 'DELETE' })
 }
+
+// 챗(④) 세션 목록 — api/research.ts의 세션 함수 3개와 같은 계약(main.py
+// /api/chat/sessions 참고). 세션 "생성"은 /query가 첫 메시지에서 알아서 하므로
+// 여긴 목록/제목수정/닫기만 있다.
+export interface ChatSession {
+  thread_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export function listChatSessions() {
+  return apiFetch<{ sessions: ChatSession[] }>('/chat/sessions')
+}
+
+export function renameChatSession(threadId: string, title: string) {
+  return apiFetch(`/chat/sessions/${threadId}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  })
+}
+
+export function closeChatSession(threadId: string) {
+  return apiFetch(`/chat/sessions/${threadId}`, { method: 'DELETE' })
+}
