@@ -10,6 +10,21 @@
     <meta name="theme-color" content="#0e0f13" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIsaac</title>
+    <!-- 테마 깜빡임 방지(08-06, 라이트 모드 도입) — React가 뜨기 전에 저장된 테마를
+         먼저 적용해야 "잠깐 다크였다가 라이트로 바뀌는" 번쩍임이 없다. hooks/useTheme.ts
+         가 쓰는 것과 같은 localStorage 키('theme')를 순수 인라인 스크립트로 그대로
+         읽는다 — React 코드와 중복이지만, 이 스크립트는 번들 로드 전에 동기로 돌아야
+         하므로 모듈 import를 쓸 수 없다(의도적인 중복, useTheme.ts 주석에도 남김). -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

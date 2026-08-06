@@ -2,7 +2,40 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteApiKey, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
 import { exportLibrary, importLibrary } from '../api/library'
+import { useTheme, type Theme } from '../hooks/useTheme'
 import './Settings.css'
+
+const THEME_OPTIONS: { key: Theme; label: string }[] = [
+  { key: 'dark', label: '🌙 다크' },
+  { key: 'light', label: '☀️ 라이트' },
+]
+
+// 08-06 신설 — 라이트 모드 도입과 함께. 저장 위치는 백엔드(다른 설정 카드들)가 아니라
+// localStorage(useTheme.ts) — 화면 표시 취향이라 기기별로 다를 수 있고, API 키처럼
+// "이 컴퓨터의 서버가 기억해야 하는 값"이 아니다.
+function ThemeCard() {
+  const { theme, setTheme } = useTheme()
+
+  return (
+    <div className="settings-card">
+      <h3>테마</h3>
+      <p className="settings-card-meta">이 브라우저에만 저장됩니다.</p>
+      <div className="settings-card-actions">
+        {THEME_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            className={theme === opt.key ? 'settings-theme-active' : undefined}
+            onClick={() => setTheme(opt.key)}
+            disabled={theme === opt.key}
+            aria-pressed={theme === opt.key}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const PROVIDER_LABELS: Record<ApiKeyStatus['provider'], string> = {
   gemini: 'Gemini',
@@ -243,6 +276,9 @@ export function Settings() {
   return (
     <div>
       <h1>⚙️ 설정</h1>
+
+      <ThemeCard />
+
       <p className="settings-intro">
         여기서 입력한 키는 이 컴퓨터에 저장되고, 다음 질문부터(서버 재시작 없이) 바로
         적용됩니다. 입력하지 않으면 서버의 .env 값을 그대로 씁니다. Qwen-tuned(로컬

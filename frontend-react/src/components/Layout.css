@@ -24,6 +24,27 @@
   justify-content: space-between;
 }
 
+/* 무지개 스펙트럼(08-06) — ai-saac 브랜드 컨셉의 "프리즘" 모티프. ai-saac 자체 주석
+   ("used only for prism/phase signature moments")을 그대로 따라 로고 바로 아래
+   한 곳에만 얇게 쓴다 — 일반 UI 요소에 남용하면 보라 액센트의 강조력이 죽는다
+   (index.css 설계 노트와 같은 이유). */
+.app-nav-spectrum {
+  height: 3px;
+  flex-shrink: 0;
+  margin: 0.6rem 0 1rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-spectrum-violet),
+    var(--color-spectrum-indigo),
+    var(--color-spectrum-blue),
+    var(--color-spectrum-green),
+    var(--color-spectrum-yellow),
+    var(--color-spectrum-orange),
+    var(--color-spectrum-red)
+  );
+}
+
 /* 화면 개선 ⑦(08-05, 왼쪽 패널 여닫기) — 오른쪽 챗 패널의 .chat-panel-toggle과
    같은 위치 감각(구석에 고정된 작은 버튼)으로 맞춰 좌우 대칭을 이루게 했다. */
 .app-nav-toggle {

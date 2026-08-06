@@ -46,6 +46,7 @@ export function Layout() {
             ✕
           </button>
         </div>
+        <div className="app-nav-spectrum" aria-hidden="true" />
 
         <div className="app-nav-group">
           <div className="app-nav-group-title">메인</div>
