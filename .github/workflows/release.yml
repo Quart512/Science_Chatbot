@@ -1,0 +1,127 @@
+# 릴리즈 자동화 — 태그(v*) push 시 배포 zip 4종(macOS·Windows·Linux portable 번들 +
+# Docker 배포판)을 빌드해 GitHub Release로 올린다. RoadMap "[배포] 배포 자동화 —
+# 릴리즈 zip + GitHub Release" 항목.
+#
+# 4개 빌드 job은 각 OS의 build_bundle_*.sh/.ps1을 그대로 재사용(build-bundle-*.yml의
+# PR 검증과 같은 스크립트) — 릴리즈 전용 빌드 로직을 새로 안 만들고 이미 검증된
+# 경로를 그대로 태운다. Docker Hub 이미지 자체는 이 워크플로우 소관이 아니다
+# (deploy.yml이 main push마다 이미 :latest로 올림 — docker-compose.yml이 그 태그를
+# pull하므로 이 zip은 버전을 안 묶어도 된다).
+name: 릴리즈 빌드 + GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: bash scripts/build_bundle_macos.sh
+      - name: zip
+        run: cd build && zip -r -q ../AIsaac-macos.zip AIsaac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIsaac-macos
+          path: AIsaac-macos.zip
+          retention-days: 1
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - shell: pwsh
+        run: ./scripts/build_bundle_windows.ps1
+      - name: zip
+        shell: pwsh
+        run: Compress-Archive -Path build/AIsaac -DestinationPath AIsaac-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIsaac-windows
+          path: AIsaac-windows.zip
+          retention-days: 1
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: bash scripts/build_bundle_linux.sh
+      - name: zip
+        run: cd build && zip -r -q ../AIsaac-linux.zip AIsaac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIsaac-linux
+          path: AIsaac-linux.zip
+          retention-days: 1
+
+  # Docker 배포판 — docker-compose.yml은 이미 배포 안전(env_file·build: 없음, 08-05
+  # "배포용 compose 분리" 완료) 상태라 override 파일만 빼고 그대로 담으면 된다.
+  # Intel Mac·Windows·일반 x86_64 Linux는 이 zip이 필요하다(portable 번들이 Apple
+  # Silicon Mac 전용이라 나머지 전부의 유일한 경로 — RoadMap 참고).
+  package-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 배포 폴더 조립
+        run: |
+          mkdir -p dist/AIsaac
+          cp docker-compose.yml dist/AIsaac/
+          cp start.command stop.command start.bat stop.bat dist/AIsaac/
+          cp scripts/release/docker-readme.txt dist/AIsaac/README.txt
+      - name: zip
+        run: cd dist && zip -r -q ../AIsaac-docker.zip AIsaac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIsaac-docker
+          path: AIsaac-docker.zip
+          retention-days: 1
+
+  release:
+    needs: [build-macos, build-windows, build-linux, package-docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create가 이 토큰으로 Release를 만들려면 필요
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # workflow_dispatch(수동 실행, 테스트용)는 여기까지만 돈다 — 실제 공개 Release는
+      # 진짜 태그 push일 때만 만든다(빌드 4종이 전부 되는지는 이 job 진입 자체로 이미
+      # 확인됨, 아티팩트도 위에서 내려받아 존재 여부까지 확인 가능).
+      - name: 아티팩트 확인 (테스트 실행에서도 항상 돎)
+        run: ls -la artifacts/
+
+      - name: GitHub Release 생성 (태그 push일 때만)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            artifacts/AIsaac-macos.zip \
+            artifacts/AIsaac-windows.zip \
+            artifacts/AIsaac-linux.zip \
+            artifacts/AIsaac-docker.zip \
+            --title "AIsaac ${{ github.ref_name }}" \
+            --generate-notes
