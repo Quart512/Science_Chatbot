@@ -17,6 +17,13 @@ export interface InterestDraft {
   excluded_topics: string
 }
 
+// GET /interests/draft 전용 — warning은 저장(POST /interests) 쪽엔 의미가 없어 InterestDraft에는
+// 안 넣는다(08-06, AI가 초안을 못 채웠을 때 이유를 보여주기 위해 추가 — orchestrator.py의
+// draft_interest_from_messages 참고).
+export interface InterestDraftResponse extends InterestDraft {
+  warning: string
+}
+
 export interface RecommendResult {
   paper_id: string
   title: string
@@ -39,7 +46,7 @@ export function listInterests() {
 }
 
 export function getInterestDraft(threadId: string) {
-  return apiFetch<InterestDraft>(`/interests/draft?thread_id=${encodeURIComponent(threadId)}`)
+  return apiFetch<InterestDraftResponse>(`/interests/draft?thread_id=${encodeURIComponent(threadId)}`)
 }
 
 export interface SaveInterestBody extends InterestDraft {

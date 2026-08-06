@@ -31,7 +31,7 @@ def _fake_draft_result(disabled_models=None, **draft_fields):
 
 def test_draft_interest_returns_empty_when_no_messages():
     draft, tokens, disabled_models = orchestrator.draft_interest_from_messages([])
-    assert draft == {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    assert draft == {"title": "", "looking_for": "", "already_known": "", "excluded_topics": "", "warning": ""}
     assert tokens == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     assert disabled_models == []
 
@@ -45,7 +45,7 @@ def test_draft_interest_returns_fields_from_llm(monkeypatch):
 
     draft, tokens, _ = orchestrator.draft_interest_from_messages([HumanMessage(content="위상 물질 재밌다")])
 
-    assert draft == DRAFT_FIELDS
+    assert draft == {**DRAFT_FIELDS, "warning": ""}
     assert tokens["total_tokens"] == 2
     # should_suggest 판정 없이 곧장 InterestDraft로 물어봄
     assert calls == [orchestrator.InterestDraft]
@@ -58,7 +58,10 @@ def test_draft_interest_continues_when_model_fails(monkeypatch):
 
     draft, tokens, disabled_models = orchestrator.draft_interest_from_messages([HumanMessage(content="질문")])
 
-    assert draft == {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    assert draft["title"] == "" and draft["looking_for"] == ""
+    assert draft["already_known"] == "" and draft["excluded_topics"] == ""
+    # 08-06 — 빈 폼만 뜨고 왜 비었는지 알 방법이 없던 걸 고쳐, 실패 사유가 warning에 남는다.
+    assert "AI가 초안을 채우지 못했습니다" in draft["warning"]
     assert tokens["total_tokens"] == 0
     assert disabled_models == []
 

@@ -8,7 +8,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, Sy
 from langgraph.config import get_stream_writer
 
 from graph import app as physics_qa_app
-from models import MESSAGE_HISTORY_BUDGET_CHARS, add_tokens, invoke_with_fallback
+from models import MESSAGE_HISTORY_BUDGET_CHARS, add_tokens, all_models_failed_message, invoke_with_fallback
 
 # 부모(오케스트레이터) 그래프 — "표면"이 보는 대화 이력·체크포인터를 소유한다. 능력이
 # 물리 QA 하나뿐이라 라우팅 없이 곧장 물리 QA로 간다(추후 라우터 추가 예정).
@@ -140,7 +140,11 @@ def draft_interest_from_messages(
     반환: (draft dict, 이번 호출에서 쓴 토큰, 갱신된 disabled_models)
     """
     zero_tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    empty_draft = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": ""}
+    # warning: 코드가 채우는 결정론적 안내 문구(research_workflow.py의 OUTCOME_GUIDANCE와
+    # 같은 원칙) — LLM이 못 채운 이유를 사용자에게 보여준다(08-06, 예전엔 그냥 빈 폼만
+    # 뜨고 왜 비었는지 알 방법이 없었다). 메시지가 없어서 애초에 안 부른 경우는 실패가
+    # 아니므로 빈 문자열.
+    empty_draft = {"title": "", "looking_for": "", "already_known": "", "excluded_topics": "", "warning": ""}
     disabled_models = list(disabled_models) if disabled_models else []
     if not messages:
         return empty_draft, zero_tokens, disabled_models
@@ -168,13 +172,14 @@ def draft_interest_from_messages(
         )
     except RuntimeError as e:
         print(f"관심사 초안 생성 실패: {type(e).__name__}: {e}")
-        return empty_draft, zero_tokens, disabled_models
+        return {**empty_draft, "warning": f"AI가 초안을 채우지 못했습니다 — {all_models_failed_message(e)}"}, zero_tokens, disabled_models
 
     draft = {
         "title": result.title,
         "looking_for": result.looking_for,
         "already_known": result.already_known,
         "excluded_topics": result.excluded_topics,
+        "warning": "",
     }
     return draft, tokens_used, disabled_models
 

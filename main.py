@@ -33,7 +33,7 @@ import research_notes
 import research_sessions
 import research_workflow
 import retrieval
-from models import ContextBudgetExceeded
+from models import ContextBudgetExceeded, all_models_failed_message
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
 # astream() 아래서 예외가 나 비동기 버전이 필수. 컨텍스트 매니저를 요청마다 여닫을 수
@@ -317,6 +317,11 @@ def trigger_recommend_search(interest_id: int, start: int = 0):
         results = paper_recommend.recommend_for_interest(interest_id, start=start)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        # _english_query()(한글 검색어를 영어로 변환)가 invoke_with_fallback을 부르는데,
+        # 스크리닝 루프(후보별 try/except로 이미 안전)와 달리 여기는 안 잡혀 있어서
+        # 모델이 전부 죽으면 그냥 500(원인 불명)으로 끝났다. 이제 원인을 보여준다(08-06).
+        raise HTTPException(status_code=503, detail=all_models_failed_message(e))
     return {"recommended": results}
 
 
@@ -334,6 +339,8 @@ def refresh_recommend_search(interest_id: int, body: RefreshRequest):
         results = paper_recommend.refresh_for_interest(interest_id, body.existing_candidates)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=all_models_failed_message(e))
     return {"recommended": results}
 
 
@@ -398,6 +405,10 @@ def get_paper_summary_endpoint(paper_id: str):
         raise HTTPException(status_code=404, detail=f"paper_id={paper_id}가 등록돼 있지 않습니다")
     except ContextBudgetExceeded as e:
         raise HTTPException(status_code=422, detail=f"논문이 길어 요약을 생성할 수 없습니다: {e}")
+    except RuntimeError as e:
+        # invoke_with_fallback이 모델 전부 실패(API 키 없음 등)로 던지는 예외 — main.py의
+        # /api/query처럼 조용히 죽지 않고 원인을 그대로 보여준다(08-06).
+        raise HTTPException(status_code=503, detail=all_models_failed_message(e))
     return {**result, "extraction": result["extraction"].model_dump()}
 
 
@@ -808,7 +819,14 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
     if body.user_guidance is not None:
         inputs["user_guidance"] = body.user_guidance
 
-    result = await request.app.state.research_graph.ainvoke(inputs, config=config)
+    try:
+        result = await request.app.state.research_graph.ainvoke(inputs, config=config)
+    except RuntimeError as e:
+        # research_workflow.py의 4개 노드(가설·실험설계·결과분석·논문초안)가 전부 이
+        # 예외를 그대로 전파한다(참고문헌 추천 노드만 자체적으로 잡아 이 단계를 건너뜀,
+        # research_workflow.py의 _make_reference_node 참고) — 여기서 한 곳만 잡으면 넷 다
+        # 커버된다. 예전엔 안 잡혀 그냥 500(빈 메시지)으로 끝나 원인을 알 수 없었다(08-06).
+        raise HTTPException(status_code=503, detail=all_models_failed_message(e))
     research_sessions.update_stage(thread_id, body.stage)
 
     # 복원 경로였다면 이 턴이 어느 과거 체크포인트에서 갈라졌는지 기록 — parent_config로는

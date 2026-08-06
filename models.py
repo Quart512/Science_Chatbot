@@ -35,6 +35,17 @@ def add_tokens(current: dict, new: dict) -> dict:
     return {k: current.get(k, 0) + new.get(k, 0) for k in TOKEN_KEYS}
 
 
+class MissingAPIKeyError(Exception):
+    """저장된 키도 .env도 없어 이 모델을 아예 호출할 수 없을 때(08-06, 포터블 번들 실기
+    테스트로 발견 — .env가 안 들어있는 배포판에서 처음 실행하면 걸림). invoke_with_fallback()의
+    fallback 대상(SESSION_OUTAGE_EXCEPTIONS)에 포함시켜 다른 모델로 자동 전환되게 하고,
+    그마저 전부 실패하면 원인이 그대로 사용자에게 보인다(graph.py generate() 참고)."""
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        super().__init__(f"{provider} API 키가 없습니다 — 설정 화면에서 입력하거나 .env에 추가하세요")
+
+
 # model_map의 값은 클라이언트 "생성 함수"다(08-05, 설정 화면 착수 전까진 이미 만들어진
 # 클라이언트 객체였다) — 예전 방식은 모듈이 임포트되는 순간 그 시점의 환경변수로 API
 # 키가 영구히 고정돼서, 사용자가 설정 화면에서 키를 입력해도 서버를 재시작하기 전엔
@@ -47,6 +58,12 @@ def _gemini_client():
     # 알아서 환경변수(GOOGLE_API_KEY)를 읽게 한다(.env 폴백 — os.getenv를 직접 안 읽고
     # 위임하는 이유: 라이브러리가 이미 하는 일을 다시 구현하지 않기 위함).
     saved_key = api_keys.get_api_key("gemini")
+    if not saved_key and not os.getenv("GOOGLE_API_KEY") and not os.getenv("GEMINI_API_KEY"):
+        # 키가 아예 없으면 ChatGoogleGenerativeAI(**kwargs) 생성 자체가 pydantic
+        # ValidationError로 죽는다(08-06 실기 테스트로 재현 — 포터블 번들은 .env가 없어
+        # 실사용에서 바로 걸림). 그 예외는 FALLBACK_EXCEPTIONS에 없어 invoke_with_fallback을
+        # 그대로 뚫고 나가 스트림을 조용히 끊었다 — 여기서 미리 확인해 명확한 예외로 바꾼다.
+        raise MissingAPIKeyError("gemini")
     kwargs = {"google_api_key": saved_key} if saved_key else {}
     # flash-lite가 무료 티어 일일 한도가 훨씬 높음(구글 공식 문서 확인, 2026-07)
     return ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", **kwargs)
@@ -54,6 +71,8 @@ def _gemini_client():
 
 def _claude_client():
     saved_key = api_keys.get_api_key("claude")
+    if not saved_key and not os.getenv("ANTHROPIC_API_KEY"):
+        raise MissingAPIKeyError("claude")
     kwargs = {"anthropic_api_key": saved_key} if saved_key else {}
     return ChatAnthropic(model="claude-haiku-4-5-20251001", **kwargs)
 
@@ -138,6 +157,7 @@ SESSION_OUTAGE_EXCEPTIONS = (
     PermissionDenied,       # 403 결제 계정 정지 등
     RateLimitError,         # anthropic 429
     APIConnectionError,     # 로컬 llama-server가 안 떠 있음 — 세션 중에 켜질 일이 드묾
+    MissingAPIKeyError,     # 키 자체가 없음 — 사용자가 설정에서 넣기 전엔 계속 실패
 )
 
 # fallback은 타되 세션 차단은 안 하는 것들 — 다음 턴엔 사용자가 고른 모델을 다시 시도한다.
@@ -184,6 +204,14 @@ def _all_failed_error(attempted: list[str], errors: dict[str, str]) -> RuntimeEr
     return RuntimeError(f"tried {attempted} but all failed — {detail or '시도할 수 있는 모델이 없음'}")
 
 
+def all_models_failed_message(exc: Exception) -> str:
+    """invoke_with_fallback()이 던진 RuntimeError(모델 전부 실패)를 사용자에게 보여줄
+    문구로 바꾼다. 호출부(graph.py generate(), main.py의 연구 워크플로우·논문 요약
+    엔드포인트)가 전부 같은 문구를 쓰게 여기 한 곳에 둔다("모델 정책은 models.py
+    단일 지점" 원칙, 08-06)."""
+    return f"지금 사용할 수 있는 AI 모델이 없습니다 ({exc}). 설정 화면에서 API 키를 확인해주세요."
+
+
 # 지정된 모델을 우선 호출하고, rate limit 등 발생 시 다른 모델로 자동 전환해 재시도.
 def invoke_with_fallback(model,
                          messages,
@@ -213,7 +241,6 @@ def invoke_with_fallback(model,
 
     primary_name = model
     secondary_name = next((i for i in iter(model_map.keys()) if primary_name!=i and i not in temp_models_skip),None) #다음 모델 없는데?
-    primary = model_map[primary_name]()  # 팩토리 함수 호출 — 매번 최신 저장된 키로 새 클라이언트를 만든다
 
     if primary_name in temp_models_skip:
         if secondary_name is None:  #다 돌아서 없어!
@@ -223,16 +250,22 @@ def invoke_with_fallback(model,
                                         models_skip=models_skip, disabled_models=disabled_models,
                                         _attempted=attempted, _errors=errors)
 
-    if tools:  # tool 객체 리스트(disabled 제외 목록)
-        primary = primary.bind_tools(tools)
-
-    if structured:
-        # include_raw=True가 없으면 파싱된 스키마 객체만 돌아와서 usage_metadata(토큰 수)에
-        # 접근할 방법이 없어짐 — raw(AIMessage)도 같이 받아서 토큰만 뽑아내고, 호출부에는
-        # 기존처럼 파싱된 객체만 넘겨 구조 변경이 새지 않게 한다 (generated_by와 같은 패턴)
-        primary = primary.with_structured_output(structured, include_raw=True)
-
     try:
+        # 팩토리 함수 호출 — 매번 최신 저장된 키로 새 클라이언트를 만든다. try 안으로
+        # 옮긴 이유(08-06): MissingAPIKeyError가 여기서 나는데, 원래 try 밖에 있어서
+        # FALLBACK_EXCEPTIONS가 못 잡고 그대로 새어나가 스트림이 조용히 끊겼다(포터블
+        # 번들 실기 테스트로 발견 — .env 없는 배포판에서 실제로 걸림).
+        primary = model_map[primary_name]()
+
+        if tools:  # tool 객체 리스트(disabled 제외 목록)
+            primary = primary.bind_tools(tools)
+
+        if structured:
+            # include_raw=True가 없으면 파싱된 스키마 객체만 돌아와서 usage_metadata(토큰 수)에
+            # 접근할 방법이 없어짐 — raw(AIMessage)도 같이 받아서 토큰만 뽑아내고, 호출부에는
+            # 기존처럼 파싱된 객체만 넘겨 구조 변경이 새지 않게 한다 (generated_by와 같은 패턴)
+            primary = primary.with_structured_output(structured, include_raw=True)
+
         print(f"LLM 모델 사용: {primary_name}")
         result = primary.invoke(messages)
         if structured:
