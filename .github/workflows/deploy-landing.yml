@@ -1,0 +1,65 @@
+# 랜딩 페이지(landing/, ai-saac 프로젝트를 이 저장소로 합침 — RoadMap "[랜딩]
+# ai-saac 실제 호스팅" 참고) 배포 — EC2에 정적 파일로 서빙한다. 08-05에 EC2 배포
+# 트랙을 폐지하면서 "앞으로 EC2는 랜딩/다운로드 페이지만 서빙한다"고 결정한 것의
+# 실제 구현. 옛 deploy.yml(5948936에서 제거되기 전)이 쓰던 appleboy/scp-action·
+# EC2_HOST·EC2_SSH_KEY·username: ubuntu와 같은 패턴을 그대로 재사용 — 이미
+# 검증됐던 접속 방식이라 새로 설계하지 않는다.
+#
+# 메인 앱(Docker 이미지)과 달리 랜딩은 Next.js `output: "export"`로 뽑은 순수 정적
+# 파일이라 EC2에서 관리할 프로세스가 없다 — nginx가 파일을 그대로 서빙(landing/next.config.mjs
+# 주석 참고). 그래서 배포도 "이미지 pull + 컨테이너 재기동"이 아니라 "빌드 결과물을
+# EC2의 웹루트로 동기화"로 끝난다.
+#
+# 필요한 저장소 시크릿(사용자가 직접 등록/재확인해야 함 — 워크플로우만으로는 안 됨):
+#   EC2_HOST      — EC2 퍼블릭 IP 또는 도메인
+#   EC2_SSH_KEY   — EC2 접속용 SSH 프라이빗 키
+#   EC2_LANDING_PATH — nginx가 서빙하는 웹루트 절대경로(예: /var/www/aisaac).
+#                       아직 EC2에 이 디렉터리·nginx 설정이 없다면 먼저 만들어야
+#                       한다(landing/deploy/nginx.conf.example 참고).
+name: 랜딩 페이지 배포 (EC2)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+      - ".github/workflows/deploy-landing.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: landing/pnpm-lock.yaml
+
+      - name: 의존성 설치
+        working-directory: landing
+        run: pnpm install --frozen-lockfile
+
+      - name: 정적 빌드 (next build → landing/out/)
+        working-directory: landing
+        run: pnpm exec next build
+
+      # rsync --delete로 EC2 웹루트를 landing/out/과 정확히 일치시킨다(스테일 파일
+      # 자동 정리) — appleboy/scp-action은 단순 업로드만 하고 삭제를 못 해서, 예전에
+      # 지운 페이지가 계속 남는 문제를 피하려고 이 액션을 새로 골랐다.
+      - name: EC2로 동기화
+        uses: burnett01/rsync-deployments@7.0.2
+        with:
+          switches: -avzr --delete
+          path: landing/out/
+          remote_path: ${{ secrets.EC2_LANDING_PATH }}
+          remote_host: ${{ secrets.EC2_HOST }}
+          remote_user: ubuntu
+          remote_key: ${{ secrets.EC2_SSH_KEY }}

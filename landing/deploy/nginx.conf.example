@@ -1,0 +1,36 @@
+# AIsaac 랜딩 페이지 — EC2 nginx 예시 설정.
+#
+# 정적 파일만 서빙한다(Next.js output:"export" 결과물) — 프록시할 백엔드가 없다.
+# /etc/nginx/sites-available/aisaac-landing 로 저장하고
+# /etc/nginx/sites-enabled/aisaac-landing 로 심볼릭 링크한 뒤 `sudo nginx -t &&
+# sudo systemctl reload nginx`.
+#
+# server_name/root는 실제 값으로 바꿀 것 — root는 GitHub Actions 시크릿
+# EC2_LANDING_PATH와 반드시 같은 경로여야 한다(배포 워크플로우가 여기로 rsync함).
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;  # 도메인이 생기면 example.com www.example.com으로 교체
+
+    root /var/www/aisaac;  # EC2_LANDING_PATH와 동일하게
+    index index.html;
+
+    # Next.js export가 /console 같은 라우트를 /console.html + /console/ 폴더
+    # 둘 다로 뽑는다 — 확장자 없는 경로 요청 시 .html을 자동으로 붙여 찾는다.
+    location / {
+        try_files $uri $uri.html $uri/ =404;
+    }
+
+    location = /404.html {
+        internal;
+    }
+
+    # 정적 자산(해시된 파일명)은 오래 캐시해도 안전 — 내용이 바뀌면 파일명도 바뀐다.
+    location /_next/static/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+}
+
+# HTTPS는 도메인이 생긴 뒤 certbot(Let's Encrypt)으로 추가 — 지금은 서브도메인도
+# 아직 없어서(RoadMap "도메인 사기" 항목, 무기한 연기) 범위 밖으로 남겨둔다.
