@@ -17,17 +17,38 @@ jobs:
   # 자기 컴퓨터에서 compose로 띄우는 것)는 CI 밖이다 — 08-04 싱글 유저 로컬 앱 확정의
   # 귀결(RoadMap 설계 노트 "EC2 배포 트랙 폐지" 참고). 원래 있던 scp/ssh 두 스텝(EC2로
   # docker-compose.yml 전송 → 원격에서 pull·up)은 그때 삭제했다.
+  # 08-06 — arm64 전용 러너(ubuntu-24.04-arm) 고정을 걷어내고 linux/amd64+linux/arm64
+  # 멀티아키텍처 이미지로 전환(예정 표 "[배포] Docker Hub 이미지가 arm64 전용" 항목).
+  # Intel Mac·일반 x86_64 사용자가 못 쓰던 문제 해결 — Docker는 portable 번들이
+  # 원리적으로 안 되는 Intel Mac의 유일한 경로다(onnxruntime이 macOS x86_64 wheel을
+  # 이 프로젝트 파이썬 버전대에 안 냄, RoadMap 08-05 설계 노트 참고).
+  #
+  # QEMU 에뮬레이션(단일 러너에서 두 아키텍처 다 빌드) 대신 **아키텍처별 네이티브 러너
+  # 두 개로 나눠 빌드 + digest만 합치는 방식**을 썼다 — 이 저장소가 public이라 arm64
+  # 호스티드 러너(`ubuntu-24.04-arm`)가 무료라서(2025-08 GA, docs/README_11.md 참고,
+  # 원래 EC2 Graviton 때문에 쓰던 그 러너) 에뮬레이션할 이유가 없다. 매트릭스로 각
+  # 러너가 자기 아키텍처를 **네이티브로**(느린 에뮬레이션 없이) 빌드해 digest로만
+  # push하고, 별도 job이 두 digest를 하나의 `:latest` 매니페스트로 합친다 — Docker
+  # 공식 문서가 권장하는 "여러 러너로 분산 빌드" 패턴(docker/build-push-action).
   publish:
     needs: test # test job이 실패(또는 취소)하면 이 job은 시작조차 안 함
-    # arm64 러너를 쓰는 이유가 원래는 "EC2가 Graviton(arm64)이라 아키텍처를 맞춘다"였는데,
-    # EC2 폐지로 그 근거가 사라졌다 — 지금은 이 러너의 네이티브 아키텍처로만 빌드돼
-    # 이미지가 arm64 전용이 되는 게 오히려 문제다(Windows·Intel Mac 사용자가 못 씀).
-    # 멀티아키텍처(linux/amd64,linux/arm64) 전환은 예정 표 "[배포] 릴리즈 게이트" 참고 —
-    # 러너·buildx 설정을 같이 바꿔야 해서 이번 폐지 작업과 분리했다.
-    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            tag: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
+
+      - name: Buildx 설정
+        uses: docker/setup-buildx-action@v3
 
       - name: Docker Hub 로그인
         uses: docker/login-action@v3
@@ -35,9 +56,59 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 이미지 빌드 + push
+      - name: 플랫폼별 이미지 빌드 + digest로 push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
-          tags: quart512/science-chatbot:latest
+          platforms: ${{ matrix.platform }}
+          # 태그가 아니라 digest로만 push — 최종 :latest 태그는 아래 merge job이
+          # 두 digest를 imagetools로 합칠 때 한 번만 붙인다(중간에 :latest가 한쪽
+          # 아키텍처로만 잠깐 덮어써지는 걸 방지).
+          outputs: type=image,name=quart512/science-chatbot,push-by-digest=true,name-canonical=true,push=true
+
+      - name: digest 파일로 저장 (merge job에 아티팩트로 전달)
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: digest 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.tag }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # 두 아키텍처 digest를 하나의 :latest 매니페스트 리스트로 합쳐서 push — 이 단계가
+  # 끝나야 `docker pull quart512/science-chatbot:latest`가 클라이언트 아키텍처에 맞는
+  # 이미지를 자동으로 골라 받는다(매니페스트 리스트가 그 역할).
+  merge:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: digest 다운로드 (두 매트릭스 잡의 아티팩트를 한 폴더로 병합)
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub 로그인
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 매니페스트 합쳐서 :latest로 push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t quart512/science-chatbot:latest \
+            $(printf 'quart512/science-chatbot@sha256:%s ' *)
+
+      - name: 결과 확인 (두 아키텍처가 다 들어갔는지)
+        run: docker buildx imagetools inspect quart512/science-chatbot:latest
