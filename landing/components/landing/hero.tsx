@@ -1,10 +1,10 @@
 "use client"
 
 import { ArrowRight, Download } from "lucide-react"
+import Link from "next/link"
 import { useLanguage } from "@/lib/i18n"
 import { buttonVariants } from "@/components/ui/button"
 import { PrismVisual } from "@/components/landing/prism-visual"
-import { useDownloadUrl } from "@/lib/download"
 
 const metrics = [
   { labelKey: "hero.metric.1.label", valueKey: "hero.metric.1.value" },
@@ -14,7 +14,6 @@ const metrics = [
 
 export function Hero() {
   const { t } = useLanguage()
-  const { url: downloadUrl } = useDownloadUrl()
 
   return (
     <section className="relative overflow-hidden border-b border-border">
@@ -37,14 +36,14 @@ export function Hero() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <a
-              href={downloadUrl}
+            <Link
+              href="/download"
               className={buttonVariants({ size: "lg", className: "group rounded-full px-5" })}
             >
               <Download className="size-4" />
               {t("hero.cta.primary")}
               <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
-            </a>
+            </Link>
             <a
               href="#orbit"
               className={buttonVariants({ variant: "outline", size: "lg", className: "rounded-full px-5" })}

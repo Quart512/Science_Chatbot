@@ -156,6 +156,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    /* 08-07 — 글씨가 전반적으로 작다는 지적. Tailwind 텍스트 유틸리티는 전부
+       rem 기반이라 루트 font-size 하나만 16px→17px로 올리면(약 6%) 사이트
+       전체 글자가 비율 그대로 같이 커진다 — "아주 조금만"에 맞춰 큰 폭 아님. */
+    font-size: 17px;
+  }
   body {
     @apply bg-background text-foreground;
   }

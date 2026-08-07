@@ -1,13 +1,12 @@
 "use client"
 
 import { ArrowRight, Download } from "lucide-react"
+import Link from "next/link"
 import { useLanguage } from "@/lib/i18n"
 import { buttonVariants } from "@/components/ui/button"
-import { useDownloadUrl } from "@/lib/download"
 
 export function CtaSection() {
   const { t } = useLanguage()
-  const { url: downloadUrl } = useDownloadUrl()
 
   return (
     <section className="border-b border-border">
@@ -19,14 +18,14 @@ export function CtaSection() {
               {t("cta.title")}
             </h2>
             <p className="mt-5 text-pretty leading-relaxed text-muted-foreground">{t("cta.desc")}</p>
-            <a
-              href={downloadUrl}
+            <Link
+              href="/download"
               className={buttonVariants({ size: "lg", className: "group mt-8 rounded-full px-6" })}
             >
               <Download className="size-4" />
               {t("cta.button")}
               <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
-            </a>
+            </Link>
           </div>
         </div>
       </div>

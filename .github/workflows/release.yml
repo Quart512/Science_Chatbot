@@ -117,11 +117,20 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+        # docs/releases/<태그>.md가 있으면 그 내용을 릴리즈 노트로 쓰고(사람이 직접
+        # 쓴 요약 — docs/releases/README.md 참고), 없으면 --generate-notes로 폴백해
+        # 커밋 로그 자동 요약을 쓴다. 릴리즈 노트를 미리 안 준비해도 배포가 안 막힌다.
         run: |
+          NOTES_FILE="docs/releases/${{ github.ref_name }}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            NOTES_FLAG=(--notes-file "$NOTES_FILE")
+          else
+            NOTES_FLAG=(--generate-notes)
+          fi
           gh release create "${{ github.ref_name }}" \
             artifacts/AIsaac-macos.zip \
             artifacts/AIsaac-windows.zip \
             artifacts/AIsaac-linux.zip \
             artifacts/AIsaac-docker.zip \
             --title "AIsaac ${{ github.ref_name }}" \
-            --generate-notes
+            "${NOTES_FLAG[@]}"
