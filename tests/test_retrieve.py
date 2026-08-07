@@ -96,7 +96,9 @@ def test_retrieve_triggers_background_summary_for_papers_missing_it(monkeypatch,
     result = retrieve(make_state())
 
     assert calls == ["arxiv:missing"]
-    assert "백그라운드로 시작함" in result["trace"]
+    # trace가 08-07에 자유 문자열 → TraceStep 리스트로 바뀌었다(graph.py) — 문자열 포함
+    # 검사 대신 스텝들의 detail을 훑는다.
+    assert any("백그라운드로 시작함" in step.detail for step in result["trace"])
 
 
 def test_retrieve_skips_background_summary_when_only_summary_docs_found(monkeypatch, make_state):
@@ -113,7 +115,7 @@ def test_retrieve_skips_background_summary_when_only_summary_docs_found(monkeypa
     result = retrieve(make_state())
 
     assert calls == []
-    assert "백그라운드로 시작함" not in result["trace"]
+    assert not any("백그라운드로 시작함" in step.detail for step in result["trace"])
 
 
 def test_retrieve_triggers_background_summary_for_abstract_only_hit(monkeypatch, make_state):
@@ -135,7 +137,7 @@ def test_retrieve_triggers_background_summary_for_abstract_only_hit(monkeypatch,
     result = retrieve(make_state())
 
     assert calls == ["arxiv:abstract-only"]
-    assert "백그라운드로 시작함" in result["trace"]
+    assert any("백그라운드로 시작함" in step.detail for step in result["trace"])
 
 
 def test_retrieve_caps_total_context_at_k_via_score_merge(monkeypatch, make_state):

@@ -235,7 +235,10 @@ def generate(state: State) -> dict:
     if state.try_count==0:  # 첫 진입: 질문을 이력에 등록
         new_msgs.append(HumanMessage(content=state.question))
     if state.fix_needed and state.what_to_fix:  # verify가 되돌린 재시도: 지적사항을 대화로 전달
-        new_msgs.append(HumanMessage(content=f"참고: 이전 답변에 대한 검증 의견 — {state.what_to_fix}\n타당하면 반영하고, 아니면 네 판단을 유지해도 된다. 최종 답변만 다시 제시해."))
+        # "최종 답변만 다시 제시해"까지만 있으면 모델이 이 HumanMessage에 대한 반응으로
+        # 읽어 "따라서"/"이를 반영해" 같은 접속사로 시작하는 경우가 실제로 관찰됐다(RoadMap
+        # "답변이 '따라서'로 시작" 항목) — 검증 의견에 반응하지 말고 새 답변처럼 쓰라고 명시.
+        new_msgs.append(HumanMessage(content=f"참고: 이전 답변에 대한 검증 의견 — {state.what_to_fix}\n타당하면 반영하고, 아니면 네 판단을 유지해도 된다. 검증 의견을 언급하거나 그에 반응하는 투로 쓰지 말고, 질문에 처음 답하는 것처럼 독립된 문장으로 새로 작성해라 — '따라서', '이를 반영해', '수정하면' 같은 접속사·자기지시 표현으로 시작하지 마라."))
     # 서킷 브레이커: disabled 제외한 tool만 바인딩
     active_tools = [t for t in tools_list if t.name not in state.disabled_tools]
 

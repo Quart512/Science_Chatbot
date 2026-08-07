@@ -126,8 +126,25 @@
   opacity: 1;
 }
 
+/* 질문을 메신저처럼 오른쪽 정렬 말풍선으로(08-07, RoadMap "스트리밍 로그 가독성" ③) —
+   예전엔 user/assistant가 색만 다르고 같은 폭으로 나란히 쌓여 구분이 약했다. */
+.chat-message-user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--color-info-bg);
+  border-radius: 14px 14px 4px 14px;
+  padding: 0.45rem 0.7rem;
+}
+
 .chat-message-user .chat-message-content {
   color: var(--color-info);
+}
+
+/* 질문 말풍선 바로 다음에 오는 답변만 구분선을 준다 — 답변 사이(재시도 등)에는 안 그음 */
+.chat-message-user + .chat-message-assistant {
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.5rem;
+  margin-top: 0.15rem;
 }
 
 .chat-message-comment {
