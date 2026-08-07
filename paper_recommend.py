@@ -44,6 +44,11 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
     있으면 title 폴백) — 한글이 있으면 영어로 변환한 뒤 검색한다(_english_query 참고,
     08-03). start는 페이지네이션 오프셋("추가 검색"이 다음 순위부터 이어받게).
 
+    영어 변환 결과는 interests.search_query_en에 캐시된다(08-07, RoadMap "한글 관심사의
+    영어 검색어가 매번 휘발된다" 항목) — 캐시를 만들 때 쓴 원문(search_query_source)이
+    지금 원문과 같으면 재사용하고, looking_for/title이 바뀌었으면 다시 변환한다. 같은
+    관심사로 "추가 검색"을 여러 번 눌러도(start만 바뀜) 매번 번역 LLM을 다시 안 부른다.
+
     **카탈로그 저장**(관련 있는 것만 — dismissed는 "사용자가 직접 기각"만을 위한
     신호라 스크리닝이 거른 것과 섞으면 오염됨)과 **반환 목록**(관련 없다고 판정된
     것도 포함 — false negative여도 사용자가 직접 볼 기회를 남김)을 분리한다.
@@ -57,7 +62,12 @@ def recommend_for_interest(interest_id: int, *, max_results: int = 5, start: int
     if interest is None:
         raise ValueError(f"관심사 id={interest_id}를 찾을 수 없습니다")
 
-    query = _english_query(interest["looking_for"] or interest["title"])
+    source_text = interest["looking_for"] or interest["title"]
+    if interest.get("search_query_en") and interest.get("search_query_source") == source_text:
+        query = interest["search_query_en"]
+    else:
+        query = _english_query(source_text)
+        interests.set_cached_search_query(interest_id, query, source_text, conn=conn)
     candidates = paper_search.search_papers(query, max_results=max_results, start=start)
 
     topic = _interest_topic_text(interest)

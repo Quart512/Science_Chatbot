@@ -35,6 +35,16 @@ def _stub_extract_search_query(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_set_cached_search_query(monkeypatch):
+    # set_cached_search_query()(08-07)도 record_screening()과 똑같이 실제 sqlite3
+    # 쓰기다 — INTEREST가 conn=None으로 넘어가는 테스트에서 몽키패치 없이 부르면
+    # 실제 data/app.db의 id=1 행을 덮어쓴다(로컬에 그 id가 우연히 없어서 지금까지
+    # 안 걸렸을 뿐, 있었다면 실사용자 관심사 데이터가 오염됐을 것 — 실기로 확인).
+    # 캐시 저장 자체를 검증하는 테스트만 개별적으로 다시 몽키패치한다.
+    monkeypatch.setattr(interests, "set_cached_search_query", lambda *a, **kw: None)
+
+
 def _candidate(paper_id="arxiv:1", title="논문", **overrides):
     base = {
         "paper_id": paper_id, "doi": None, "arxiv_id": "1", "title": title,
@@ -122,6 +132,65 @@ def test_recommend_for_interest_translates_query_before_search(monkeypatch):
     paper_recommend.recommend_for_interest(1)
 
     assert captured["query"] == "topological phase transition"
+
+
+# --- 검색어 캐시 (08-07, "한글 관심사의 영어 검색어가 매번 휘발된다") -------------
+
+
+def test_recommend_for_interest_stores_translated_query_in_cache(monkeypatch):
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: INTEREST)
+    monkeypatch.setattr(
+        reference_recommender, "extract_search_query",
+        lambda text, **kw: ("topological phase transition", [], {}),
+    )
+    monkeypatch.setattr(paper_search, "search_papers", lambda *a, **kw: [])
+    captured = {}
+    monkeypatch.setattr(
+        interests, "set_cached_search_query",
+        lambda interest_id, query_en, source, **kw: captured.update(
+            interest_id=interest_id, query_en=query_en, source=source
+        ),
+    )
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert captured == {
+        "interest_id": 1, "query_en": "topological phase transition", "source": "새로운 상전이",
+    }
+
+
+def test_recommend_for_interest_reuses_cached_query_without_calling_llm(monkeypatch):
+    # search_query_source가 지금 looking_for와 같으면 캐시를 그대로 쓰고, 번역 LLM은
+    # 아예 안 불러야 한다 — 이게 이 캐시가 존재하는 이유(같은 관심사로 "추가 검색"을
+    # 여러 번 눌러도 매번 번역을 다시 안 시킴).
+    cached = {**INTEREST, "search_query_en": "cached query", "search_query_source": "새로운 상전이"}
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: cached)
+    def _boom(*a, **kw):
+        raise AssertionError("캐시가 유효한데 번역 LLM을 다시 부르면 안 됨")
+    monkeypatch.setattr(reference_recommender, "extract_search_query", _boom)
+    captured = {}
+    monkeypatch.setattr(paper_search, "search_papers", lambda query, **kw: captured.update(query=query) or [])
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert captured["query"] == "cached query"
+
+
+def test_recommend_for_interest_invalidates_cache_when_looking_for_changed(monkeypatch):
+    # search_query_source가 지금 looking_for와 다르면(사용자가 관심사를 수정함) 캐시를
+    # 못 믿는다 — 새로 번역해야 한다.
+    stale = {**INTEREST, "search_query_en": "old cached query", "search_query_source": "예전 내용"}
+    monkeypatch.setattr(interests, "get_interest", lambda interest_id, **kw: stale)
+    monkeypatch.setattr(
+        reference_recommender, "extract_search_query",
+        lambda text, **kw: ("new translated query", [], {}),
+    )
+    captured = {}
+    monkeypatch.setattr(paper_search, "search_papers", lambda query, **kw: captured.update(query=query) or [])
+
+    paper_recommend.recommend_for_interest(1)
+
+    assert captured["query"] == "new translated query"
 
 
 def test_falls_back_to_title_when_looking_for_empty(monkeypatch):

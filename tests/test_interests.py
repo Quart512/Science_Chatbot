@@ -52,6 +52,45 @@ def test_get_interest_returns_none_when_not_found(conn):
     assert interests.get_interest(999, conn=conn) is None
 
 
+# --- search_query_en/search_query_source 캐시 (08-07) -------------------------
+
+
+def test_create_interest_defaults_search_query_cache_to_empty_string(conn):
+    interest_id = interests.create_interest("제목만", conn=conn)
+    row = interests.get_interest(interest_id, conn=conn)
+    assert row["search_query_en"] == ""
+    assert row["search_query_source"] == ""
+
+
+def test_set_cached_search_query_stores_both_fields(conn):
+    interest_id = interests.create_interest("위상 물질", looking_for="새로운 상전이", conn=conn)
+    interests.set_cached_search_query(interest_id, "topological phase transition", "새로운 상전이", conn=conn)
+
+    row = interests.get_interest(interest_id, conn=conn)
+    assert row["search_query_en"] == "topological phase transition"
+    assert row["search_query_source"] == "새로운 상전이"
+
+
+def test_set_cached_search_query_does_not_bump_updated_at(conn):
+    # 캐시 갱신은 사용자가 관심사를 고친 게 아니다 — updated_at을 건드리면 "방금
+    # 수정함"으로 잘못 보인다(interests.py의 set_cached_search_query 주석 참고).
+    interest_id = interests.create_interest("위상 물질", conn=conn)
+    before = interests.get_interest(interest_id, conn=conn)
+
+    interests.set_cached_search_query(interest_id, "query", "source", conn=conn)
+
+    after = interests.get_interest(interest_id, conn=conn)
+    assert after["updated_at"] == before["updated_at"]
+
+
+def test_set_cached_search_query_is_not_a_updatable_field(conn):
+    # 사용자가 폼으로 편집하는 필드가 아니다 — update_interest()의 화이트리스트로는
+    # 못 건드려야 한다(인젝션 방지 겸용 화이트리스트가 실수로 뚫리지 않았는지 확인).
+    interest_id = interests.create_interest("제목", conn=conn)
+    with pytest.raises(ValueError):
+        interests.update_interest(interest_id, search_query_en="몰래 주입", conn=conn)
+
+
 def test_list_interests_returns_in_id_order(conn):
     interests.create_interest("첫번째", conn=conn)
     interests.create_interest("두번째", conn=conn)

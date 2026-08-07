@@ -80,8 +80,9 @@ usage_guide_tool = StructuredTool.from_function(
     func=read_usage_guide,
     name="read_usage_guide",
     description=(
-        "AIsaac 앱 자체의 사용법(어느 화면에서 무엇을 누르면 되는가)을 물을 때만 사용 — "
-        "물리 지식 질문에는 쓰지 않는다. topic에 화면/기능 이름(예: '관심사', '논문 등록', "
+        "AIsaac 앱 자체의 사용법을 묻거나, 챗봇이 직접 실행할 수 없는 앱 내 동작(관심사 "
+        "등록 등)을 요청받았을 때 사용 — 물리 지식 질문에는 쓰지 않는다. topic에 화면/기능 "
+        "이름(예: '관심사', '논문 등록', "
         "'연구 워크플로우', '실험도구', 'API 키')을 넣어 호출."
     ),
 )
