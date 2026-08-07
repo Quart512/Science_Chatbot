@@ -48,6 +48,10 @@ export interface ResearchState {
   citations: ResearchCitation[]
   references: ResearchReference[]
   comment: string
+  // 이 체크포인트를 만든 요청이 어느 옵션이었는지(예: "설계 재생성") — research_workflow.py의
+  // WorkflowState.action_label과 1:1 대응, 08-07 신설. 옵션 선택이 아닌 요청(최초 가설
+  // 생성 등)은 빈 문자열 — BranchTimeline이 그 경우 단계명으로 폴백해서 보여준다.
+  action_label: string
 }
 
 export interface HistoryEntry {
@@ -93,6 +97,7 @@ export interface AdvanceBody {
   user_guidance?: string
   from_checkpoint_id?: string
   keep_reference_paper_ids?: string[]
+  action_label?: string
 }
 
 export function advanceResearch(threadId: string, body: AdvanceBody) {

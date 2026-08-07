@@ -49,6 +49,14 @@ class WorkflowState(BaseModel):
     # "hypothesis"라 처음 만드는 thread는 자동으로 가설 단계부터 시작하고, 사용자가
     # "다음 단계로"를 누르면 호출부가 이 필드(+필요하면 새 입력)를 담아 다시 invoke하면 된다.
     stage: Literal["hypothesis", "design", "operation", "report", "writing"] = "hypothesis"
+    # 이 체크포인트를 만든 요청이 어떤 옵션이었는지(예: "실험 결과 입력하고 분석",
+    # "설계 재생성") — 프론트의 NextOptions.tsx가 사용자가 고른 카드의 문구를 그대로
+    # 실어 보낸다(08-07, RoadMap "타임라인 — 다음 액션 정보 표시" 참고). user_guidance와
+    # 달리 리셋하지 않는다 — 이건 "재생성 시 지시"가 아니라 "이 체크포인트의 유래" 자체라
+    # 매 턴 새 값으로 덮어쓰기만 하면 되고(다음 요청이 다시 채움), 지우면 이 체크포인트의
+    # 유래 기록 자체가 사라진다. 최초 가설 생성처럼 옵션 선택이 아니었던 요청은 빈 문자열 —
+    # 프론트가 그 경우 단계명으로 폴백해서 보여준다.
+    action_label: str = ""
     model: Literal["gemini", "claude", "Qwen-tuned"] = "gemini"
     disabled_models: list[str] = Field(default_factory=list)  # 모델 서킷 브레이커 — orchestrator.ParentState와 같은 패턴
     # 재생성 시 사람이 방향을 지시하는 채널(08-04, RoadMap "재생성 시 사용자 피드백/지시

@@ -98,7 +98,9 @@ export function BranchTimeline({ history, selectedCheckpointId, onSelect }: Prop
               onClick={() => onSelect(entry.checkpoint_id)}
             >
               <span className="research-branch-row-label">
-                {expanded ? `${ts} · ${STAGE_LABELS[entry.stage] ?? entry.stage}` : '현재 상태'}
+                {expanded
+                  ? `${ts} · ${entry.values.action_label || STAGE_LABELS[entry.stage] || entry.stage}`
+                  : '현재 상태'}
                 {isTip && expanded && ' (현재)'}
               </span>
               <span className="research-branch-cells">

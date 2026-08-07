@@ -826,6 +826,10 @@ class ResearchAdvanceRequest(BaseModel):
     # — 기본값(빈 리스트)은 "그 시점에 없던 참고문헌은 버린다"는 뜻.
     from_checkpoint_id: str | None = None
     keep_reference_paper_ids: list[str] = Field(default_factory=list)
+    # 이 요청이 어느 옵션을 선택한 결과인지(WorkflowState.action_label 참고) — 프론트가
+    # NextOptions.tsx의 선택된 카드 문구를 그대로 보낸다. 최초 가설 생성처럼 옵션 선택이
+    # 아닌 요청은 안 보내도 된다(기본값 없음 = 빈 문자열로 저장, BranchTimeline이 폴백).
+    action_label: str | None = None
 
 
 @app.post("/api/research/{thread_id}/advance")
@@ -866,7 +870,11 @@ async def advance_research(request: Request, thread_id: str, body: ResearchAdvan
             as_node="__start__",
         )
 
-    inputs = {"stage": body.stage}
+    # action_label은 옵션 필드들과 달리 무조건 설정한다(빈 문자열이라도) — 조건부로만
+    # 넣으면 이 요청이 안 보낸 턴엔 직전 체크포인트의 값이 새 체크포인트에도 그대로
+    # 남아(LangGraph가 안 건드린 필드는 유지) "이 체크포인트의 유래"가 아니라 "예전 유래"를
+    # 보여주게 된다 — user_guidance가 리셋 안 하면 계속 붙던 함정의 반대 방향.
+    inputs = {"stage": body.stage, "action_label": body.action_label or ""}
     if body.topic is not None:
         inputs["topic"] = body.topic
     if body.experiment_results is not None:

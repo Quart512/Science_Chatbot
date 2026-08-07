@@ -125,6 +125,7 @@ function OptionForm({
         user_guidance: isRetry ? buildRetryGuidance(opt.target, draftFields, values, guidanceText) : undefined,
         from_checkpoint_id: fromCheckpointId ?? undefined,
         keep_reference_paper_ids: fromCheckpointId ? Array.from(keepIds) : undefined,
+        action_label: opt.label,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['research-history', threadId] })

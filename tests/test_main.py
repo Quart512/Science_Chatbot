@@ -1336,7 +1336,7 @@ def test_advance_research_creates_session_on_first_call(monkeypatch):
     assert created == {
         "thread_id": thread_id, "title": "그래핀 전도도", "topic": "그래핀 전도도", "stage": "hypothesis",
     }
-    assert fake_graph.invoked_with[0] == {"stage": "hypothesis", "topic": "그래핀 전도도"}
+    assert fake_graph.invoked_with[0] == {"stage": "hypothesis", "action_label": "", "topic": "그래핀 전도도"}
 
 
 def test_advance_research_passes_user_guidance_through(monkeypatch):
@@ -1352,7 +1352,7 @@ def test_advance_research_passes_user_guidance_through(monkeypatch):
         resp = client.post("/api/research/t1/advance", json={"stage": "design", "user_guidance": "더 간단한 장비로"})
 
     assert resp.status_code == 200
-    assert fake_graph.invoked_with[0] == {"stage": "design", "user_guidance": "더 간단한 장비로"}
+    assert fake_graph.invoked_with[0] == {"stage": "design", "action_label": "", "user_guidance": "더 간단한 장비로"}
 
 
 def test_advance_research_omits_user_guidance_when_not_given(monkeypatch):
@@ -1402,7 +1402,7 @@ def test_advance_research_does_not_recreate_existing_session(monkeypatch):
     assert resp.status_code == 200
     assert create_calls == []
     # topic을 안 보냈으니 ainvoke 입력에도 topic 키가 없어야 함(기존 체크포인트 값 유지)
-    assert fake_graph.invoked_with[0] == {"stage": "design"}
+    assert fake_graph.invoked_with[0] == {"stage": "design", "action_label": ""}
 
 
 def test_advance_research_updates_session_stage_after_invoke(monkeypatch):
