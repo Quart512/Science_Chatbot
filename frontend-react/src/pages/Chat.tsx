@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { ChatIcon } from '../components/NavIcons'
+import { StreamProgress } from '../components/StreamProgress'
 import './Chat.css'
 
 // 챗봇(④) 왼쪽 독립 화면 — 화면 개선 ⑤. Research.tsx와 같은 뼈대: threadId는
@@ -59,6 +60,7 @@ export function Chat() {
               <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
                 <div className="chat-message-content">{m.content}</div>
                 {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
+                {m.trace && m.trace.length > 0 && <StreamProgress steps={m.trace} live={false} />}
                 {m.id && (
                   <button
                     type="button"
@@ -73,7 +75,7 @@ export function Chat() {
             ))}
           </div>
         ))}
-        {chat.isStreaming && <div className="chat-page-progress">⏳ {chat.progress || '진행 중...'}</div>}
+        {chat.isStreaming && <StreamProgress steps={chat.progress} />}
       </div>
 
       <form

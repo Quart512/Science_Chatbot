@@ -1,7 +1,17 @@
 import { apiFetch, BACKEND_URL, ApiError } from './client'
 
+// graph.py의 TraceStep과 1:1 대응(08-07, trace를 "------\n"로 이어붙인 자유 텍스트에서
+// 구조화된 리스트로 전환 — 프론트가 정규식으로 다시 쪼갤 필요 없게, 나중에 로컬 로깅에
+// 그대로 재사용할 수 있게 잡은 형태). orchestrator.py가 TraceStep.model_dump()로 풀어서 보낸다.
+export interface TraceStep {
+  node: string
+  label: string
+  detail: string
+  ok: boolean
+}
+
 export interface QueryChunk {
-  trace?: string
+  trace?: TraceStep[]
   final?: boolean
   answer?: string
   comment?: string
@@ -54,6 +64,10 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  // final_answer(graph.py)가 AIMessage.additional_kwargs에 심어서 체크포인트에 영속화한
+  // 값(08-07) — user 메시지엔 없어 null. 새로고침 후에도 각 답변이 자기 comment/trace를 유지.
+  comment: string | null
+  trace: TraceStep[] | null
 }
 
 export function getQueryMessages(threadId: string) {

@@ -5,6 +5,7 @@ import { listChatSessions } from '../api/chat'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import { ChatIcon } from './NavIcons'
+import { StreamProgress } from './StreamProgress'
 import './ChatPanel.css'
 
 // 셸에 항상 떠 있는 챗 패널(08-04 설계 노트 "React 전환" 참고) — 연구 워크플로우 등
@@ -102,6 +103,7 @@ export function ChatPanel() {
               <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
                 <div className="chat-message-content">{m.content}</div>
                 {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
+                {m.trace && m.trace.length > 0 && <StreamProgress steps={m.trace} live={false} />}
                 {m.id && (
                   <button
                     type="button"
@@ -116,7 +118,7 @@ export function ChatPanel() {
             ))}
           </div>
         ))}
-        {chat.isStreaming && <div className="chat-panel-progress">⏳ {chat.progress || '진행 중...'}</div>}
+        {chat.isStreaming && <StreamProgress steps={chat.progress} />}
       </div>
 
       <form

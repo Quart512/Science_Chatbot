@@ -159,7 +159,15 @@ async def get_query_messages(request: Request, thread_id: str):
     messages = snapshot.values.get("messages", [])
     return {
         "messages": [
-            {"id": m.id, "role": _MESSAGE_TYPE_TO_ROLE.get(m.type, m.type), "content": m.content}
+            {
+                "id": m.id,
+                "role": _MESSAGE_TYPE_TO_ROLE.get(m.type, m.type),
+                "content": m.content,
+                # comment·trace(08-07) — final_answer(graph.py)가 답변 AIMessage에 심어둔
+                # 부가정보를 그대로 돌려준다. HumanMessage는 이 키들이 없어 None.
+                "comment": m.additional_kwargs.get("comment"),
+                "trace": m.additional_kwargs.get("trace"),
+            }
             for m in messages
         ]
     }

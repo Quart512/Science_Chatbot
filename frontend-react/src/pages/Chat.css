@@ -60,11 +60,6 @@
   font-style: italic;
 }
 
-.chat-page-progress {
-  color: var(--color-text-muted);
-  font-style: italic;
-}
-
 .chat-page-input {
   display: flex;
   gap: 0.5rem;

@@ -1,6 +1,7 @@
 #from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import concurrent.futures
+import operator
 
 from langgraph.graph import StateGraph, START, END
 
@@ -44,13 +45,28 @@ EFFORT_PROFILES: dict[str, dict[str, int]] = {
 MAX_CHUNKS_PER_PAPER = 2
 
 
+# 진행 로그 한 스텝 — 08-07 이전엔 trace가 "------\n"로 이어붙인 자유 텍스트였다(옛
+# Streamlit 화면에서 그대로 표시하려고 넣은 구분자, React 전환 때 그 화면은 사라졌다).
+# 프론트 접이식 UI가 라벨/상세를 구분해서 보여주려는데 자유 텍스트를 정규식으로 다시
+# 쪼개는 건 나중에 로컬 로깅(RoadMap "로깅" 항목)을 붙일 때 그대로 버려질 임시방편이라,
+# tools_used/tool_errors(위 관측성 필드)와 같은 패턴으로 처음부터 구조화했다 — 이 리스트를
+# 그대로 JSONL에 이어붙이면 로그가 되는 형태를 목표로 잡음.
+class TraceStep(BaseModel):
+    node: str      # "retrieve" | "generate" | "run_tools" | "verify"
+    label: str     # 접힌 상태에서 보여줄 한 줄 요약
+    detail: str = ""  # 펼쳤을 때 보여줄 나머지 내용
+    ok: bool = True   # 실패로 끝난 스텝 표시(generate 실패, verify 생략 등)
+
+
 #LangGraph State 구성 - 그래프 전체 노드가 공유하는 상태
 class State(BaseModel):
     question: str
     context: list[Document] = Field(default_factory=list)
     answer: str = Field(default="")
     comment: str = ""  # 사용자에게 보여줄 진짜 코멘트만 (verify/final_answer가 채움, 매번 덮어씀 — 트레이스 아님)
-    trace: str = ""  # 내부 디버그 로그(각 노드가 계속 이어붙임) — 스트리밍 진행상황/"판단 과정 보기"용, 사용자용 comment와는 별개
+    # 구조화된 진행 로그(각 노드가 스텝 하나씩 추가, add reducer가 누적 — messages와 같은
+    # 관용구) — 스트리밍 진행상황/"판단 과정 보기"용, 사용자용 comment와는 별개
+    trace: Annotated[list[TraceStep], operator.add] = Field(default_factory=list)
     tokens_used: dict = Field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     fix_needed: bool = False
     what_to_fix: str = ""
@@ -180,12 +196,13 @@ def retrieve(state: State) -> dict:
     # 재검색 시 벡터DB 문서는 새것으로 교체하되(단순 합치면 겹치는 문서가 중복 누적),
     # tool로 수집한 증거는 보존 — tool 문서는 metadata source가 tool 이름 (chroma 문서는 "feynman")
     tool_docs = [d for d in state.context if d.metadata.get("source") in tool_map]
-    trace_note = f"\n논문 {started} 요약 생성을 백그라운드로 시작함(다음 조회부터 캐시됨)" if started else ""
+    new_steps = [TraceStep(node="retrieve", label=f"논문 {started} 요약 생성 시작",
+                            detail="백그라운드로 시작함(다음 조회부터 캐시됨)")] if started else []
     return {
         "context": docs + tool_docs,
         "needs_more_context": False,
         "top_k": k,
-        "trace": state.trace + trace_note,
+        "trace": new_steps,
     }
 
 # 문서 기반으로 답변 생성. tool 실행은 별도 tools 노드가 담당 (ReAct 루프를 그래프 구조로).
@@ -245,7 +262,8 @@ def generate(state: State) -> dict:
                 "generated_by": state.model,
                 "disabled_models": e.disabled_models,
                 "tokens_used": state.tokens_used,
-                "trace": state.trace + f"""------\n{state.try_count+1}번째 generate 실패: {e}"""}
+                "trace": [TraceStep(node="generate", label=f"{state.try_count+1}번째 generate 실패",
+                                     detail=str(e), ok=False)]}
 
     #response.content는 str이거나, list[dict]이거나, text attribute를 가진 list[object]일 수 있음
     answer = response.content if isinstance(response.content, str) else "".join(
@@ -265,8 +283,8 @@ def generate(state: State) -> dict:
             "generated_by": generated_by,
             "disabled_models": disabled_models,
             "tokens_used": add_tokens(state.tokens_used, tokens_used),
-            "trace" : state.trace+
-            f"""------\n{state.try_count+1}번째 generate 결과: {"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}"""
+            "trace": [TraceStep(node="generate", label=f"{state.try_count+1}번째 generate 결과",
+                detail=f"""{"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}""")]
             }
 
 
@@ -384,8 +402,8 @@ def run_tools(state: State) -> dict:
             "tool_rounds": rounds + 1 if attempted else rounds,
             "tools_used": tools_used,
             "tool_errors": tool_errors,
-            "trace" : state.trace+
-            f"""------\n {tool_msgs}\n tool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}"""}
+            "trace": [TraceStep(node="run_tools", label="tool 사용",
+                detail=f"""{tool_msgs}\ntool 사용: {", ".join(f"{tc['name']}{tc['args']}" for tc in last.tool_calls) if last.tool_calls else ""}""")]}
 
 
 # verify 단계에서 모델이 이 스키마 형태(structured output)로 답변을 채워서 반환
@@ -440,8 +458,8 @@ def verify(state: State) ->dict:
             # (e1.disabled_models | e2.disabled_models)는 state.disabled_models와 같아서
             # (새로 추가된 게 없어서) 아무것도 안 막힌다.
             "disabled_models" : list(dict.fromkeys(e1.disabled_models + e2.disabled_models)),
-            "trace" : state.trace+
-            f"""------\n{state.try_count}번째 verify 결과: generated_by 모델을 포함한 모든 모델 실패->검증 생략""",
+            "trace": [TraceStep(node="verify", label=f"{state.try_count}번째 verify 결과",
+                detail="generated_by 모델을 포함한 모든 모델 실패->검증 생략", ok=False)],
             "comment" : "검증을 수행하지 못해 결과를 확인 없이 반환합니다."}  # 사용자도 알아야 할 진짜 주의점
         
     # what_to_fix가 채워졌는데 fix_needed=False로 나오는 (특히 작은/파인튜닝 모델에서 관찰된)
@@ -459,8 +477,8 @@ def verify(state: State) ->dict:
             "tool_rounds" : 0,  # 재시도마다 tool 예산 리셋 (기존 while 루프의 시도별 3라운드와 동일한 정책)
             "disabled_models" : disabled_models,
             "tokens_used": add_tokens(state.tokens_used, tokens_used),
-            "trace" : state.trace+
-            f"""------\n {state.try_count+1}번째 verify 결과: {fix_needed}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}\n {verified_by} 모델로 verify됨\n {answer.comment} """,
+            "trace": [TraceStep(node="verify", label=f"{state.try_count+1}번째 verify 결과: {fix_needed}",
+                detail=f"""{f"{set(disabled_models) - set(state.disabled_models)} 제외됨\n" if set(disabled_models) - set(state.disabled_models) else ""}{verified_by} 모델로 verify됨\n{answer.comment}""")],
             # verify가 structured output으로 직접 뽑아준 사용자용 코멘트 — 트레이스에 파묻지 않고 그대로.
             # comment는 reducer 없이 매번 덮어쓰기라 "가장 최근 verify의 의견"만 남는다(원하는 그대로)
             "comment" : answer.comment,
@@ -533,7 +551,17 @@ def final_answer(state: State) ->dict:
     # 다음 턴 generate/verify가 보는 대화 이력을 가볍게 유지 — turn_start_len이 이번 턴의 시작 경계
     this_turn_msgs = state.messages[state.turn_start_len:]
     prune = [RemoveMessage(id=m.id) for m in this_turn_msgs]
-    clean_msgs = [HumanMessage(content=state.question), AIMessage(content=final_text)]
+    # comment·trace를 답변 메시지에 실어 체크포인터가 그대로 영속화하게 한다(08-07 —
+    # 예전엔 이 턴이 끝나면 state가 통째로 버려져 새로고침하면 사라졌다. additional_kwargs는
+    # BaseMessage가 원래 지원하는 부가정보 dict라 새 RDB 테이블 없이 기존 체크포인트에
+    # 얹힌다 — 대화 이력의 정본은 이미 체크포인트라 별도 테이블을 두면 서로 어긋날 위험만 커짐).
+    clean_msgs = [
+        HumanMessage(content=state.question),
+        AIMessage(content=final_text, additional_kwargs={
+            "comment": comment_text,
+            "trace": [step.model_dump() for step in state.trace],
+        }),
+    ]
 
     result = {"answer": final_text, "comment": comment_text, "messages": prune + clean_msgs}
     if tokens_used is not None:

@@ -136,11 +136,6 @@
   margin-top: 0.25rem;
 }
 
-.chat-panel-progress {
-  color: var(--color-text-muted);
-  font-style: italic;
-}
-
 .chat-panel-input {
   display: flex;
   gap: 0.5rem;

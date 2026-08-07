@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { streamQuery, getQueryMessages, deleteQueryMessage } from '../api/chat'
+import type { ChatMessage, TraceStep } from '../api/chat'
 import { getInterestDraft } from '../api/interests'
 
 export interface ChatUIMessage {
@@ -9,6 +10,19 @@ export interface ChatUIMessage {
   role: 'user' | 'assistant'
   content: string
   comment?: string
+  trace?: TraceStep[]
+}
+
+// 서버가 돌려주는 ChatMessage(comment/trace가 string|null)를 화면 표시용
+// ChatUIMessage(전부 optional)로 변환 — null은 "값 없음"을 optional 필드 생략으로 표현.
+function fromServerMessage(m: ChatMessage): ChatUIMessage {
+  return {
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    comment: m.comment ?? undefined,
+    trace: m.trace ?? undefined,
+  }
 }
 
 export const CHAT_MODELS = ['gemini', 'claude', 'Qwen-tuned'] as const
@@ -52,7 +66,7 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
   const [effort, setEffort] = useState<string>('medium')
   const [messages, setMessages] = useState<ChatUIMessage[]>([])
   const [input, setInput] = useState('')
-  const [progress, setProgress] = useState('')
+  const [progress, setProgress] = useState<TraceStep[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [draftError, setDraftError] = useState('')
   const hasSentRef = useRef(false)
@@ -63,7 +77,7 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
     if (!hydrateOnMount) return
     getQueryMessages(threadId)
       .then(({ messages: fromServer }) => {
-        setMessages(fromServer)
+        setMessages(fromServer.map(fromServerMessage))
         if (fromServer.length > 0) hasSentRef.current = true
       })
       .catch(() => {
@@ -90,14 +104,18 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
     setInput('')
     setMessages((m) => [...m, { role: 'user', content: question }])
     setIsStreaming(true)
-    setProgress('')
+    setProgress([])
 
     let answer = ''
     let comment = ''
+    let trace: TraceStep[] = []
     let succeeded = true
     try {
       for await (const chunk of streamQuery({ prompt: question, model, effort, threadId })) {
-        if (chunk.trace) setProgress(chunk.trace)
+        if (chunk.trace) {
+          trace = chunk.trace
+          setProgress(chunk.trace)
+        }
         if (chunk.final) {
           answer = chunk.answer ?? ''
           comment = chunk.comment ?? ''
@@ -108,21 +126,19 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
       answer = `백엔드 호출 실패: ${(e as Error).message}`
     }
 
-    setProgress('')
+    setProgress([])
     setIsStreaming(false)
 
     if (succeeded) {
       queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
       // 실제 체크포인트 목록으로 교체해 메시지별 id를 확보한다(메시지 삭제에 필요 —
-      // 08-13 메시지 트리밍 2단계). comment는 체크포인트에 안 남는 값이라 방금 받은
-      // 답변에만 붙여준다(마지막 메시지 = 이번 턴의 assistant 답).
+      // 08-13 메시지 트리밍 2단계). comment·trace(08-07)는 이제 final_answer가
+      // AIMessage.additional_kwargs에 심어 체크포인트에 남기므로, 서버가 돌려주는 값을
+      // 그대로 쓰면 된다(예전엔 체크포인트에 없다고 보고 방금 받은 값을 수동으로
+      // 마지막 메시지에 덧붙였는데, 그 전제가 틀렸었다 — 위 main.py 변경 참고).
       try {
         const { messages: fromServer } = await getQueryMessages(threadId)
-        setMessages(
-          fromServer.map((m, i) =>
-            i === fromServer.length - 1 && m.role === 'assistant' ? { ...m, comment } : m,
-          ),
-        )
+        setMessages(fromServer.map(fromServerMessage))
         // 새 스레드(왼쪽 화면에서 방금 시작한 대화)라면 URL을 이 thread_id로 옮긴다 —
         // 백엔드가 이미 이 시점에 chat_sessions 행과 체크포인트를 둘 다 갖고 있으므로
         // (스트리밍 시작 전에 lazy 생성, main.py 참고) 이동한 뒤 재조회해도 빈 화면이
@@ -134,7 +150,7 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
         // 목록 재조회 실패해도 방금 받은 답변은 화면에 보여야 하므로 아래로 폴백
       }
     }
-    setMessages((m) => [...m, { role: 'assistant', content: answer, comment }])
+    setMessages((m) => [...m, { role: 'assistant', content: answer, comment, trace }])
   }
 
   async function deleteMessage(id: string) {

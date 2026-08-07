@@ -69,6 +69,8 @@ def physics_qa_node(state: ParentState) -> dict:
 
     # fresh invoke() 대신 stream(stream_mode="values")로 돌려서 마지막 스냅샷(=invoke()
     # 반환값과 동일)은 유지하되, 중간 스냅샷의 trace를 진행 상황으로 흘려보낸다.
+    # trace는 TraceStep(pydantic) 리스트라 SSE 쪽 json.dumps(main.py)가 직렬화할 수 있게
+    # model_dump()로 평범한 dict로 풀어서 넘긴다.
     result = None
     for snapshot in physics_qa_app.stream({
         "question": state.question,
@@ -79,10 +81,10 @@ def physics_qa_node(state: ParentState) -> dict:
         "turn_start_len": len(kept_messages),
     }, stream_mode="values"):
         result = snapshot
-        writer({"trace": result.get("trace", ""), "final": False})
+        writer({"trace": [step.model_dump() for step in result.get("trace", [])], "final": False})
 
     # 스트림 종료 = final_answer 완료 — answer+comment까지 실어 final=True로 신호.
-    writer({"trace": result.get("trace", ""), "answer": result["answer"], "comment": result["comment"], "final": True})
+    writer({"trace": [step.model_dump() for step in result.get("trace", [])], "answer": result["answer"], "comment": result["comment"], "final": True})
 
     # 능력이 돌려준 messages는 [넘긴 이력]+[이번 턴 신규]이므로 뒷부분만 잘라 부모의
     # add_messages reducer에 넘긴다(안 바뀐 옛 메시지까지 매번 교체 시도하는 낭비 방지).
