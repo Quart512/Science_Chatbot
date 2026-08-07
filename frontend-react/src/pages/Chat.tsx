@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
+import { ChatIcon } from '../components/NavIcons'
 import './Chat.css'
 
 // 챗봇(④) 왼쪽 독립 화면 — 화면 개선 ⑤. Research.tsx와 같은 뼈대: threadId는
@@ -24,7 +25,7 @@ export function Chat() {
   return (
     <div className="chat-page">
       <div className="chat-page-header">
-        <h1>💬 챗</h1>
+        <h1><ChatIcon size={22} /> 챗</h1>
         <div className="chat-page-controls">
           <select value={chat.model} onChange={(e) => chat.setModel(e.target.value)}>
             {CHAT_MODELS.map((m) => (

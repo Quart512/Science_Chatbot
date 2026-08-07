@@ -17,7 +17,11 @@
 }
 
 .interest-form textarea {
-  min-height: 60px;
+  min-height: 100px;
+  max-height: 50vh;
+  /* 08-07 — Equipment.css와 같은 이유(자동 늘어남, field-sizing 지원 근거 그쪽 주석 참고) */
+  field-sizing: content;
+  overflow-y: auto;
 }
 
 .interest-form button {

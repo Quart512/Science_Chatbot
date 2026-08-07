@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { saveResearchNote } from '../../api/research'
+import { NoteIcon } from '../../components/NavIcons'
 
 interface Props {
   threadId: string
@@ -34,7 +35,7 @@ export function NoteEditor({ threadId, checkpointId, initialNote }: Props) {
   return (
     <div className="research-note-editor">
       <div className="research-note-editor-header">
-        <label className="research-caption">📝 메모</label>
+        <label className="research-caption"><NoteIcon size={14} /> 메모</label>
         <button
           type="button"
           className="research-note-editor-toggle"

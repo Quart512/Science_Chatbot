@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ANALYSIS_IN_PROGRESS, listPapers, registerPaper, type PaperSort } from '../api/papers'
 import { listLibraryFiles, trackLibraryFile } from '../api/library'
 import { PaperRow } from './PaperRow'
+import { PaperIcon } from '../components/NavIcons'
 import './Papers.css'
 
 const SORT_LABELS: Record<PaperSort, string> = {
@@ -97,7 +98,7 @@ export function Papers() {
 
   return (
     <div>
-      <h1>📄 논문</h1>
+      <h1><PaperIcon size={22} /> 논문</h1>
 
       <form
         className="paper-register-form"

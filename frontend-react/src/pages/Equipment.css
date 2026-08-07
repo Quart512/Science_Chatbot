@@ -17,7 +17,15 @@
 }
 
 .equipment-form textarea {
-  min-height: 60px;
+  min-height: 100px;
+  max-height: 50vh;
+  /* 08-07 — 내용 길이에 맞춰 자동으로 늘어나게(사용자 피드백: 수동 리사이즈 핸들을
+     모르는 사용자에겐 고정 높이가 불편함). 이 앱은 번들 Chrome에서만 돎(CLAUDE.md
+     "배포는 로컬 Chrome 앱모드")이라 폭넓은 브라우저 호환을 신경 안 써도 되고,
+     field-sizing은 Chrome 123+(현재 배포 Chrome 151)에서 지원 — 별도 JS 훅 없이
+     CSS 한 줄로 해결. max-height는 무한정 안 늘어나게 하는 안전장치, 넘으면 스크롤. */
+  field-sizing: content;
+  overflow-y: auto;
 }
 
 .equipment-form button {

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listEquipment, saveEquipment } from '../api/equipment'
 import { EquipmentRow } from './EquipmentRow'
+import { EquipmentIcon } from '../components/NavIcons'
 import './Equipment.css'
 
 export function Equipment() {
@@ -29,7 +30,7 @@ export function Equipment() {
 
   return (
     <div>
-      <h1>🧪 실험도구</h1>
+      <h1><EquipmentIcon size={22} /> 실험도구</h1>
 
       <details>
         <summary>새 실험도구 등록</summary>

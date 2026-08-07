@@ -67,13 +67,24 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --color-bg: oklch(0.985 0.003 250);
+  /* 08-07 — 3분할(왼쪽 네비 / 가운데 본문 / 오른쪽 챗) 배경이 라이트에서만 구분이
+     안 된다는 지적(사용자 피드백, 재차). 원인은 이 세 값이 붙어 있어서였다 —
+     0.955~1.0, 즉 명도 폭이 4.5%뿐이라 사실상 같은 흰색으로 보였다(다크 쪽
+     #0e0f13→#22242e는 훨씬 넓다). 폭을 벌려 canvas(가운데)를 확실히 내리고
+     elevated(양쪽 사이드바)는 흰색으로 남긴다.
+     순서 규칙: bg(가운데 캔버스) < bg-surface(캔버스 위 카드·입력) < elevated(사이드바·모달).
+     bg-surface를 캔버스보다 더 내린 게 아니라 사이에 끼운 이유 — 이 토큰은 흰
+     챗 패널 안의 말풍선(ChatPanel.css)에도, 가운데 캔버스 위의 카드에도 같이
+     쓰여서 양쪽 배경 모두와 달라야 한다. */
+  --color-bg: oklch(0.94 0.006 250);
   --color-bg-elevated: oklch(1 0 0);
-  --color-bg-surface: oklch(0.955 0.004 250);
+  --color-bg-surface: oklch(0.975 0.004 250);
 
-  --color-border: oklch(0.905 0.006 258);
-  --color-border-strong: oklch(0.8 0.008 258);
-  --color-border-faint: oklch(0.94 0.004 258);
+  /* 배경을 내린 만큼 테두리도 같이 내린다 — 안 그러면 border(0.905)가 새 캔버스
+     (0.94)와 너무 가까워져 구분선이 흐려진다. */
+  --color-border: oklch(0.855 0.008 258);
+  --color-border-strong: oklch(0.76 0.01 258);
+  --color-border-faint: oklch(0.9 0.005 258);
 
   --color-text: oklch(0.19 0.02 265);
   --color-text-muted: oklch(0.505 0.02 262);

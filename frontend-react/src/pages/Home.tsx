@@ -8,13 +8,16 @@ import { listChatSessions, type ChatSession } from '../api/chat'
 import { listResearchSessions, type ResearchSession } from '../api/research'
 import { STAGE_LABELS } from './research/constants'
 import { Logo } from '../components/Logo'
+import { ChatIcon, ResearchIcon, PaperIcon, InterestIcon, EquipmentIcon, NoteIcon } from '../components/NavIcons'
 import './Home.css'
 
+// 08-07 — 네비(NavIcons.tsx)와 같은 아이콘·색으로 통일(이모지 제거는 그쪽과 같은
+// 피드백). icon은 컴포넌트 참조라 렌더링부에서 <tile.icon />으로 태그처럼 쓴다.
 const STAT_TILES = [
-  { key: 'interests', label: '관심사', icon: '🔬', to: '/interests' },
-  { key: 'papers', label: '보유 논문', icon: '📄', to: '/papers' },
-  { key: 'equipment', label: '실험도구', icon: '🧪', to: '/equipment' },
-  { key: 'notes', label: '지식 노트', icon: '📝', to: '/notes' },
+  { key: 'interests', label: '관심사', icon: InterestIcon, to: '/interests' },
+  { key: 'papers', label: '보유 논문', icon: PaperIcon, to: '/papers' },
+  { key: 'equipment', label: '실험도구', icon: EquipmentIcon, to: '/equipment' },
+  { key: 'notes', label: '지식 노트', icon: NoteIcon, to: '/notes' },
 ] as const
 
 type ActivityItem =
@@ -50,7 +53,7 @@ export function Home() {
   return (
     <div className="home-page">
       <div className="home-header">
-        <Logo size={40} showWordmark={false} />
+        <Logo size={88} showWordmark={false} />
         <div>
           <h1>AIsaac</h1>
           <p className="home-tagline">물리 연구를 돕는 개인용 AI 어시스턴트</p>
@@ -60,9 +63,7 @@ export function Home() {
       <div className="home-stats">
         {STAT_TILES.map((tile) => (
           <Link key={tile.key} to={tile.to} className="home-stat-tile">
-            <span className="home-stat-icon" aria-hidden="true">
-              {tile.icon}
-            </span>
+            <tile.icon size={20} className="home-stat-icon" />
             <span className="home-stat-value">{counts[tile.key] ?? '—'}</span>
             <span className="home-stat-label">{tile.label}</span>
           </Link>
@@ -71,10 +72,10 @@ export function Home() {
 
       <div className="home-quick-actions">
         <Link to="/chat/new" className="home-quick-action">
-          💬 새 대화 시작
+          <ChatIcon size={16} /> 새 대화 시작
         </Link>
         <Link to="/research/new" className="home-quick-action">
-          🧬 새 연구 시작
+          <ResearchIcon size={16} /> 새 연구 시작
         </Link>
       </div>
 
@@ -90,7 +91,7 @@ export function Home() {
               item.kind === 'chat' ? (
                 <li key={`chat-${item.session.thread_id}`}>
                   <Link to={`/chat/${item.session.thread_id}`} className="home-activity-row">
-                    <span className="home-activity-kind">💬</span>
+                    <ChatIcon size={16} className="home-activity-kind" />
                     <span className="home-activity-title">{item.session.title || '(제목 없음)'}</span>
                     <span className="home-activity-date">{item.session.updated_at.slice(0, 10)}</span>
                   </Link>
@@ -98,7 +99,7 @@ export function Home() {
               ) : (
                 <li key={`research-${item.session.thread_id}`}>
                   <Link to={`/research/${item.session.thread_id}`} className="home-activity-row">
-                    <span className="home-activity-kind">🧬</span>
+                    <ResearchIcon size={16} className="home-activity-kind" />
                     <span className="home-activity-title">{item.session.title || item.session.topic}</span>
                     <span className="home-activity-stage">{STAGE_LABELS[item.session.stage] ?? item.session.stage}</span>
                     <span className="home-activity-date">{item.session.updated_at.slice(0, 10)}</span>

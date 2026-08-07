@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { closeChatSession, listChatSessions, renameChatSession, type ChatSession } from '../api/chat'
 import { EditableSessionTitle } from '../components/EditableSessionTitle'
+import { ChatIcon } from '../components/NavIcons'
 import './SessionList.css'
 
 // 왼쪽 네비 "챗봇" 라벨을 눌렀을 때 뜨는 화면(08-06, 사용자 요청) — 예전엔 라벨을
@@ -22,7 +23,7 @@ export function ChatSessionList() {
   return (
     <div>
       <div className="session-list-header">
-        <h1>💬 챗봇</h1>
+        <h1><ChatIcon size={22} /> 챗봇</h1>
         <button className="session-list-new" onClick={() => navigate('/chat/new')}>
           + 새 대화
         </button>

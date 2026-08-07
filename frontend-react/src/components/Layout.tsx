@@ -5,6 +5,7 @@ import { ChatSessionNav } from './ChatSessionNav'
 import { ResearchSessionNav } from './ResearchSessionNav'
 import { useScrollbarAutoHide } from '../hooks/useScrollbarAutoHide'
 import { LogoMark } from './Logo'
+import { ChatIcon, ResearchIcon, PaperIcon, InterestIcon, EquipmentIcon, NoteIcon } from './NavIcons'
 import './Layout.css'
 
 // 셸 — 왼쪽 네비게이션 + 가운데 라우팅된 메인 콘텐츠 + 오른쪽 항상-떠-있는 챗 패널.
@@ -61,7 +62,7 @@ export function Layout() {
           </NavLink>
           <div className="app-nav-item-row">
             <NavLink to="/chat" className="app-nav-link app-nav-link-grow">
-              💬 챗봇
+              <ChatIcon /> 챗봇
             </NavLink>
             <NavLink to="/chat/new" className="app-nav-new-session" title="새 대화 시작" aria-label="새 대화 시작">
               +
@@ -78,7 +79,7 @@ export function Layout() {
           {chatSessionsOpen && <ChatSessionNav />}
           <div className="app-nav-item-row">
             <NavLink to="/research" className="app-nav-link app-nav-link-grow">
-              🧬 연구 워크플로우
+              <ResearchIcon /> 연구 워크플로우
             </NavLink>
             <NavLink to="/research/new" className="app-nav-new-session" title="새 연구 시작" aria-label="새 연구 시작">
               +
@@ -98,16 +99,16 @@ export function Layout() {
         <div className="app-nav-group">
           <div className="app-nav-group-title">라이브러리</div>
           <NavLink to="/papers" className="app-nav-link">
-            📄 논문
+            <PaperIcon /> 논문
           </NavLink>
           <NavLink to="/interests" className="app-nav-link">
-            🔬 관심사
+            <InterestIcon /> 관심사
           </NavLink>
           <NavLink to="/equipment" className="app-nav-link">
-            🧪 실험도구
+            <EquipmentIcon /> 실험도구
           </NavLink>
           <NavLink to="/notes" className="app-nav-link">
-            📝 지식 노트
+            <NoteIcon /> 지식 노트
           </NavLink>
         </div>
 

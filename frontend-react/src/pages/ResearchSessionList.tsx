@@ -7,6 +7,7 @@ import {
   type ResearchSession,
 } from '../api/research'
 import { EditableSessionTitle } from '../components/EditableSessionTitle'
+import { ResearchIcon } from '../components/NavIcons'
 import './SessionList.css'
 
 // 왼쪽 네비 "연구 워크플로우" 라벨을 눌렀을 때 뜨는 화면 — ChatSessionList.tsx와
@@ -24,7 +25,7 @@ export function ResearchSessionList() {
   return (
     <div>
       <div className="session-list-header">
-        <h1>🧬 연구 워크플로우</h1>
+        <h1><ResearchIcon size={22} /> 연구 워크플로우</h1>
         <button className="session-list-new" onClick={() => navigate('/research/new')}>
           + 새 연구
         </button>

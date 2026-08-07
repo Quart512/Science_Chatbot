@@ -17,7 +17,12 @@
 }
 
 .note-form textarea {
-  min-height: 100px;
+  min-height: 150px;
+  max-height: 50vh;
+  /* 08-07 — Equipment.css와 같은 이유(자동 늘어남, field-sizing 지원 근거 그쪽 주석 참고).
+     지식노트는 "본문"이라 특히 길어질 수 있어 시작 높이도 다른 폼보다 좀 더 크게 잡음. */
+  field-sizing: content;
+  overflow-y: auto;
 }
 
 .note-form button {

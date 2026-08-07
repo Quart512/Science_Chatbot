@@ -10,6 +10,13 @@
   padding-left: 0.5rem;
 }
 
+/* 08-07 — 공용 .research-warning(노랑, 여러 경고 문구가 같이 씀)을 그대로 뒀다간
+   진짜 경고들 색까지 같이 바뀌므로, 이 문구 하나만 복합 셀렉터로 덮어써서 가운데
+   화면의 같은 문구(SessionList.css .session-list-error)와 보라로 맞춘다. */
+.research-warning.research-session-nav-error {
+  color: var(--color-accent);
+}
+
 .research-session-card {
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -171,7 +178,11 @@
 }
 
 .research-note-editor textarea {
-  min-height: 60px;
+  min-height: 100px;
+  max-height: 50vh;
+  /* 08-07 — Equipment.css와 같은 이유(자동 늘어남, field-sizing 지원 근거 그쪽 주석 참고) */
+  field-sizing: content;
+  overflow-y: auto;
 }
 
 .research-note-editor button {
@@ -348,7 +359,12 @@
 }
 
 .research-textarea {
-  min-height: 80px;
+  min-height: 150px;
+  max-height: 50vh;
+  /* 08-07 — Equipment.css와 같은 이유(자동 늘어남, field-sizing 지원 근거 그쪽 주석 참고).
+     연구 워크플로우 단계 내용은 본문급으로 길 수 있어 시작 높이를 더 크게 잡음. */
+  field-sizing: content;
+  overflow-y: auto;
 }
 
 .research-ref-diff {

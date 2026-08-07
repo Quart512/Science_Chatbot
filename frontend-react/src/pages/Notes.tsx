@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listNotes, saveNote } from '../api/notes'
 import { NoteRow } from './NoteRow'
+import { NoteIcon } from '../components/NavIcons'
 import './Notes.css'
 
 export function Notes() {
@@ -26,7 +27,7 @@ export function Notes() {
 
   return (
     <div>
-      <h1>📝 지식 노트</h1>
+      <h1><NoteIcon size={22} /> 지식 노트</h1>
 
       <details>
         <summary>새 노트 작성</summary>

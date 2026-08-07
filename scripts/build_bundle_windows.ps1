@@ -243,6 +243,33 @@ try {
     Pop-Location
 }
 
+Write-Host "==> 검증: 프론트엔드가 같은 오리진을 쓰는지"
+# 위 `import main`이 백엔드 화이트리스트에 대해 하는 일을 프론트엔드 환경변수에 대해
+# 똑같이 한다. 08-07에 http://localhost:8000이 박힌 dist가 번들에 들어가 API 호출이
+# 전부 CORS로 막힌 적이 있다(macOS에서 실제로 겪음) — 화면(정적 자산)은 멀쩡히 떠서
+# 사용자 눈에는 원인 불명의 "백엔드 연결 실패"로만 보였다.
+#
+# 정상 경로는 frontend-react/.env.production이 이미 막아뒀다(어떤 mode로 빌드하든 빈
+# 값). 그럼에도 여기서 또 보는 이유는 dist가 **공유 가변 산출물**이라, 프론트 빌드
+# 단계가 만든 dist를 복사 단계가 가져가기까지 사이에 다른 빌드가 끼어들 수 있어서다.
+#
+# **포트가 붙은** 루프백 URL만 잡는다: react-router의 폴백 상수 `http://localhost`
+# (포트 없음)가 정상 빌드에도 항상 들어있어 포트를 안 따지면 매번 오탐이 난다.
+#
+# Get-ChildItem은 -Recurse와 -Include를 같이 쓸 때 경로 형태에 따라 조용히 아무것도
+# 안 잡는 함정이 있어, 확장자 필터를 Where-Object로 명시한다(검사가 조용히 통과하면
+# 검사가 없는 것보다 나쁘다). 이 스크립트 전체가 그렇듯 실기 Windows 검증은 아직 안 됨.
+$DistRoot = Join-Path $Bundle "frontend-react\dist"
+$DistFiles = Get-ChildItem -Path $DistRoot -Recurse -File |
+    Where-Object { $_.Extension -in '.js', '.html' }
+$Baked = $DistFiles | Select-String -Pattern 'https?://(localhost|127\.0\.0\.1):[0-9]+'
+if ($Baked) {
+    $Baked | ForEach-Object { Write-Host ("   " + $_.Path) }
+    Write-Error "위 파일에 절대 백엔드 URL이 박혀 있습니다 - 이대로 배포하면 API가 전부 CORS로 막힙니다. frontend-react\.env.production 을 확인하고 frontend-react\dist를 지운 뒤 다시 빌드하세요."
+    exit 1
+}
+Write-Host "   OK"
+
 Write-Host ""
 Write-Host "완료: $Bundle"
 $size = (Get-ChildItem -Recurse $Bundle | Measure-Object -Property Length -Sum).Sum / 1MB

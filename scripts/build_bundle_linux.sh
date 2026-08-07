@@ -83,6 +83,53 @@ set -uo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
 
+BROWSER_BIN=""
+for candidate in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge microsoft-edge-stable; do
+  if command -v "$candidate" &> /dev/null; then
+    BROWSER_BIN="$candidate"
+    break
+  fi
+done
+
+# 창모드 브라우저를 새로 연다. 호출마다 새 임시 프로필 — Chrome/Chromium의 프로필
+# 싱글턴 락(같은 프로필로 재실행하면 새 창만 기존 프로세스에 얹고 새 프로세스는 곧장
+# 종료됨, macOS에서 실측 확인된 Chromium 공통 동작)을 피해 `wait`를 그대로 믿을 수
+# 있게 한다 — Windows 번들과 같은 판단(로그인 세션이 재실행마다 안 남는 게 대가).
+# Chrome/Chromium/Edge 전부 없으면 일반 브라우저 탭으로 폴백(반환값 1).
+open_window() {
+  local url="$1"
+  if [ -z "$BROWSER_BIN" ]; then
+    command -v xdg-open &> /dev/null && xdg-open "$url" &
+    return 1
+  fi
+  PROFILE_DIR="$(mktemp -d)"
+  "$BROWSER_BIN" --app="$url" --user-data-dir="$PROFILE_DIR" \
+    --no-first-run --no-default-browser-check >> logs/browser.log 2>&1 &
+  BROWSER_PID=$!
+  return 0
+}
+
+# 단일 인스턴스 가드(08-07) — data/·chroma_db/를 두 프로세스가 동시에 쓰면 SQLite는
+# "database is locked"로, Chroma의 PersistentClient는 공식 문서가 명시하는 대로
+# 멀티프로세스 동시 접근에 안전하지 않아 인덱스 손상까지 갈 수 있다. 아래 포트 자동
+# 재시도가 생기기 전엔 두 번째 실행이 포트 충돌로 그냥 막혀서 이 위험이 우연히
+# 차단돼 있었는데, 그 보호가 사라졌으니 여기서 직접 막는다 — 이미 살아있는 인스턴스가
+# 있으면 새 서버 없이 그 포트로 창만 하나 더 열고 끝낸다. PID(kill -0)로 살았는지
+# 확인하므로 비정상 종료로 lock만 남아도(크래시 등) 다음 실행이 정상적으로 새 서버를
+# 띄운다.
+LOCK_FILE="logs/server.lock"
+if [ -f "$LOCK_FILE" ]; then
+  EXISTING_PID="$(sed -n '1p' "$LOCK_FILE" 2>/dev/null)"
+  EXISTING_PORT="$(sed -n '2p' "$LOCK_FILE" 2>/dev/null)"
+  if [ -n "${EXISTING_PID:-}" ] && [ -n "${EXISTING_PORT:-}" ] && kill -0 "$EXISTING_PID" 2>/dev/null; then
+    # 이 창은 추가 창일 뿐이라 원래 인스턴스의 서버 종료 감시(wait)에 안 얹는다 —
+    # 곧장 백그라운드로 던지고 끝낸다(임시 프로필 정리는 생략, 드문 경로라 남는
+    # 임시 폴더 하나 정도는 감수).
+    open_window "http://127.0.0.1:$EXISTING_PORT"
+    exit 0
+  fi
+fi
+
 # /dev/tcp로 먼저 "비어있나?" 물어보고 나중에 uvicorn이 bind하는 방식은 그 사이에
 # 다른 프로세스가 끼어들 수 있는 확인-후-사용 레이스(TOCTOU)라 8000이 막혀도 자동으로
 # 복구가 안 됐다(macOS 스크립트와 같은 논의, 08-06). 대신 실제 bind를 직접 시도해
@@ -126,36 +173,23 @@ if [ "$ready" != "true" ]; then
   exit 1
 fi
 
+# 이 지점부터 서버가 살아있고 건강함 — 다음 실행이 단일 인스턴스 가드에서 찾을 수
+# 있게 PID·포트를 기록한다.
+printf '%s\n%s\n' "$SERVER_PID" "$PORT" > "$LOCK_FILE"
+
 APP_URL="http://127.0.0.1:$PORT"
-# 매 실행마다 새 임시 프로필 — Chrome/Chromium의 프로필 싱글턴 락(같은 프로필로 재실행
-# 하면 새 창만 기존 프로세스에 얹고 새 프로세스는 곧장 종료됨, macOS에서 실측 확인된
-# Chromium 공통 동작)을 피해 `wait`를 그대로 믿을 수 있게 한다 — Windows 번들과 같은
-# 판단(로그인 세션이 재실행마다 안 남는 게 대가).
-PROFILE_DIR="$(mktemp -d)"
 
-BROWSER_BIN=""
-for candidate in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge microsoft-edge-stable; do
-  if command -v "$candidate" &> /dev/null; then
-    BROWSER_BIN="$candidate"
-    break
-  fi
-done
-
-if [ -z "$BROWSER_BIN" ]; then
-  # Chrome/Chromium/Edge 전부 없으면 기본 브라우저 탭으로 폴백 — 앱모드도, 창 종료
-  # 감지도 못 하므로 서버는 계속 백그라운드에 남는다(다음 실행 시 포트 점유로 알아챔).
-  command -v xdg-open &> /dev/null && xdg-open "$APP_URL" &
+if ! open_window "$APP_URL"; then
+  # 브라우저를 하나도 못 찾으면 앱모드도, 창 종료 감지도 못 하므로 서버는 계속
+  # 백그라운드에 남는다(다음 실행 시 위 lock 검사가 재사용).
   disown "$SERVER_PID" 2>/dev/null
   exit 0
 fi
 
-"$BROWSER_BIN" --app="$APP_URL" --user-data-dir="$PROFILE_DIR" \
-  --no-first-run --no-default-browser-check >> logs/browser.log 2>&1 &
-BROWSER_PID=$!
-
 wait "$BROWSER_PID" 2>/dev/null
 
 kill "$SERVER_PID" 2>/dev/null
+rm -f "$LOCK_FILE"
 rm -rf "$PROFILE_DIR"
 LAUNCHER
 chmod +x "$BUNDLE/run.sh"
@@ -210,6 +244,26 @@ echo "==> 검증: 번들이 스스로 import되는지"
   PYTHONPATH="runtime/lib" runtime/python/bin/python3 -c "import main" 2>&1 | tail -5
   exit "${PIPESTATUS[0]}"
 ) || { echo "   번들 import 실패 — 위 오류를 보고 화이트리스트를 고치세요."; exit 1; }
+echo "   OK"
+
+echo "==> 검증: 프론트엔드가 같은 오리진을 쓰는지"
+# 위 `import main`이 백엔드 화이트리스트에 대해 하는 일을 프론트엔드 환경변수에 대해
+# 똑같이 한다. 08-07에 http://localhost:8000이 박힌 dist가 번들에 들어가 API 호출이
+# 전부 CORS로 막힌 적이 있다 — 화면(정적 자산)은 멀쩡히 떠서 사용자 눈에는 원인 불명의
+# "백엔드 연결 실패"로만 보였다.
+#
+# 정상 경로는 frontend-react/.env.production이 이미 막아뒀다(어떤 mode로 빌드하든 빈
+# 값). 그럼에도 여기서 또 보는 이유는 dist가 **공유 가변 산출물**이라, 위 1/5 단계가
+# 만든 dist를 4/5 단계가 복사하기까지 사이에 다른 빌드가 끼어들 수 있어서다.
+#
+# **포트가 붙은** 루프백 URL만 잡는다: react-router의 폴백 상수 `http://localhost`
+# (포트 없음)가 정상 빌드에도 항상 들어있어 포트를 안 따지면 매번 오탐이 난다.
+if grep -rEl --include='*.js' --include='*.html' \
+     'https?://(localhost|127\.0\.0\.1):[0-9]+' "$BUNDLE/frontend-react/dist"; then
+  echo "   위 파일에 절대 백엔드 URL이 박혀 있습니다 — 이대로 배포하면 API가 전부 CORS로 막힙니다."
+  echo "   frontend-react/.env.production 을 확인하고, frontend-react/dist를 지운 뒤 다시 빌드하세요."
+  exit 1
+fi
 echo "   OK"
 
 # 번들 밖을 가리키는 절대 경로 심볼릭 링크가 있으면 다른 기계에서 깨진다.

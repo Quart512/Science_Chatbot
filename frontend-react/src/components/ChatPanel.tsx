@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { listChatSessions } from '../api/chat'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
+import { ChatIcon } from './NavIcons'
 import './ChatPanel.css'
 
 // 셸에 항상 떠 있는 챗 패널(08-04 설계 노트 "React 전환" 참고) — 연구 워크플로우 등
@@ -58,7 +59,7 @@ export function ChatPanel() {
   if (!open) {
     return (
       <button className="chat-panel-toggle" onClick={() => setOpen(true)}>
-        💬 챗 열기
+        <ChatIcon size={16} /> 챗 열기
       </button>
     )
   }
@@ -66,7 +67,7 @@ export function ChatPanel() {
   return (
     <aside className="chat-panel">
       <div className="chat-panel-header">
-        <span>💬 챗</span>
+        <span><ChatIcon size={16} /> 챗</span>
         <button onClick={() => setOpen(false)} aria-label="챗 닫기">
           ✕
         </button>

@@ -46,7 +46,7 @@
 }
 
 .home-stat-icon {
-  font-size: 1.1rem;
+  flex-shrink: 0;
 }
 
 .home-stat-value {
@@ -68,6 +68,9 @@
 }
 
 .home-quick-action {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   background: var(--color-accent);
   color: white;
   border-radius: 6px;
@@ -75,6 +78,7 @@
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .home-quick-action:hover {

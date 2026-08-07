@@ -6,9 +6,15 @@
   font-family: system-ui, sans-serif;
 }
 
+/* 08-07 — 지금까지 왼쪽 네비는 배경을 아예 안 깔아서 .app-shell의 --color-bg를 그대로
+   비췄다. 즉 **가운데 본문과 늘 같은 색**이었고, 둘을 가르는 건 오른쪽 테두리 한 줄뿐이라
+   라이트에서 특히 구분이 안 됐다(사용자 피드백). 오른쪽 챗 패널이 이미 쓰던 것과 같은
+   --color-bg-elevated를 줘서 "양쪽 사이드바 = 떠 있는 크롬 / 가운데 = 캔버스"로 규칙을
+   맞춘다 — 두 사이드바가 같은 색이라 좌우 대칭도 생긴다. */
 .app-nav {
   width: 280px;
   min-width: 280px;
+  background: var(--color-bg-elevated);
   border-right: 1px solid var(--color-border);
   padding: 1rem;
   display: flex;
@@ -136,6 +142,9 @@
 }
 
 .app-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   color: var(--color-text-muted);
   text-decoration: none;
   padding: 0.4rem 0.5rem;
@@ -143,8 +152,17 @@
   border-left: 3px solid transparent;
 }
 
+/* 08-07 — 네비 아이콘(NavIcons.tsx)이 이모지를 대체하면서 svg가 잘리지 않게 최소
+   크기를 고정한다. flex 부모(.app-nav-link) 안에서 기본값(auto)이면 좁은 화면에서
+   svg가 눌려 찌그러질 수 있어서. */
+.app-nav-link svg {
+  flex-shrink: 0;
+}
+
+/* 08-07 — 네비 자체가 --color-bg-elevated를 깔게 되면서(위 .app-nav) hover가 같은 값이면
+   아무 변화가 없다. 한 단 아래인 --color-bg-surface로 내려 hover가 다시 보이게 함. */
 .app-nav-link:hover {
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-surface);
 }
 
 /* 보조 액센트(달빛 노랑) 적용 지점 — 08-05 브랜드 색감 병합, "지금 보고 있는 화면"을

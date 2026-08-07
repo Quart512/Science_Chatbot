@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listInterests, saveInterest, type InterestDraftResponse } from '../api/interests'
 import { InterestCard } from './InterestCard'
+import { InterestIcon } from '../components/NavIcons'
 import './Interests.css'
 
 // 챗 패널의 "이 대화를 관심사로 등록" 버튼이 draft를 라우터 state로 실어 보낸다
@@ -39,7 +40,7 @@ export function Interests() {
 
   return (
     <div>
-      <h1>🔬 관심사</h1>
+      <h1><InterestIcon size={22} /> 관심사</h1>
 
       <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
         <summary>새 관심사 만들기</summary>

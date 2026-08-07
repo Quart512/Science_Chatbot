@@ -31,8 +31,11 @@
   color: var(--color-text-muted);
 }
 
+/* 08-07 — 왼쪽 네비 세션 목록(.research-session-nav-error, Research.css)의 같은
+   문구와 색을 맞춤(사용자 지적: 하나는 노랑, 하나는 빨강으로 따로 놀았음) — 브랜드
+   보라(accent)로 통일. */
 .session-list-error {
-  color: var(--color-danger);
+  color: var(--color-accent);
 }
 
 .session-grid {

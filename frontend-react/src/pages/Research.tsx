@@ -8,6 +8,7 @@ import { BranchTimeline } from './research/BranchTimeline'
 import { RetryReferencesButton } from './research/RetryReferencesButton'
 import { NoteEditor } from './research/NoteEditor'
 import { STAGES_WITH_REFERENCES } from './research/constants'
+import { ResearchIcon } from '../components/NavIcons'
 import './Research.css'
 
 // frontend/views/research.py 전체와 같은 계약이었던 데서 출발 — 브랜치형 타임라인
@@ -69,7 +70,7 @@ function NewResearchForm() {
 
   return (
     <div>
-      <h1>🧬 연구 워크플로우</h1>
+      <h1><ResearchIcon size={22} /> 연구 워크플로우</h1>
       <p className="research-caption">왼쪽에서 세션을 선택하거나 새 연구를 시작하세요.</p>
 
       <h3>새 연구 시작</h3>

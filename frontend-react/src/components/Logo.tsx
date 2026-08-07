@@ -1,13 +1,28 @@
 import { useId } from 'react'
 import './Logo.css'
 
-// AIsaac 브랜드 마크 — 원본 아트워크(public/aisaac-logo.png, ai-saac 랜딩 프로젝트와
-// 공유)는 유리 프리즘이 무지개를 굴절시키고 흰 궤도 링이 감싸는 그림인데, 여백이
-// 넓고 유리/흰색 요소가 밝은 배경에서 안 보여서(ai-saac의 Logo.tsx 컴포넌트 주석과
-// 같은 문제) 내용부만 크롭해 어두운 배지 위에 얹는다 — 라이트/다크 테마 둘 다에서
-// 또렷하게 보이게. 이 저장소용으로 480px로 리사이즈(2.2MB → 275KB, 08-06 — "다운로드
-// 크기" 제약, CLAUDE.md §5) — ai-saac 원본과 같은 비율이라 crop 위치(backgroundPosition)
-// 값도 그대로 재사용 가능.
+// AIsaac 브랜드 마크 — 유리 프리즘이 무지개를 굴절시키고 흰 궤도 링이 감싸는 그림.
+// 유리/흰색 요소가 밝은 배경에서 안 보여서(ai-saac의 Logo.tsx 컴포넌트 주석과 같은
+// 문제) 어두운 배지 위에 얹는다 — 라이트/다크 테마 둘 다에서 또렷하게 보이게.
+//
+// 08-07 — 두 가지 변경. ① 배지를 정사각형으로 강제하던 걸(260% 확대+위치 지정 크롭)
+// 원본 비율 그대로 쓰는 직사각형으로 교체 — 정사각형 틀에 넓은 그림을 욱여넣느라
+// 궤도 링이 잘려 너무 얇아 보인다는 지적(사용자 피드백). size는 이제 배지의 "높이"
+// 기준이고 너비는 원본 비율로 계산 — Logo.css의 background-size: contain이 잘림
+// 없이 전체를 보여준다. ② 가로로 넓던 원본 아트워크를 세로로 긴 버전(사용자가 직접
+// 배경 제거해 전달)으로 교체 — 진짜 알파 채널 있는지 먼저 확인(`im.getchannel('A')`
+// 히스토그램으로 완전투명/불투명 픽셀 비율 검사, 처음 시도했던 파일은 체크무늬가
+// 픽셀로 박혀있어 투명화가 안 됐던 것과 달리 이번 파일은 정상), Pillow `getbbox()`로
+// 실제 내용 영역만 크롭(여백 8px 남김, 676x369 캔버스 → 257x309)해 다운로드 크기를
+// 줄였다(93KB). 비율 상수는 이 크롭 결과(257:309)를 그대로 반영.
+const ARTWORK_ASPECT_RATIO = 257 / 309
+
+// 라이트 테마 배지(회색 판)와 그림 사이의 여백 — size(그림 높이) 기준 비율이다.
+// px 고정값이 아니라 비율인 이유: Logo가 홈 헤더(88)와 기본값(28) 양쪽에서 쓰여서,
+// 고정 px면 작은 자리에선 여백이 그림을 잡아먹고 큰 자리에선 티가 안 난다.
+// 이 값이 Logo.css의 padding으로 들어가 배지만 사방으로 커진다(그림 크기는 그대로).
+const BADGE_PADDING_RATIO = 0.16
+
 export function Logo({
   className,
   size = 28,
@@ -23,8 +38,9 @@ export function Logo({
         aria-hidden="true"
         className="logo-mark-badge"
         style={{
-          width: size,
+          width: size * ARTWORK_ASPECT_RATIO,
           height: size,
+          padding: size * BADGE_PADDING_RATIO,
           backgroundImage: 'url(/aisaac-logo.png)',
         }}
       />

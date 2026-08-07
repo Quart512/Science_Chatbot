@@ -1,0 +1,4 @@
+.nav-icon-svg {
+  /* svg 기본 세로 정렬(baseline)이 옆 텍스트보다 살짝 낮게 보여서 보정 */
+  vertical-align: -0.2em;
+}
