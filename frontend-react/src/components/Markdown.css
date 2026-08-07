@@ -22,8 +22,15 @@
   margin: 0.75em 0 0.3em;
 }
 
+/* white-space: pre-line — CommonMark는 문단 안 단일 개행을 공백으로 뭉갠다(빈 줄
+   두 번이라야 새 문단). LLM이 실제로 쓰는 줄바꿈 습관(문장마다 \n, 빈 줄 없음)엔 안
+   맞아서, 그걸 실제 줄바꿈으로 보이게 강제한다(08-07, 연구 워크플로우 `.research-pre`를
+   <Markdown>으로 교체하며 실측 발견 — pre-wrap이 하던 일을 여기서 대신 떠맡음, 코드
+   블록(<pre>)은 별개 요소라 영향 없음). 챗 답변에도 같이 적용돼 전에도 있었을 수 있는
+   같은 문제를 덤으로 고친다. */
 .markdown-body p {
   margin: 0.4em 0;
+  white-space: pre-line;
 }
 
 .markdown-body ul,

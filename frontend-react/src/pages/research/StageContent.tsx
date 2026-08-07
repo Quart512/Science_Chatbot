@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { updateResearchDraft, type ResearchState } from '../../api/research'
 import { formatNumberedList, resolveCitations } from './constants'
+import { Markdown } from '../../components/Markdown'
 
 const DRAFT_FIELDS = [
   ['title', '제목'],
@@ -90,7 +91,7 @@ export function StageContent({ values, threadId, canEdit }: Props) {
           <p>
             <strong>절차</strong>
           </p>
-          <p className="research-pre">{formatNumberedList(values.procedure)}</p>
+          <Markdown text={formatNumberedList(values.procedure)} />
         </section>
       )}
 
@@ -112,7 +113,7 @@ export function StageContent({ values, threadId, canEdit }: Props) {
       {stage === 'report' && values.experiment_report && (
         <section>
           <h3>실험 보고서</h3>
-          <p className="research-pre">{values.experiment_report}</p>
+          <Markdown text={values.experiment_report} />
         </section>
       )}
 
@@ -163,7 +164,7 @@ export function StageContent({ values, threadId, canEdit }: Props) {
                   onChange={(e) => setFields((f) => ({ ...f, [field]: e.target.value }))}
                 />
               ) : (
-                <p>{resolveCitations(values[field], references)}</p>
+                <Markdown text={resolveCitations(values[field], references)} />
               )}
             </div>
           ))}
