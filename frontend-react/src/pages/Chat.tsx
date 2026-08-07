@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { ChatIcon } from '../components/NavIcons'
 import { StreamProgress } from '../components/StreamProgress'
+import { setLastViewedChatThreadId } from '../lib/lastViewedChat'
 import './Chat.css'
 
 // 챗봇(④) 왼쪽 독립 화면 — 화면 개선 ⑤. Research.tsx와 같은 뼈대: threadId는
@@ -22,6 +23,15 @@ export function Chat() {
       if (!urlThreadId) navigate(`/chat/${threadId}`, { replace: true })
     },
   })
+
+  // 오른쪽 패널(ChatPanel.tsx)이 "마지막으로 답변을 요청한" 챗 대신 "마지막으로 본" 챗을
+  // 열 수 있게, 실제로 URL을 가진 스레드를 열람할 때만 기록한다(RoadMap 항목 참고 — 여기
+  // 조건이 urlThreadId인 이유: 이 화면이 새 대화 초안 단계(`/chat/new`, 아직 아무 응답도
+  // 없는 상태)일 땐 "본 챗"이라 부를 실체가 아직 없고, 첫 메시지 전송 후 위 onFirstMessageSent가
+  // URL을 바꾸면 이 effect가 그 시점에 자연히 한 번 더 돈다).
+  useEffect(() => {
+    if (urlThreadId) setLastViewedChatThreadId(urlThreadId)
+  }, [urlThreadId])
 
   return (
     <div className="chat-page">

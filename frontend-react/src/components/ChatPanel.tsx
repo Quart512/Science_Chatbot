@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { listChatSessions } from '../api/chat'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
+import { getLastViewedChatThreadId } from '../lib/lastViewedChat'
 import { ChatIcon } from './NavIcons'
 import { StreamProgress } from './StreamProgress'
 import './ChatPanel.css'
@@ -12,13 +13,19 @@ import './ChatPanel.css'
 // 다른 화면을 보면서 동시에 쓸 수 있게 하는 게 이 컴포넌트의 존재 이유.
 //
 // 화면 개선 ⑤(08-06) 갱신 — 예전엔 마운트마다 crypto.randomUUID()로 새 thread_id를
-// 발급해서 새로고침하면 대화가 사라졌다. 이제 chat_sessions 중 가장 최근(updated_at)
-// 세션을 이어서 연다 — 왼쪽 독립 챗 화면(Chat.tsx)이 세션 여러 개를 관리하는 "허브"고,
-// 여긴 그중 방금 쓰던 것 하나만 항상 보여주는 "바로가기"라는 역할 분담. 세션이 하나도
-// 없을 때만(첫 사용) 새 uuid로 새 대화를 시작한다. 두 화면이 같은 react-query 키
-// ('chat-sessions')를 보므로, 왼쪽에서 다른 세션에 메시지를 보내 그게 최신이 되면
-// 이 패널도 자동으로 그 세션을 따라간다(전송 후 invalidateQueries는 useChatThread
-// 안에서 처리).
+// 발급해서 새로고침하면 대화가 사라졌다. 이제 방금 쓰던 세션을 이어서 연다 — 왼쪽 독립
+// 챗 화면(Chat.tsx)이 세션 여러 개를 관리하는 "허브"고, 여긴 그중 하나만 항상 보여주는
+// "바로가기"라는 역할 분담. 세션이 하나도 없을 때만(첫 사용) 새 uuid로 새 대화를 시작한다.
+// 두 화면이 같은 react-query 키('chat-sessions')를 보므로, 왼쪽에서 다른 세션에 메시지를
+// 보내 그게 최신이 되면 이 패널도 자동으로 그 세션을 따라간다(전송 후 invalidateQueries는
+// useChatThread 안에서 처리).
+//
+// 08-07 정정 — "방금 쓰던"을 처음엔 sessions[0](updated_at DESC, 즉 "마지막으로 답변을
+// 요청한" 세션)으로 구현했는데, 사용자 재현으로 "마지막으로 본" 세션이어야 한다는 게
+// 드러났다(챗 a에 질문 → 챗 b를 읽기만 함 → 다른 화면으로 이동 → 패널에 a가 뜨는 버그).
+// `updated_at`은 `touch_session()`이 `/query`(답변 요청) 때만 갱신해 "열람 시각"을 표현할
+// 수 없어서다. localStorage(`lib/lastViewedChat.ts`)에 왼쪽 챗 화면이 기록해둔 thread_id를
+// 우선 쓰고, 그 세션이 삭제됐으면 sessions[0]로 폴백한다.
 //
 // 08-06 후속 — 챗봇 화면(왼쪽)에 이미 같은 세션이 떠 있으니 이 패널은 거기선
 // 중복이다. ① 챗봇 화면(/chat, /chat/new, /chat/:id)에서는 무조건 닫는다.
@@ -48,7 +55,13 @@ export function ChatPanel() {
 
   const [freshThreadId] = useState(() => crypto.randomUUID())
   const sessionsQuery = useQuery({ queryKey: ['chat-sessions'], queryFn: listChatSessions })
-  const mostRecent = sessionsQuery.data?.sessions[0]
+  const sessions = sessionsQuery.data?.sessions
+  // "마지막으로 답변을 요청한" 챗(sessions[0], updated_at 기준) 대신 "마지막으로 본" 챗을
+  // 연다(RoadMap 항목) — 왼쪽 챗 화면이 기록해둔 thread_id를 우선 찾고, 그 세션이 그 사이
+  // 삭제됐으면(목록에 없으면) sessions[0]로 폴백한다.
+  const lastViewedId = getLastViewedChatThreadId()
+  const lastViewedSession = sessions?.find((s) => s.thread_id === lastViewedId)
+  const mostRecent = lastViewedSession ?? sessions?.[0]
   const threadId = mostRecent?.thread_id ?? freshThreadId
 
   const chat = useChatThread(threadId, { hydrateOnMount: mostRecent !== undefined })
