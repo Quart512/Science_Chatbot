@@ -105,9 +105,10 @@
   position: relative;
 }
 
-.chat-message-content {
-  white-space: pre-wrap;
-}
+/* 08-07 — 마크다운 렌더링 도입 전엔 content가 순수 텍스트라 pre-wrap으로 개행을 살렸는데,
+   이제 <Markdown>(react-markdown)이 실제 블록 요소(p/ul/li 등)를 뿜어서 각 요소가 자기
+   여백을 관리한다(Markdown.css) — pre-wrap을 그대로 두면 자식 요소까지 상속돼 의도치
+   않게 공백이 보존될 수 있어 제거. */
 
 .chat-message-delete {
   position: absolute;

@@ -6,6 +6,7 @@ import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import { getLastViewedChatThreadId } from '../lib/lastViewedChat'
 import { ChatIcon } from './NavIcons'
+import { Markdown } from './Markdown'
 import { StreamProgress } from './StreamProgress'
 import './ChatPanel.css'
 
@@ -114,7 +115,7 @@ export function ChatPanel() {
           <div className="chat-turn" key={turn[0].id ?? `turn-${ti}`}>
             {turn.map((m, i) => (
               <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
-                <div className="chat-message-content">{m.content}</div>
+                <div className="chat-message-content"><Markdown text={m.content} /></div>
                 {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
                 {m.trace && m.trace.length > 0 && <StreamProgress steps={m.trace} live={false} />}
                 {m.id && (

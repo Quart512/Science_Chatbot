@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
 import { ChatIcon } from '../components/NavIcons'
+import { Markdown } from '../components/Markdown'
 import { StreamProgress } from '../components/StreamProgress'
 import { setLastViewedChatThreadId } from '../lib/lastViewedChat'
 import './Chat.css'
@@ -68,7 +69,7 @@ export function Chat() {
           <div className="chat-turn" key={turn[0].id ?? `turn-${ti}`}>
             {turn.map((m, i) => (
               <div key={m.id ?? i} className={`chat-message chat-message-${m.role}`}>
-                <div className="chat-message-content">{m.content}</div>
+                <div className="chat-message-content"><Markdown text={m.content} /></div>
                 {m.comment && <div className="chat-message-comment">💬 {m.comment}</div>}
                 {m.trace && m.trace.length > 0 && <StreamProgress steps={m.trace} live={false} />}
                 {m.id && (
