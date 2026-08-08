@@ -212,7 +212,9 @@ def test_client_construction_failure_falls_back(monkeypatch):
     response, used_model, disabled, tokens = models.invoke_with_fallback("gemini", messages=["dummy"])
 
     assert used_model == "claude"
-    assert disabled == ["gemini"]
+    # 08-08 — MissingAPIKeyError는 REQUEST_SCOPED_EXCEPTIONS로 옮겼다(아래 함수의
+    # 갱신된 주석 참고) — 세션 차단 안 함, 다음 턴엔 gemini를 다시 시도한다.
+    assert disabled == []
     fake_claude.invoke.assert_called_once()
 
 
@@ -229,8 +231,20 @@ def test_client_construction_failure_on_every_model_raises_with_detail(monkeypat
     message = str(excinfo.value)
     assert "gemini" in message and "claude" in message
     assert "API 키" in message
-    # MissingAPIKeyError는 SESSION_OUTAGE_EXCEPTIONS라 둘 다 진짜 세션 차단감이어야 한다.
-    assert set(excinfo.value.disabled_models) == {"gemini", "claude"}
+    # 08-08 — MissingAPIKeyError를 REQUEST_SCOPED_EXCEPTIONS로 재분류했다(아래 참고).
+    # 그 결과 disabled_models(체크포인트에 저장돼 세션 내내 남는 값)엔 아무것도 안 실린다
+    # — 이 실패가 "이번 요청 한정"이라는 뜻이고, 다음 턴엔 두 모델 다시 시도한다.
+    #
+    # 재분류 이유: 원래 SESSION_OUTAGE_EXCEPTIONS였던 근거("사용자가 설정에서 넣기
+    # 전엔 계속 실패")는 맞았지만 "그 뒤엔 더는 실패 안 한다"는 반대쪽을 놓쳤다 —
+    # v0.1.2 실사용에서 실제로 겪음: 키 없이 챗을 시도해 disabled_models에 오른 뒤,
+    # 같은 세션에서 설정 화면에 키를 입력해도 그 스레드는 계속 막혔다(체크포인트에
+    # 박힌 disabled_models를 다시 열어주는 경로가 없어서 — 새 스레드로 가야만 풀렸다).
+    # 세션 차단이 원래 아끼려던 건 "실패할 걸 아는 API 호출"인데, MissingAPIKeyError는
+    # `model_map[name]()` 생성 단계(네트워크 호출 전)에서 나는 예외라 매 턴 다시
+    # 확인해도 비용이 0이다 — 그러니 기억해 둘 값어치가 없고, 매 턴 다시 확인하는
+    # 쪽이 공짜로 더 낫다(키가 여전히 없으면 즉시 같은 실패, 생겼으면 바로 성공).
+    assert excinfo.value.disabled_models == []
 
 
 def test_disabled_models_are_skipped_without_calling_invoke(monkeypatch):

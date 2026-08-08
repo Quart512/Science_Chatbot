@@ -7,12 +7,18 @@ import pytest
 
 import api_keys
 import models
-from models import MissingAPIKeyError, SESSION_OUTAGE_EXCEPTIONS, model_map
+from models import MissingAPIKeyError, REQUEST_SCOPED_EXCEPTIONS, model_map
 
 
-def test_missing_api_key_error_is_a_session_outage_exception():
-    # invoke_with_fallback이 이 예외를 잡아 다른 모델로 폴백하려면 여기 속해 있어야 한다.
-    assert issubclass(MissingAPIKeyError, SESSION_OUTAGE_EXCEPTIONS)
+def test_missing_api_key_error_is_request_scoped_not_session_outage():
+    # 08-08 — v0.1.2 실사용에서 발견한 버그의 회귀 테스트. 예전엔 SESSION_OUTAGE_EXCEPTIONS라
+    # disabled_models(체크포인트 저장, 스레드 내내 유지)에 올라, 설정 화면에서 키를 입력한
+    # 뒤에도 같은 스레드에서는 계속 막혔다(다시 열어주는 경로가 없어서). MissingAPIKeyError는
+    # model_map[name]() 생성 단계(네트워크 호출 전)에서 나는 예외라 매 턴 다시 확인해도
+    # 비용이 0이므로, REQUEST_SCOPED_EXCEPTIONS로 옮겨 매번 다시 확인하게 했다 — 여전히
+    # invoke_with_fallback의 FALLBACK_EXCEPTIONS 안이라 다른 모델로 폴백은 그대로 된다.
+    assert issubclass(MissingAPIKeyError, REQUEST_SCOPED_EXCEPTIONS)
+    assert issubclass(MissingAPIKeyError, models.FALLBACK_EXCEPTIONS)
 
 
 def test_gemini_client_raises_missing_api_key_error_without_any_key(monkeypatch):

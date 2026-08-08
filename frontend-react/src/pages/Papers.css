@@ -225,6 +225,24 @@
   margin: 0.15rem 0 0;
 }
 
+.paper-row-dates-and-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.paper-row-delete {
+  background: none;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-danger);
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .paper-row-summary {
   margin-top: 0.75rem;
   border-top: 1px solid var(--color-border);
@@ -278,27 +296,47 @@
   margin-top: 0.5rem;
 }
 
-.paper-row-pdf-summary {
+/* 08-08 — 토글(뷰어 열기)과 전체화면을 나란한 버튼 둘로. 예전엔 토글이 스타일 없는
+   <summary> 텍스트라 안 보이고, 작은 아이콘 버튼(전체화면)이 오히려 "버튼"처럼 보여
+   둘의 역할이 헷갈렸다(사용자 지적) — 토글에 그 "버튼처럼 보이는" 테두리 스타일을
+   옮기고, 전체화면은 라벨이 있는 별도 버튼으로 새로 만든다. `.paper-row-file button`의
+   일반 규칙(강조색 채움)보다 우선하도록 구체적으로 겹쳐 쓴다. */
+.paper-row-pdf-controls {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  cursor: pointer;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
-.paper-row-pdf-expand {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
+.paper-row-pdf-toggle {
+  background: none !important;
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
-  color: var(--color-text-muted);
-  padding: 0.2rem;
+  color: var(--color-text) !important;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 
-.paper-row-pdf-expand:hover {
-  color: var(--color-text);
+.paper-row-pdf-toggle:hover {
+  border-color: var(--color-accent);
+}
+
+.paper-row-pdf-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none !important;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-muted) !important;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.paper-row-pdf-fullscreen-btn:hover {
+  color: var(--color-text) !important;
   border-color: var(--color-accent);
 }
 

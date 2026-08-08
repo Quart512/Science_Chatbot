@@ -43,6 +43,38 @@
   color: white;
 }
 
+/* 08-08 — 라이브러리 내보내기 3옵션. 버튼 title(툴팁)에 숨어 있던 설명을 항상
+   보이는 텍스트로 뺀 자리 — 버튼+설명을 세로로 묶어 옵션마다 한 단위로 읽힌다. */
+.settings-export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.settings-export-option button {
+  background: var(--color-border);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+
+.settings-export-hint {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+  max-width: 42rem;
+}
+
+.settings-release-notes {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+  max-width: 640px;
+}
+
 .settings-theme-active {
   background: var(--color-accent) !important;
   border-color: var(--color-accent) !important;

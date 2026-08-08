@@ -218,7 +218,50 @@ def test_list_papers_title_search_is_substring_and_escapes_wildcards(conn):
     assert [p["paper_id"] for p in percent_search] == ["arxiv:3"]
 
 
+def test_list_papers_search_falls_back_to_filename_when_title_missing(conn):
+    # 08-08 — v0.1.2 실사용에서 발견한 버그의 회귀 테스트. 서지정보를 못 찾은 업로드는
+    # title이 빈 문자열이고 PaperRow.tsx가 화면엔 filename을 대신 보여준다
+    # (`title || filename || paper_id`) — 검색이 title만 보면, 화면에 뜬 그 이름으로
+    # 검색해도 영영 못 찾는다(사용자가 "Crossroads.pdf"로 검색했는데 안 나온 사례).
+    paper_catalog.mark_owned("hash:1", title="", filename="Crossroads.pdf", conn=conn)
+    paper_catalog.mark_owned("hash:2", title="다른 논문", filename="unrelated.pdf", conn=conn)
+
+    assert [p["paper_id"] for p in paper_catalog.list_papers(q="Crossroads", conn=conn)] == ["hash:1"]
+    assert [p["paper_id"] for p in paper_catalog.list_papers(q="Crossroads.pdf", conn=conn)] == ["hash:1"]
+    # title 검색은 여전히 정상 동작해야 한다(회귀 방지).
+    assert [p["paper_id"] for p in paper_catalog.list_papers(q="다른", conn=conn)] == ["hash:2"]
+
+
 # --- move_paper() (08-06, library_order.py) ---------------------------------------
+
+# --- delete_paper() (08-08, 사용자 요청) ---------------------------------------
+
+def test_delete_paper_removes_row_and_returns_true(conn):
+    paper_catalog.mark_owned("hash:1", title="지울 논문", conn=conn)
+
+    assert paper_catalog.delete_paper("hash:1", conn=conn) is True
+    assert paper_catalog.get_paper("hash:1", conn=conn) is None
+
+
+def test_delete_paper_returns_false_when_not_found(conn):
+    assert paper_catalog.delete_paper("hash:없음", conn=conn) is False
+
+
+def test_delete_paper_also_removes_interest_paper_rows(conn):
+    # 안 지우면 관심사 화면이 존재하지 않는 논문을 계속 보여준다(LEFT JOIN이라 title 등이
+    # NULL로 나와 화면이 깨진다) — delete_screenings_for_interest의 반대 방향.
+    paper_catalog.mark_owned("hash:1", title="관심사에 걸린 논문", conn=conn)
+    conn.execute(
+        "INSERT INTO interest_paper (interest_id, paper_id, is_relevant, reasoning, screened_at) "
+        "VALUES (1, 'hash:1', 1, '테스트', '2026-01-01T00:00:00Z')"
+    )
+    conn.commit()
+
+    paper_catalog.delete_paper("hash:1", conn=conn)
+
+    remaining = conn.execute("SELECT * FROM interest_paper WHERE paper_id = 'hash:1'").fetchall()
+    assert remaining == []
+
 
 def test_move_paper_only_swaps_within_same_status(conn):
     # sort_order는 papers 테이블 전체가 공유하는 하나의 축이다 — recommended 논문이

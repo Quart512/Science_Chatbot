@@ -25,6 +25,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # 설정 화면 버전 표시(RoadMap "[설정] 릴리즈 버전·릴리즈 노트 토글" 항목)의 유일한
+      # 소스 — pyproject.toml의 version은 릴리즈마다 손으로 맞출 두 번째 자리가 생겨서
+      # 이미 어긋나 있었다(실제론 v0.1.2인데 계속 0.1.0). 태그(github.ref_name) 자체가
+      # 이미 진짜 소스라 그대로 파일로 떨어뜨린다 — workflow_dispatch 테스트 실행에서는
+      # 브랜치명이 찍히는데, 이건 정식 릴리즈가 아니니 의도된 동작이다.
+      - run: echo "${{ github.ref_name }}" > VERSION
       - run: bash scripts/build_bundle_macos.sh
       - name: zip
         run: cd build && zip -r -q ../AIsaac-macos.zip AIsaac
@@ -43,6 +49,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - shell: pwsh
+        run: Set-Content -Path VERSION -NoNewline -Value "${{ github.ref_name }}"
       - shell: pwsh
         run: ./scripts/build_bundle_windows.ps1
       - name: zip
@@ -63,6 +71,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - run: echo "${{ github.ref_name }}" > VERSION
       - run: bash scripts/build_bundle_linux.sh
       - name: zip
         run: cd build && zip -r -q ../AIsaac-linux.zip AIsaac

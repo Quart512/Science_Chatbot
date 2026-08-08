@@ -123,6 +123,27 @@ def get_paper(paper_id: str, *, conn: sqlite3.Connection | None = None) -> dict 
             conn.close()
 
 
+def delete_paper(paper_id: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    """카탈로그에서 논문 한 편을 지운다(08-08, 사용자 요청 — v0.1.2 실사용 피드백).
+    원본 PDF(library/ 파일)는 건드리지 않는다 — 논문은 원본이 따로 있는 불변 소스라
+    수정 엔드포인트를 안 두는 것과 같은 이유(get_paper_summary_endpoint 주석 참고).
+    벡터스토어(추출 결과·전문 청크) 정리는 여기서 안 한다 — 이 모듈은 RDB만 소유하고
+    VDB는 main.py 호출부가 담당(paper_ingest.register_paper의 재등록 삭제와 같은 경계).
+
+    interest_paper 조인 행도 같이 지운다 — 안 지우면 관심사 화면이 존재하지 않는
+    논문을 계속 보여준다(delete_screenings_for_interest의 반대 방향, 같은 이유)."""
+    owns_conn = conn is None
+    conn = conn or _get_connection()
+    try:
+        conn.execute("DELETE FROM interest_paper WHERE paper_id = ?", (paper_id,))
+        cur = conn.execute("DELETE FROM papers WHERE paper_id = ?", (paper_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        if owns_conn:
+            conn.close()
+
+
 # sort(08-06) — 기본(None)은 sort_order(수동 정렬, library_order.py). 나머지는 프론트
 # 정렬 드롭다운이 고를 수 있는 4가지뿐이라 화이트리스트 dict로 SQL을 고정(사용자 입력
 # 문자열을 ORDER BY에 직접 꽂지 않기 위함 — main.py의 Literal 타입이 이미 값 자체를
@@ -141,7 +162,13 @@ def list_papers(
 ) -> list[dict]:
     """q(08-06)는 제목 부분 일치 검색뿐 — 저자·초록까지 넓히면 "제목 검색"이라는
     사용자 기대와 어긋난다. sort가 None이면 수동 정렬(sort_order) — q나 sort 중
-    하나라도 켜지면 화면이 "위/아래 버튼 끄기"로 반응한다(main.py 주석 참고)."""
+    하나라도 켜지면 화면이 "위/아래 버튼 끄기"로 반응한다(main.py 주석 참고).
+
+    08-08 — filename도 같이 본다(v0.1.2 실사용에서 발견한 버그 수정). PaperRow.tsx의
+    표시 우선순위가 `title || filename || paper_id`라 서지정보를 못 찾은 업로드는 화면에
+    파일명이 뜨는데, 검색은 title 컬럼만 봐서 그 논문은 **화면에 보이는 그 이름으로도
+    영영 못 찾았다**(title이 NULL이라 LIKE가 항상 거짓). 화면이 보여주는 이름과 검색이
+    보는 이름을 맞춘다 — OR로 걸되 파라미터는 한 번만 만들고 재사용."""
     owns_conn = conn is None
     conn = conn or _get_connection()
     try:
@@ -150,8 +177,9 @@ def list_papers(
             where.append("status = ?")
             params.append(status)
         if q:
-            where.append("title LIKE ? ESCAPE '\\'")
-            params.append(library_order.escape_like(q))
+            where.append("(title LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\')")
+            like_q = library_order.escape_like(q)
+            params.extend([like_q, like_q])
         where_sql = f" WHERE {' AND '.join(where)}" if where else ""
         order_sql = _SORT_SQL[sort] if sort is not None else "sort_order"
         rows = conn.execute(f"SELECT * FROM papers{where_sql} ORDER BY {order_sql}", params).fetchall()

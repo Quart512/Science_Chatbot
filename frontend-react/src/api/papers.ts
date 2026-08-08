@@ -60,6 +60,15 @@ export function movePaper(paperId: string, direction: 'up' | 'down') {
   )
 }
 
+// 08-08 — 사용자 요청. 원본 PDF(library/ 파일)는 안 건드리고 카탈로그 항목만 지운다
+// (main.py delete_paper_endpoint 주석 참고).
+export function deletePaper(paperId: string) {
+  return apiFetch<{ paper_id: string; action: string }>(
+    `/papers/${encodeURIComponent(paperId)}`,
+    { method: 'DELETE' },
+  )
+}
+
 // multipart/form-data라 apiFetch(JSON 전용)를 못 쓴다 — Content-Type을 직접 안 정해야
 // 브라우저가 boundary를 붙여서 알아서 채운다.
 // title(08-05) — arxiv_id가 없는 논문은 자동 조회가 안 걸려 제목을 넣을 방법이 없었다.

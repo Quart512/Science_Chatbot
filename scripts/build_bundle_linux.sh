@@ -75,6 +75,13 @@ done
 mkdir -p "$BUNDLE/frontend-react"
 cp -R frontend-react/dist "$BUNDLE/frontend-react/dist"
 
+# 설정 화면 버전·릴리즈 노트 표시(RoadMap "[설정] 릴리즈 버전·릴리즈 노트 토글" 항목)용 —
+# macOS 스크립트와 같은 이유(VERSION은 release.yml이 태그로 미리 써두는 파일, 없으면
+# "dev"로 대체. 릴리즈 노트는 로컬 앱이라 오프라인에서도 봐야 해서 통째로 담는다).
+[ -f VERSION ] && cp VERSION "$BUNDLE/VERSION" || echo "dev" > "$BUNDLE/VERSION"
+mkdir -p "$BUNDLE/docs"
+cp -R docs/releases "$BUNDLE/docs/releases"
+
 echo "==> 5/5 조용한 런처 생성"
 cat > "$BUNDLE/run.sh" <<'LAUNCHER'
 #!/bin/bash

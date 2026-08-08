@@ -157,7 +157,6 @@ SESSION_OUTAGE_EXCEPTIONS = (
     PermissionDenied,       # 403 결제 계정 정지 등
     RateLimitError,         # anthropic 429
     APIConnectionError,     # 로컬 llama-server가 안 떠 있음 — 세션 중에 켜질 일이 드묾
-    MissingAPIKeyError,     # 키 자체가 없음 — 사용자가 설정에서 넣기 전엔 계속 실패
 )
 
 # fallback은 타되 세션 차단은 안 하는 것들 — 다음 턴엔 사용자가 고른 모델을 다시 시도한다.
@@ -165,6 +164,16 @@ REQUEST_SCOPED_EXCEPTIONS = (
     ChatGoogleGenerativeAIError,  # INVALID_ARGUMENT 등 이 요청의 형식 문제
     BadRequestError,              # openai(=로컬 llama-server) 400
     LengthFinishReasonError,      # 이 요청이 이 모델 컨텍스트에 안 들어감
+    # 08-08 — v0.1.2 실사용에서 발견: 키 없이 한 번 실패하면 disabled_models(LangGraph
+    # 체크포인트에 저장, 스레드 내내 유지)에 올라, 그 뒤 설정 화면에서 키를 입력해도
+    # 같은 스레드에서는 계속 "API 키를 확인해주세요"로 막혔다 — disabled_models를
+    # 다시 열어주는 경로가 어디에도 없었기 때문(새 스레드로 가야만 풀렸다). 원래
+    # SESSION_OUTAGE로 분류했던 근거("사용자가 설정에서 넣기 전엔 계속 실패")는 맞지만
+    # "그 뒤엔 더는 실패 안 한다"는 반대쪽을 놓쳤다. 세션 차단 최적화가 아끼는 건
+    # "실패할 걸 아는 API 호출"인데, MissingAPIKeyError는애초에 `model_map[name]()`
+    # 생성 단계(네트워크 호출 전)에서 나는 예외라 매 턴 다시 확인해도 비용이 0이다 —
+    # 그러니 세션 내내 기억해 둘 값어치가 없고, 매 턴 다시 확인하는 쪽이 공짜로 더 낫다.
+    MissingAPIKeyError,
 )
 
 # 클래스만으로는 못 가르는 것들 — _is_session_outage()가 내용을 보고 판정한다.

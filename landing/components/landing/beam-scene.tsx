@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { buildScene, type Box, type Scene } from "@/lib/beam-geometry"
 
 // 08-08 ④ — 스크롤이 곧 빛의 경로. 히어로(골방) → 프리즘 → 궤도를 한 줄기가 가로지른다.
@@ -15,20 +15,46 @@ import { buildScene, type Box, type Scene } from "@/lib/beam-geometry"
 // 각 섹션이 원래 갖고 있던 작은 비주얼이 그 자리를 대신한다.
 const LG = 1024
 
-// 스크롤 진행도(0~1) 구간 — 스케치의 배분을 그대로 옮겼다.
-// [시작, 끝, 완료 후 흐려지는지]
-const SEGMENTS: Record<string, [number, number, boolean]> = {
-  beam: [0.0, 0.18, false],
-  band0: [0.18, 0.4, false],
-  band1: [0.18, 0.4, false],
-  band2: [0.18, 0.4, false],
-  band3: [0.18, 0.4, false],
-  band4: [0.18, 0.4, false],
-  descend: [0.4, 0.62, false],
-  shot0: [0.62, 0.71, true],
-  shot1: [0.71, 0.8, true],
-  shot2: [0.8, 0.89, true],
-  closed: [0.89, 1.0, false],
+// 08-08 후속(사용자 지적 — "빛 그려지는 지점이 화면 아래에 치우친다") — 예전엔 이
+// 구간을 스케치(고정 1000×2880 레이아웃)의 배분 그대로 하드코딩해뒀다. 뷰포트 중앙
+// 기준으로 진행도를 재도(아래 render() 참고) "지금 화면 중앙이 가리키는 지점"과
+// "지금 실제로 그려지는 지점"이 안 맞았던 진짜 이유가 이거였다 — 프리즘 분산은
+// p=0.18~0.40에 그리도록 돼 있었는데 실측 프리즘 박스는 p=0.373~0.664에 있었다.
+// 그래서 각 조각을 **실제 앵커 박스 위치**(scene.sectionsY, 매 리사이즈·언어 전환마다
+// 다시 잰 값)에서 계산한다 — 구간이 항상 그 조각이 실제로 그려지는 자리와 맞아떨어진다.
+// 탄도 3발+닫힌 궤도의 상대 비율(궤도 구간을 23.7/23.7/23.7/28.9%로 나누는 것)만
+// 스케치 배분을 그대로 유지한다 — 그건 위치가 아니라 "같은 대포를 점점 빠르게 다시
+// 쏜다"는 서사 배분이라 실측과 무관하다.
+function buildSegments(scene: Scene): Record<string, [number, number, boolean]> {
+  const { room, prism, orbit } = scene.sectionsY
+  // 창구멍(대략 room 구간의 중간)에서 프리즘 입사까지.
+  const beamStart = room[0] + (room[1] - room[0]) * 0.5
+  const beamEnd = prism[0]
+  const bandsStart = prism[0]
+  const bandsEnd = prism[1]
+  const descendStart = prism[1]
+  const descendEnd = orbit[0]
+  const orbitStart = orbit[0]
+  const orbitEnd = orbit[1]
+  const orbitSpan = orbitEnd - orbitStart
+  // 옛 배분(0.62~1.00, 전체 0.38)에서 탄도 3발이 각 23.7%, 닫힌 궤도가 28.9%를 썼다.
+  const shot0End = orbitStart + orbitSpan * 0.237
+  const shot1End = orbitStart + orbitSpan * 0.474
+  const shot2End = orbitStart + orbitSpan * 0.711
+
+  return {
+    beam: [beamStart, beamEnd, false],
+    band0: [bandsStart, bandsEnd, false],
+    band1: [bandsStart, bandsEnd, false],
+    band2: [bandsStart, bandsEnd, false],
+    band3: [bandsStart, bandsEnd, false],
+    band4: [bandsStart, bandsEnd, false],
+    descend: [descendStart, descendEnd, false],
+    shot0: [orbitStart, shot0End, true],
+    shot1: [shot0End, shot1End, true],
+    shot2: [shot1End, shot2End, true],
+    closed: [shot2End, orbitEnd, false],
+  }
 }
 
 // 밴드 색은 프리즘 섹션의 범례와 같은 토큰을 쓴다 — 둘이 다른 색이면 범례가 범례가 아니다.
@@ -62,6 +88,8 @@ function readBox(wrap: HTMLElement, name: string): Box | null {
 
 export function BeamScene({ wrapRef }: { wrapRef: React.RefObject<HTMLDivElement | null> }) {
   const [scene, setScene] = useState<Scene | null>(null)
+  // scene(=측정 결과)이 바뀔 때만 다시 계산하면 된다 — 스크롤마다 새로 만들 이유가 없다.
+  const segments = useMemo(() => (scene ? buildSegments(scene) : null), [scene])
   // path 하나당 전체 길이를 재둔다. stroke-dasharray를 길이만큼 주고 dashoffset을
   // 그 길이에서 0으로 줄이면 선이 그려지는 것처럼 보인다 — SVG의 표준 관용구다.
   const paths = useRef(new Map<string, SVGPathElement>())
@@ -109,16 +137,22 @@ export function BeamScene({ wrapRef }: { wrapRef: React.RefObject<HTMLDivElement
   // 프레임을 흘린다.
   const render = useCallback(() => {
     const wrap = wrapRef.current
-    if (!wrap || !scene) return
+    if (!wrap || !scene || !segments) return
     const r = wrap.getBoundingClientRect()
-    const startY = r.top + window.scrollY
-    // 진행도는 **래퍼 자신의 위치**로 잰다. 스케치는 문서 전체 스크롤을 썼지만 실제
-    // 페이지는 이 아래로 기능 섹션·CTA·푸터가 더 있어서, 문서 전체로 재면 궤도가
-    // 페이지 맨 끝에 가서야 닫힌다.
-    const span = r.height - window.innerHeight
-    const p = span > 0 ? clamp((window.scrollY - startY) / span) : 1
+    const wrapTop = r.top + window.scrollY
+    // 08-08 후속(사용자 지적) — "빛이 그려지는 지점이 화면 아래쪽에 치우친다".
+    // 예전엔 **뷰포트 위쪽 가장자리**를 기준으로 진행도를 쟀다(래퍼 top이 뷰포트
+    // top과 겹칠 때 p=0, 래퍼 bottom이 뷰포트 bottom과 겹칠 때 p=1). 그러면 p=1에
+    // 도달하기 전까지는 "지금 그려지는 지점"이 화면 하단 근처에 머무른다 — 뷰포트가
+    // 아직 래퍼를 다 못 지나간 상태이기 때문. 화면 높이(vh)만큼을 통째로 손해 보는 셈.
+    //
+    // 그래서 기준을 **뷰포트 중앙**으로 바꾼다: 뷰포트 중앙이 래퍼 top과 겹칠 때 p=0,
+    // 래퍼 bottom과 겹칠 때 p=1. 이러면 "지금 그려지는 지점"이 스크롤 내내 화면
+    // 중앙 언저리에 붙어 따라온다 — 스크롤리텔링에서 흔히 쓰는 관용구다.
+    const viewportCenterY = window.scrollY + window.innerHeight / 2
+    const p = r.height > 0 ? clamp((viewportCenterY - wrapTop) / r.height) : 1
 
-    for (const [key, [s, e, fades]] of Object.entries(SEGMENTS)) {
+    for (const [key, [s, e, fades]] of Object.entries(segments)) {
       const el = paths.current.get(key)
       const len = lengths.current.get(key)
       if (!el || !len) continue
@@ -128,9 +162,11 @@ export function BeamScene({ wrapRef }: { wrapRef: React.RefObject<HTMLDivElement
       // 다시 쏜 것이라는 게 자국으로 남아야 읽힌다.
       if (fades) el.style.opacity = String(1 - clamp((p - e) / 0.06) * 0.75)
     }
-    // 궤도가 닫히고 나서야 단계가 올라온다
-    if (stagesRef.current) stagesRef.current.style.opacity = String(clamp((p - 0.93) / 0.05))
-  }, [scene, wrapRef])
+    // 궤도가 닫히고 나서야 단계가 올라온다 — 옛 하드코딩(0.93)도 같은 이유로 버리고
+    // "closed"가 끝나는 실제 지점(=orbit 박스 끝)에서 시작해 0.05만큼 페이드.
+    const closedEnd = segments.closed[1]
+    if (stagesRef.current) stagesRef.current.style.opacity = String(clamp((p - closedEnd) / 0.05))
+  }, [scene, segments, wrapRef])
 
   useLayoutEffect(() => {
     if (!scene) return

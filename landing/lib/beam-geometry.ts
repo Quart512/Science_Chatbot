@@ -138,6 +138,14 @@ export type Scene = {
   closed: string
   stages: [number, number][]
   unit: number
+  // 08-08 후속(사용자 지적 — "빛 그려지는 지점이 화면 아래에 치우친다") — 세 앵커
+  // 박스가 래퍼 전체 높이에서 차지하는 세로 구간(0~1 비율). `beam-scene.tsx`가 스크롤
+  // 진행도별로 무엇을 그릴지 정할 때 이 값을 써야, "지금 화면 중앙이 가리키는 지점"과
+  // "지금 실제로 그려지는 지점"이 같은 곳을 가리킨다 — 옛 코드는 이걸 스케치(고정
+  // 1000×2880 레이아웃)의 비율로 하드코딩해뒀는데, 실제 반응형 페이지의 진짜 섹션
+  // 위치와 전혀 안 맞았다(프리즘 진행도 구간은 0.18~0.40인데 실측 프리즘 박스는
+  // 0.373~0.664에 있었다 — 그 차이만큼 그려지는 지점이 화면 밖으로 밀려났다).
+  sectionsY: { room: [number, number]; prism: [number, number]; orbit: [number, number] }
 }
 
 /**
@@ -202,6 +210,12 @@ export function buildScene(wrapW: number, wrapH: number, boxes: { room: Box; pri
   const opposite: [number, number] = [center[0] - R, center[1]]
   const closed = `M ${pt(muzzle)} A ${f(R)} ${f(R)} 0 0 1 ${pt(opposite)} A ${f(R)} ${f(R)} 0 0 1 ${pt(muzzle)}`
 
+  // 세 앵커 박스의 세로 구간을 래퍼 전체 높이 대비 비율로 — U 단위끼리 나누므로
+  // 배율 k는 분자·분모에서 상쇄돼 결과는 원래 px 기준으로 재도 같다.
+  const totalH = wrapH * k
+  const frac = (b: Box): [number, number] => [b.y / totalH, (b.y + b.h) / totalH]
+  const sectionsY = { room: frac(room), prism: frac(prism), orbit: frac(orbit) }
+
   return {
     viewBox: `0 0 1000 ${f(wrapH * k)}`,
     room: {
@@ -232,5 +246,6 @@ export function buildScene(wrapW: number, wrapH: number, boxes: { room: Box; pri
     closed,
     stages: ORBIT.stages.map((p) => P(orbit, ...p)),
     unit: s,
+    sectionsY,
   }
 }

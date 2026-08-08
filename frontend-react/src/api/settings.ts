@@ -21,3 +21,12 @@ export function saveApiKey(provider: 'gemini' | 'claude', apiKey: string) {
 export function deleteApiKey(provider: 'gemini' | 'claude') {
   return apiFetch<{ provider: string; action: string }>(`/settings/keys/${provider}`, { method: 'DELETE' })
 }
+
+export interface VersionInfo {
+  version: string
+  release_notes: string | null
+}
+
+export function getVersion() {
+  return apiFetch<VersionInfo>('/version')
+}

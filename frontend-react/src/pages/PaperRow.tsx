@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ANALYSIS_IN_PROGRESS,
+  deletePaper,
   getPaperFileUrl,
   getPaperSummary,
   movePaper,
@@ -77,8 +78,18 @@ export function PaperRow({
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const [pdfOpen, setPdfOpen] = useState(false)
   const moveMutation = useMutation({
     mutationFn: (direction: 'up' | 'down') => movePaper(paper.paper_id, direction),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['papers'] }),
+  })
+  // 08-08 — 사용자 요청. "library/에서 지워도 다시 스캔이 미추적 파일로 인식 못 한다"는
+  // 별도 지적에는 감지 기능을 새로 안 만들기로 했다(요약 등 추출 결과는 원본이 없어도
+  // 남아 그 나름대로 값어치가 있다는 사용자 판단) — 대신 원치 않는 카탈로그 항목을
+  // 직접 지우는 이 버튼만 추가한다. 확인 대화상자는 이 코드베이스 다른 삭제(실험도구·
+  // 지식노트)도 안 쓰는 관례라 그대로 따른다.
+  const deleteMutation = useMutation({
+    mutationFn: () => deletePaper(paper.paper_id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['papers'] }),
   })
   // 논문 분석 멈춤 버그 대응(08-06, RoadMap 참고) — failed는 청크가 아예 없어 요약을
@@ -131,10 +142,23 @@ export function PaperRow({
         <span>{expanded ? '▲' : '▼'}</span>
       </button>
       {paper.authors && <p className="paper-row-meta">{paper.authors} {paper.year && `(${paper.year})`}</p>}
-      <p className="paper-row-dates">
-        등록 {paper.created_at.slice(0, 10)}
-        {paper.updated_at !== paper.created_at && ` · 수정 ${paper.updated_at.slice(0, 10)}`}
-      </p>
+      <div className="paper-row-dates-and-actions">
+        <p className="paper-row-dates">
+          등록 {paper.created_at.slice(0, 10)}
+          {paper.updated_at !== paper.created_at && ` · 수정 ${paper.updated_at.slice(0, 10)}`}
+        </p>
+        <button
+          type="button"
+          className="paper-row-delete"
+          onClick={() => deleteMutation.mutate()}
+          disabled={deleteMutation.isPending}
+        >
+          {deleteMutation.isPending ? '삭제 중...' : '삭제'}
+        </button>
+      </div>
+      {deleteMutation.isError && (
+        <p className="paper-message paper-message-error">삭제 실패: {(deleteMutation.error as Error).message}</p>
+      )}
 
       {/* 원본 조회 ③(08-05) — file_path가 있는 논문만. ⑤ 이전(tempfile만 쓰고
           버리던 시절)에 등록된 옛 논문만 원본이 없어 이 섹션을 안 보여준다.
@@ -161,32 +185,40 @@ export function PaperRow({
               스캔" 후 재등록하세요.
             </p>
           ) : (
-            <details>
-              <summary className="paper-row-pdf-summary">
-                원본 PDF 보기
-                {/* details 안이라 summary 클릭 = 토글이라, 버튼 클릭이 그 토글까지
-                    같이 발동하지 않도록 preventDefault+stopPropagation 둘 다 필요
-                    (preventDefault 없으면 details가 그대로 열림/닫힘). */}
+            <>
+              {/* 08-08 — 사용자 지적: "토글로 뷰어 열기"(원래 <summary> 텍스트 링크)가
+                  잘 안 보이고, 작은 아이콘 버튼(전체화면)이 오히려 눈에 띄어 둘의 역할이
+                  헷갈렸다. <details>를 걷어내고 버튼 두 개를 나란히 둔다 — 예전에
+                  전체화면 버튼이 갖고 있던 테두리 있는 "버튼처럼 보이는" 스타일을 토글
+                  쪽으로 옮기고, 전체화면은 별도 라벨이 있는 버튼으로 새로 만든다. */}
+              <div className="paper-row-pdf-controls">
                 <button
                   type="button"
-                  className="paper-row-pdf-expand"
-                  title="전체화면으로 보기"
-                  aria-label="PDF 전체화면으로 보기"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setPdfFullscreen(true)
-                  }}
+                  className="paper-row-pdf-toggle"
+                  aria-expanded={pdfOpen}
+                  onClick={() => setPdfOpen((v) => !v)}
+                >
+                  {pdfOpen ? '원본 PDF 접기' : '원본 PDF 보기'}
+                </button>
+                <button
+                  type="button"
+                  className="paper-row-pdf-fullscreen-btn"
+                  onClick={() => setPdfFullscreen(true)}
                 >
                   <ExpandIcon />
+                  전체화면으로 보기
                 </button>
-              </summary>
-              <iframe
-                className="paper-row-pdf-frame"
-                src={getPaperFileUrl(paper.paper_id)}
-                title={`${paper.title || paper.filename || paper.paper_id} 원본`}
-              />
-            </details>
+              </div>
+              {/* iframe은 pdfOpen일 때만 렌더 — 실제로 열 때만 PDF를 내려받는 lazy
+                  원칙은 그대로 유지(요약의 enabled: expanded와 같은 이유). */}
+              {pdfOpen && (
+                <iframe
+                  className="paper-row-pdf-frame"
+                  src={getPaperFileUrl(paper.paper_id)}
+                  title={`${paper.title || paper.filename || paper.paper_id} 원본`}
+                />
+              )}
+            </>
           )}
         </div>
       )}

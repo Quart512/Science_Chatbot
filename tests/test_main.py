@@ -8,6 +8,7 @@ import asyncio
 import uuid
 import zipfile
 from io import BytesIO
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
@@ -2091,3 +2092,79 @@ def test_em_dash_survives_cp949_style_stream_after_reconfigure(tmp_path):
         f.reconfigure(encoding="utf-8", errors="replace")
         f.write(answer)
     assert path.read_text(encoding="utf-8") == answer
+
+
+# --- DELETE /papers/{paper_id} (08-08, 사용자 요청) ---
+
+def test_delete_paper_endpoint_returns_deleted_action_and_cleans_vectorstore(monkeypatch):
+    # conftest.py가 retrieval을 통째로 가짜 모듈(papers_vectorstore=None)로 바꿔치기하므로
+    # 그 속성 자체를 갈아끼운다 — retrieval.papers_vectorstore.delete가 아니라
+    # retrieval.papers_vectorstore를 새 객체로(fake_retrieval_module 주석 패턴과 동일).
+    captured = {}
+    monkeypatch.setattr(paper_catalog, "delete_paper", lambda paper_id, **kw: captured.setdefault("id", paper_id) or True)
+    fake_vectorstore = SimpleNamespace(delete=lambda where: captured.setdefault("vdb_where", where))
+    monkeypatch.setattr(retrieval, "papers_vectorstore", fake_vectorstore)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/papers/hash:abc")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"paper_id": "hash:abc", "action": "deleted"}
+    assert captured["id"] == "hash:abc"
+    # 추출 결과·전문 청크도 같이 지워야 지운 논문이 챗 근거·검색에 계속 안 나온다.
+    assert captured["vdb_where"] == {"paper_id": "hash:abc"}
+
+
+def test_delete_paper_endpoint_404_when_not_found(monkeypatch):
+    monkeypatch.setattr(paper_catalog, "delete_paper", lambda paper_id, **kw: False)
+    vdb_called = {"count": 0}
+    fake_vectorstore = SimpleNamespace(delete=lambda where: vdb_called.__setitem__("count", vdb_called["count"] + 1))
+    monkeypatch.setattr(retrieval, "papers_vectorstore", fake_vectorstore)
+
+    with TestClient(main.app) as client:
+        resp = client.delete("/api/papers/hash:missing")
+
+    assert resp.status_code == 404
+    # 카탈로그에 없는 걸 지우려 했으니 벡터스토어 삭제도 안 불러야 한다.
+    assert vdb_called["count"] == 0
+
+
+def test_version_endpoint_falls_back_to_dev_when_no_version_file(tmp_path, monkeypatch):
+    # 소스 실행(dev) 환경에는 VERSION 파일이 없는 게 정상 — main.py는 CWD 기준
+    # 상대경로로 읽으므로 빈 tmp_path로 CWD를 옮겨서 "파일이 아예 없는 경우"를 재현한다.
+    monkeypatch.chdir(tmp_path)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/version")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"version": "dev", "release_notes": None}
+
+
+def test_version_endpoint_reads_version_file_and_matching_release_notes(tmp_path, monkeypatch):
+    (tmp_path / "VERSION").write_text("v0.1.2\n", encoding="utf-8")
+    releases_dir = tmp_path / "docs" / "releases"
+    releases_dir.mkdir(parents=True)
+    (releases_dir / "v0.1.2.md").write_text("## v0.1.2\n버그 수정", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/version")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["version"] == "v0.1.2"
+    assert body["release_notes"] == "## v0.1.2\n버그 수정"
+
+
+def test_version_endpoint_version_without_matching_notes_file(tmp_path, monkeypatch):
+    # 릴리즈 노트 작성을 깜빡해도(release.yml이 이미 --generate-notes로 폴백하듯) 버전
+    # 표시 자체는 안 죽어야 한다 — release_notes만 None.
+    (tmp_path / "VERSION").write_text("v9.9.9", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/version")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"version": "v9.9.9", "release_notes": None}

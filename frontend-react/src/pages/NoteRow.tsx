@@ -4,7 +4,10 @@ import { deleteNote, moveNote, saveNote, type Note } from '../api/notes'
 import { FullscreenModal } from '../components/FullscreenModal'
 import { ReorderButtons } from '../components/ReorderButtons'
 
-const PREVIEW_LIMIT = 200
+const PREVIEW_CHAR_LIMIT = 200
+// 글자수만 보면 줄바꿈이 많은 노트(짧은 줄 수십 개)를 놓친다 — 총 글자수는
+// 200자 미만이어도 줄이 많으면 미리보기 박스가 세로로 한없이 길어진다(사용자 실측).
+const PREVIEW_LINE_LIMIT = 8
 
 // EquipmentRow.tsx와 같은 인라인 편집 패턴(08-04) — "수정" 클릭 순간에 draft를
 // note에서 다시 채워서, 그 사이 리페치가 와도 편집 중인 내용과 충돌하지 않는다.
@@ -68,8 +71,11 @@ export function NoteRow({ note, isFirst, isLast }: { note: Note; isFirst: boolea
     )
   }
 
-  const truncated = note.text.length > PREVIEW_LIMIT
-  const preview = truncated ? `${note.text.slice(0, PREVIEW_LIMIT)}...` : note.text
+  const lines = note.text.split('\n')
+  const truncatedByLines = lines.length > PREVIEW_LINE_LIMIT
+  const byLines = truncatedByLines ? lines.slice(0, PREVIEW_LINE_LIMIT).join('\n') : note.text
+  const truncated = truncatedByLines || byLines.length > PREVIEW_CHAR_LIMIT
+  const preview = truncated ? `${byLines.slice(0, PREVIEW_CHAR_LIMIT)}...` : byLines
 
   return (
     <div className="library-reorder-row">

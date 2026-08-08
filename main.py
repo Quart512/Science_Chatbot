@@ -122,6 +122,18 @@ async def no_cache_for_api(request: Request, call_next):
 def health():
     return {"status": "ok"}
 
+# 설정 화면의 버전·릴리즈 노트 표시용. VERSION은 배포판에서만 존재한다 — 빌드 스크립트
+# 3종(scripts/build_bundle_*)이 release.yml이 태그로 써둔 파일을 번들에 복사해 넣는다.
+# 소스 실행(dev)에는 이 파일이 없는 게 정상이라 "dev"로 폴백한다 — 조용히 잘못된 버전을
+# 보여주는 것보다 "버전 정보 없음"이 명확히 드러나는 쪽이 낫다.
+@app.get("/api/version")
+def get_version():
+    version_file = Path("VERSION")
+    version = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else "dev"
+    notes_file = Path("docs/releases") / f"{version}.md"
+    release_notes = notes_file.read_text(encoding="utf-8") if notes_file.exists() else None
+    return {"version": version, "release_notes": release_notes}
+
 # top_k/limit 원값은 물리 QA 능력 내부 다이얼이라 API에 그대로는 안 뺌 — 대신 Claude의 reasoning
 # effort와 같은 패턴으로 low/medium/high 프로필만 노출. 실제 숫자 매핑은 graph.py(EFFORT_PROFILES)
 # 안에 있고, 여긴 그 이름만 그대로 통과시킨다.
@@ -471,6 +483,23 @@ def list_papers(
 def move_paper(paper_id: str, direction: Literal["up", "down"]):
     moved = paper_catalog.move_paper(paper_id, direction)
     return {"paper_id": paper_id, "moved": moved}
+
+
+# 08-08 — 사용자 요청(v0.1.2 실사용 피드백). "library/에서 지우면 다시 스캔해도
+# 미추적 파일로 인식 못 한다"는 별도 지적에는 감지 기능을 새로 안 만들기로 했다
+# (요약 등 추출 결과는 원본이 없어도 남아 그 나름대로 값어치가 있다는 사용자 판단) —
+# 대신 원하지 않는 카탈로그 항목을 직접 지우는 이 기능만 추가한다. 원본 PDF(library/
+# 파일)는 안 건드린다(get_paper_summary_endpoint 주석과 같은 "불변 소스" 원칙).
+@app.delete("/api/papers/{paper_id}")
+def delete_paper_endpoint(paper_id: str):
+    deleted = paper_catalog.delete_paper(paper_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"paper_id={paper_id}가 등록돼 있지 않습니다")
+    # 추출 결과·전문 청크(파인만 강의록과 별개 컬렉션)도 같이 지운다 — 안 지우면 지운
+    # 논문이 챗 근거·검색 결과에 계속 나온다(paper_ingest.register_paper의 재등록 삭제와
+    # 같은 호출 형태, where=paper_id 하나로 doc_type 구분 없이 전부 지워짐).
+    retrieval.papers_vectorstore.delete(where={"paper_id": paper_id})
+    return {"paper_id": paper_id, "action": "deleted"}
 
 
 # 논문 내용 조회(08-03) — get_paper_summary()는 이미 있었지만 지금까지 어디서도 호출을

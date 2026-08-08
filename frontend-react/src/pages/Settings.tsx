@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { deleteApiKey, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
+import { deleteApiKey, getVersion, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
 import { exportLibrary, importLibrary } from '../api/library'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
+import { Markdown } from '../components/Markdown'
 import './Settings.css'
 
 const THEME_OPTIONS: { key: Theme; label: string }[] = [
@@ -68,6 +69,61 @@ function ChatPanelAutoShowCard() {
           버튼으로만
         </button>
       </div>
+    </div>
+  )
+}
+
+// 08-09 신설 — Windows 포터블 번들이 08-09부터 포트 자동 재시도(8000~8049)를 쓰면서
+// 실행마다 포트가 달라질 수 있게 됐다(mac/linux는 08-07부터 이미 그랬음). 백엔드에
+// 물어볼 필요 없이 지금 이 화면이 떠 있는 주소 자체가 곧 서버 주소라 window.location만
+// 읽으면 된다.
+function ConnectionInfoCard() {
+  return (
+    <div className="settings-card">
+      <h3>연결 정보</h3>
+      <p className="settings-card-meta">
+        지금 접속 중인 주소: <code>{window.location.origin}</code>
+      </p>
+    </div>
+  )
+}
+
+// 08-09 신설 — 버전은 배포판에서만 의미가 있다("dev"는 소스 실행). 릴리즈 노트는
+// 접었다 펼치는 토글로 뒀다 — 버전 한 줄만 보고 싶은 사람이 대부분일 텐데 노트 전문을
+// 항상 펴두면 다른 설정 카드들 사이에서 스크롤만 길어진다.
+function VersionCard() {
+  const [notesOpen, setNotesOpen] = useState(false)
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['version'],
+    queryFn: getVersion,
+  })
+
+  return (
+    <div className="settings-card">
+      <h3>버전</h3>
+      {isLoading && <p className="settings-card-meta">불러오는 중...</p>}
+      {isError && <p className="settings-error">조회 실패: {(error as Error).message}</p>}
+      {data && (
+        <>
+          <p className="settings-card-meta">{data.version}</p>
+          {data.release_notes ? (
+            <>
+              <div className="settings-card-actions">
+                <button type="button" onClick={() => setNotesOpen((v) => !v)}>
+                  {notesOpen ? '릴리즈 노트 접기' : '릴리즈 노트 보기'}
+                </button>
+              </div>
+              {notesOpen && (
+                <div className="settings-release-notes">
+                  <Markdown text={data.release_notes} />
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="settings-card-meta settings-card-meta-empty">이 버전의 릴리즈 노트가 없습니다</p>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -163,23 +219,28 @@ function ApiKeyCard({ status }: { status: ApiKeyStatus }) {
 // include_index·include_library가 추가로 켜지는 것뿐이라 서버 계약과 그대로 맞춘다.
 type ExportScope = { includeIndex: boolean; includeLibrary: boolean }
 
+// 08-08 — 사용자 질문("공유용이랑 기기 이전용이랑 뭐가 달라?")에 답하며 문구를
+// 늘렸다. 예전 hint는 "무엇이 더 들어가는지"(+검색 인덱스 등)만 말하고 "그래서
+// 뭐가 달라지는지"는 안 적어서, 셋을 구분하는 실제 기준(재파싱 없이 검색이 바로
+// 되는지, 원본을 다시 봐야 하는지)이 화면에서 안 보였다 — 원인-결과를 명시적으로
+// 잇는다.
 const EXPORT_OPTIONS: { key: string; label: string; hint: string; scope: ExportScope }[] = [
   {
     key: 'share',
     label: '공유용',
-    hint: '논문 서지·상태·관심사·노트만 — 가볍고 저작권 안전(원본 PDF 제외)',
+    hint: '논문 서지·상태·관심사·노트만 담습니다. 가볍고 저작권 걱정 없이 남과 나눌 수 있지만, 검색 인덱스도 원본 PDF도 없어서 가져온 쪽은 논문을 다시 등록해야 검색·요약이 됩니다.',
     scope: { includeIndex: false, includeLibrary: false },
   },
   {
     key: 'migrate',
     label: '기기 이전용',
-    hint: '+검색 인덱스 — 새 기기에서 재파싱·재임베딩 없이 그대로 복원',
+    hint: '위 내용 + 검색 인덱스까지 담습니다. 새 기기에서 가져오면 재파싱·재임베딩 없이 검색·추출 결과가 바로 됩니다. 원본 PDF는 없어서, 다시 봐야 하는 논문 파일은 따로 옮겨야 합니다.',
     scope: { includeIndex: true, includeLibrary: false },
   },
   {
     key: 'backup',
     label: '완전 백업',
-    hint: '+원본 PDF까지 전부 — 본인용, 파일이 가장 큼',
+    hint: '위 전부 + 원본 PDF까지 통째로 담습니다. 이 파일 하나로 완전히 복원되지만, 파일이 가장 큽니다 — 본인 백업용.',
     scope: { includeIndex: true, includeLibrary: true },
   },
 ]
@@ -208,19 +269,24 @@ function LibraryExportCard() {
       <p className="settings-card-meta">
         논문·관심사·실험도구·노트를 ZIP으로 내려받습니다. 범위가 넓을수록 파일이 커집니다.
       </p>
-      <div className="settings-card-actions">
+      {/* 08-08 — 설명을 버튼 title(마우스를 올려야만 보이는 툴팁)에서 항상 보이는
+          텍스트로 옮겼다(사용자 요청 — "공유용이랑 기기 이전용이랑 뭐가 달라?"를
+          화면만 보고는 알 수 없었다). 셋 다 눌러야 알 수 있던 차이를 미리 읽고 고를
+          수 있게. */}
+      <div className="settings-export-options">
         {EXPORT_OPTIONS.map((opt) => (
-          <button
-            key={opt.key}
-            title={opt.hint}
-            onClick={() => {
-              setPendingKey(opt.key)
-              exportMutation.mutate(opt.scope)
-            }}
-            disabled={exportMutation.isPending}
-          >
-            {exportMutation.isPending && pendingKey === opt.key ? '내보내는 중...' : opt.label}
-          </button>
+          <div key={opt.key} className="settings-export-option">
+            <button
+              onClick={() => {
+                setPendingKey(opt.key)
+                exportMutation.mutate(opt.scope)
+              }}
+              disabled={exportMutation.isPending}
+            >
+              {exportMutation.isPending && pendingKey === opt.key ? '내보내는 중...' : opt.label}
+            </button>
+            <p className="settings-export-hint">{opt.hint}</p>
+          </div>
         ))}
       </div>
       {exportMutation.isError && (
@@ -314,6 +380,8 @@ export function Settings() {
 
       <ThemeCard />
       <ChatPanelAutoShowCard />
+      <ConnectionInfoCard />
+      <VersionCard />
 
       <p className="settings-intro">
         여기서 입력한 키는 이 컴퓨터에 저장되고, 다음 질문부터(서버 재시작 없이) 바로

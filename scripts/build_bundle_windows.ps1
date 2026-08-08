@@ -110,6 +110,18 @@ foreach ($item in $Items) {
 New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "frontend-react") | Out-Null
 Copy-Item -Recurse -Force (Join-Path $RepoRoot "frontend-react\dist") (Join-Path $Bundle "frontend-react\dist")
 
+# 설정 화면 버전·릴리즈 노트 표시(RoadMap "[설정] 릴리즈 버전·릴리즈 노트 토글" 항목)용 —
+# mac/linux 스크립트와 같은 이유(VERSION은 release.yml이 태그로 미리 써두는 파일, 없으면
+# "dev"로 대체. 릴리즈 노트는 로컬 앱이라 오프라인에서도 봐야 해서 통째로 담는다).
+$VersionSrc = Join-Path $RepoRoot "VERSION"
+if (Test-Path $VersionSrc) {
+    Copy-Item -Force $VersionSrc (Join-Path $Bundle "VERSION")
+} else {
+    Set-Content -Path (Join-Path $Bundle "VERSION") -Value "dev" -NoNewline
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "docs") | Out-Null
+Copy-Item -Recurse -Force (Join-Path $RepoRoot "docs\releases") (Join-Path $Bundle "docs\releases")
+
 Write-Host "==> 5/5 조용한 런처 생성"
 # run.ps1 — 실제 작업(서버 기동·헬스체크·브라우저·창 종료 감지 후 서버 종료). AIsaac.vbs가
 # 이걸 숨김창으로 호출만 하고 빠진다(macOS의 osacompile 앱 -> run.sh 분리와 같은 구조 —
@@ -120,15 +132,79 @@ $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 
-$tcp = New-Object System.Net.Sockets.TcpClient
-try {
-    $tcp.Connect("127.0.0.1", 8000)
-    $tcp.Close()
+# 브라우저 경로 — 단일 인스턴스 재사용 경로(아래)도 이걸 쓰므로 앞에서 미리 구한다.
+$ChromePaths = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+)
+$EdgePaths = @(
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+)
+$BrowserBin = ($ChromePaths + $EdgePaths) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+# 매 실행마다 새 임시 프로필 — Chrome/Edge의 프로필 싱글턴 락(같은 프로필로 재실행하면
+# 새 창만 기존 프로세스에 얹고 새 프로세스는 곧장 종료됨, macOS에서 실측 확인된 동작이라
+# Windows도 같은 Chromium 엔진이라 동일할 것으로 봄)을 피하려고 고정 프로필 대신 매번
+# 새로 만든다 — Wait-Process로 반환된 프로세스를 그대로 신뢰할 수 있게 됨.
+function Open-AppWindow($url) {
+    if (-not $BrowserBin) {
+        Start-Process $url
+        return $null
+    }
+    $profileDir = Join-Path $env:TEMP ("AIsaac-chrome-" + [guid]::NewGuid().ToString())
+    $proc = Start-Process -FilePath $BrowserBin `
+        -ArgumentList "--app=$url", "--user-data-dir=$profileDir", "--no-first-run", "--no-default-browser-check" `
+        -PassThru
+    return @{ Process = $proc; Profile = $profileDir }
+}
+
+# 단일 인스턴스 가드(08-09, mac/linux엔 08-07부터 있던 것을 포팅) — data/·chroma_db/를
+# 두 프로세스가 동시에 쓰면 SQLite는 "database is locked"로, Chroma의 PersistentClient는
+# 공식 문서가 명시하는 대로 멀티프로세스 동시 접근에 안전하지 않아 인덱스 손상까지 갈
+# 수 있다. logs\server.lock에 PID+포트를 기록해두고, 재실행 시 그 PID가 살아있으면 새
+# 서버 없이 그 포트로 창만 하나 더 열고 끝낸다(이 창을 나중에 닫아도 원래 인스턴스가
+# 물고 있는 서버는 안 건드림 — 종료 감시는 서버를 실제로 띄운 인스턴스만 한다). 손상된
+# lock 파일(비정상 종료로 PID 줄만 남는 등)은 try/catch로 그냥 새 서버를 띄우는 쪽으로
+# 흘려보낸다.
+$LockFile = "logs\server.lock"
+$existingProc = $null
+$existingPort = $null
+if (Test-Path $LockFile) {
+    try {
+        $lockLines = Get-Content $LockFile -ErrorAction Stop
+        $existingPort = $lockLines[1]
+        $existingProc = Get-Process -Id ([int]$lockLines[0]) -ErrorAction SilentlyContinue
+    } catch {
+        $existingProc = $null
+    }
+}
+if ($existingProc -and $existingPort) {
+    Open-AppWindow "http://127.0.0.1:$existingPort" | Out-Null
+    exit 0
+}
+
+# lsof/TcpClient로 먼저 "비어있나?" 물어보고 나중에 uvicorn이 bind하는 방식은 그 사이에
+# 다른 프로세스가 끼어들 수 있는 확인-후-사용 레이스(TOCTOU)라 포트가 막혀도 자동으로
+# 복구가 안 된다(mac/linux와 같은 이유로 08-06에 이미 기각된 접근) — 대신 실제 bind를
+# 직접 시도해 다음 빈 포트로 넘어간다. 8000~8049 안에서 못 찾으면(사실상 불가능) 종료.
+$Port = $null
+for ($p = 8000; $p -lt 8050; $p++) {
+    try {
+        $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $p)
+        $listener.Start()
+        $listener.Stop()
+        $Port = $p
+        break
+    } catch {
+        continue
+    }
+}
+
+if (-not $Port) {
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show("8000번 포트를 다른 프로그램이 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해주세요.", "AIsaac") | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("8000~8049번 포트를 전부 다른 프로그램이 쓰고 있어 실행할 수 없습니다.", "AIsaac") | Out-Null
     exit 1
-} catch {
-    # 연결 실패 = 포트가 비어있음(정상 경로)
 }
 
 # pythonw.exe(GUI 서브시스템, 콘솔 없음)를 우선 쓰고 없으면 python.exe를 숨김 스타일로.
@@ -138,12 +214,12 @@ $env:PYTHONPATH = "runtime\lib"
 
 if (Test-Path $PythonwPath) {
     $serverProc = Start-Process -FilePath $PythonwPath `
-        -ArgumentList "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000" `
+        -ArgumentList "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "$Port" `
         -RedirectStandardOutput "logs\server.log" -RedirectStandardError "logs\server.err.log" `
         -PassThru
 } else {
     $serverProc = Start-Process -FilePath $PythonPath `
-        -ArgumentList "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000" `
+        -ArgumentList "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "$Port" `
         -WindowStyle Hidden `
         -RedirectStandardOutput "logs\server.log" -RedirectStandardError "logs\server.err.log" `
         -PassThru
@@ -152,7 +228,7 @@ if (Test-Path $PythonwPath) {
 $ready = $false
 for ($i = 0; $i -lt 180; $i++) {
     try {
-        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/health" -UseBasicParsing -TimeoutSec 2
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -UseBasicParsing -TimeoutSec 2
         if ($resp.StatusCode -eq 200) { $ready = $true; break }
     } catch {}
     Start-Sleep -Seconds 2
@@ -165,37 +241,24 @@ if (-not $ready) {
     exit 1
 }
 
-# 매 실행마다 새 임시 프로필 — Chrome/Edge의 프로필 싱글턴 락(같은 프로필로 재실행하면
-# 새 창만 기존 프로세스에 얹고 새 프로세스는 곧장 종료됨, macOS에서 실측 확인된 동작이라
-# Windows도 같은 Chromium 엔진이라 동일할 것으로 봄)을 피하려고 고정 프로필 대신 매번
-# 새로 만든다 — Wait-Process로 반환된 프로세스를 그대로 신뢰할 수 있게 됨(로그인 세션이
-# 재실행마다 안 남는 게 대가지만, 앱모드 창 하나 띄우는 용도라 크게 아쉽지 않다는 판단).
-$AppUrl = "http://127.0.0.1:8000"
-$Profile = Join-Path $env:TEMP ("AIsaac-chrome-" + [guid]::NewGuid().ToString())
+# 이 지점부터 서버가 살아있고 건강함 — 다음 실행이 단일 인스턴스 가드에서 찾을 수
+# 있게 PID·포트를 기록한다.
+"$($serverProc.Id)`n$Port" | Set-Content -Path $LockFile
 
-$ChromePaths = @(
-    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-)
-$EdgePaths = @(
-    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
-    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-)
-$BrowserBin = ($ChromePaths + $EdgePaths) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$AppUrl = "http://127.0.0.1:$Port"
+$window = Open-AppWindow $AppUrl
 
-if (-not $BrowserBin) {
-    Start-Process $AppUrl
+if (-not $window) {
+    # Chrome/Edge 둘 다 없으면 일반 브라우저 탭으로 폴백 — 앱모드도, 창 종료 감지도 못
+    # 하므로 서버는 계속 백그라운드에 남는다(다음 실행 시 위 단일 인스턴스 가드가 재사용).
     exit 0
 }
 
-$browserProc = Start-Process -FilePath $BrowserBin `
-    -ArgumentList "--app=$AppUrl", "--user-data-dir=$Profile", "--no-first-run", "--no-default-browser-check" `
-    -PassThru
-
-Wait-Process -Id $browserProc.Id -ErrorAction SilentlyContinue
+Wait-Process -Id $window.Process.Id -ErrorAction SilentlyContinue
 
 Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force $Profile -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $window.Profile -ErrorAction SilentlyContinue
+Remove-Item -Force $LockFile -ErrorAction SilentlyContinue
 '@
 # 08-08 — BOM 있는 UTF-8이어야 한다(v0.1.1 실사용에서 대화상자 한글이 깨져서 발견).
 # 이 빌드는 pwsh(PowerShell 7)로 도는데 거기서 `-Encoding UTF8`은 **BOM 없는** UTF-8을
