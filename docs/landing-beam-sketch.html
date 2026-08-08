@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIsaac 랜딩 — 광선 경로 스케치</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050506;
+    color: #e8e8ea;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", system-ui, sans-serif;
+    overflow-x: hidden;
+  }
+  /* 스케치라 좌표를 SVG 하나에 다 넣고 텍스트도 SVG 안에 둔다.
+     그래야 창 너비가 바뀌어도 선과 글자가 같이 스케일돼 어긋나지 않는다. */
+  #stage { width: min(1000px, 100vw); margin: 0 auto; position: relative; }
+  #stage svg { display: block; width: 100%; height: auto; }
+  #hud {
+    position: fixed; left: 16px; bottom: 16px; z-index: 10;
+    font-size: 12px; letter-spacing: .04em; color: #6b6b73;
+    background: rgba(5,5,6,.8); padding: 8px 12px; border: 1px solid #1e1e22; border-radius: 6px;
+  }
+  #hud b { color: #c9c9d1; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div id="hud">스크롤 <b id="pct">0%</b> · 스케치(카피·타이포는 자리표시)</div>
+
+<div id="stage">
+<svg viewBox="0 0 1000 2880" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    .kicker { fill: #6b6b73; font-size: 15px; letter-spacing: .22em; }
+    .h1 { fill: #f4f4f6; font-size: 44px; font-weight: 600; letter-spacing: -.01em; }
+    .h2 { fill: #f4f4f6; font-size: 34px; font-weight: 600; }
+    .sub { fill: #9a9aa4; font-size: 18px; }
+    .tiny { fill: #55555e; font-size: 14px; }
+    .bandlabel { font-size: 14px; }
+    .stage-label { fill: #8c8c96; font-size: 15px; }
+    .room { fill: none; stroke: #26262c; stroke-width: 2; }
+    .glass { fill: #0d0d11; stroke: #5a5a66; stroke-width: 2; }
+    .line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .earth { fill: none; stroke: #2a2a32; stroke-width: 2; }
+    .cannon { fill: #1a1a20; stroke: #4a4a56; stroke-width: 2; }
+  </style>
+
+  <!-- ================= 골방 (히어로) ================= -->
+  <rect class="room" x="120" y="90" width="230" height="300" rx="4"/>
+  <line class="room" x1="235" y1="90" x2="235" y2="390"/>
+  <circle cx="235" cy="250" r="9" fill="#fff" filter="url(#glow)"/>
+
+  <text class="kicker" x="430" y="180">골방 · 1665</text>
+  <text class="h1" x="430" y="245">아이작 뉴턴의 1665년을</text>
+  <text class="h1" x="430" y="300">당신의 컴퓨터 안에서.</text>
+  <text class="sub" x="430" y="358">AIsaac(아이삭)은 골방의 대학원생, 연구실의 전문 연구자,</text>
+  <text class="sub" x="430" y="386">밤하늘을 보며 의문을 품는 취미 과학자를 위한</text>
+  <text class="sub" x="430" y="414">AI 연구 어시스턴트입니다.</text>
+  <text class="sub" x="430" y="452">— 혼자 붙잡고 있던 질문을 끝까지 밀고 나가도록.</text>
+  <text class="tiny" x="430" y="500">골방의 질문을 논문으로.</text>
+
+  <!-- 창에서는 부드럽게 나오되 프리즘에 닿기 직전에는 직선이 되도록,
+       마지막 제어점을 입사 방향(80°) 위에 올려놨다. 곡선이 직선으로 수렴해서 들어간다. -->
+  <path id="p-beam" class="line" stroke="#ffffff" stroke-width="3" filter="url(#glow)"
+        d="M 235 259 C 200 400, 273 475, 311 692"/>
+
+  <!-- ================= 프리즘 ================= -->
+  <text class="kicker" x="450" y="762">프리즘</text>
+  <text class="h2" x="450" y="838">논문을 분석, 추출, 정리한다</text>
+  <text class="sub" x="450" y="907">저자가 논문에서 말하고 있는 것을 추출해 정리합니다.</text>
+  <text class="sub" x="450" y="935">등록해둔 논문은 챗봇이 답할 때 근거로 인용합니다.</text>
+  <text class="tiny" x="450" y="979">— 논문 추출기</text>
+
+  <!-- 프리즘 두 개를 통째로 70° 기울여 빛이 거의 수직으로 떨어지게 한다.
+       회전 기준점을 입사점에 두고 translate로 위치만 맞춘다 —
+       각도를 바꾸고 싶으면 이 숫자 셋만 고치면 입출력 직선도 따라온다. -->
+  <g transform="translate(46 -453) rotate(70 265 1145)">
+    <path class="glass" d="M 300 1060 L 370 1230 L 230 1230 Z"/>
+    <path class="glass" d="M 720 1330 L 800 1110 L 640 1110 Z"/>
+    <!-- 각 path는 세 구간: ① 유리 안에서 벌어짐 ② 공기 중 직진 ③ 두 번째 유리 안에서 모임 -->
+    <path id="b1" class="line" stroke="#f87171" stroke-width="2.5" d="M 265 1145 L 336 1134 L 655 1150 L 760 1220"/>
+    <path id="b2" class="line" stroke="#facc15" stroke-width="2.5" d="M 265 1145 L 337 1142 L 663 1172 L 760 1220"/>
+    <path id="b3" class="line" stroke="#4ade80" stroke-width="2.5" d="M 265 1145 L 338 1150 L 672 1197 L 760 1220"/>
+    <path id="b4" class="line" stroke="#60a5fa" stroke-width="2.5" d="M 265 1145 L 339 1158 L 681 1222 L 760 1220"/>
+    <path id="b5" class="line" stroke="#a78bfa" stroke-width="2.5" d="M 265 1145 L 340 1166 L 690 1247 L 760 1220"/>
+  </g>
+  <text class="tiny" x="55" y="745">프리즘 — 나눈다</text>
+  <text class="tiny" x="560" y="1120">두 번째 프리즘 — 다시 하나로</text>
+
+  <!-- 라벨은 PaperExtraction 실제 필드 5개 그대로.
+       선 옆에 붙이면 띠끼리 겹쳐서, 색으로 읽는 범례 한 칼럼으로 뺐다. -->
+  <line stroke="#f87171"  stroke-width="2.5" x1="110" y1="1250" x2="136" y2="1250"/>
+  <text class="bandlabel" fill="#f87171"  x="148" y="1255">핵심 주장</text>
+  <line stroke="#facc15"  stroke-width="2.5" x1="110" y1="1298" x2="136" y2="1298"/>
+  <text class="bandlabel" fill="#facc15"  x="148" y="1303">근거</text>
+  <line stroke="#4ade80"  stroke-width="2.5" x1="110" y1="1346" x2="136" y2="1346"/>
+  <text class="bandlabel" fill="#4ade80"  x="148" y="1351">저자가 밝힌 한계</text>
+  <line stroke="#60a5fa"  stroke-width="2.5" x1="110" y1="1394" x2="136" y2="1394"/>
+  <text class="bandlabel" fill="#60a5fa"  x="148" y="1399">남은 질문</text>
+  <line stroke="#a78bfa"  stroke-width="2.5" x1="110" y1="1442" x2="136" y2="1442"/>
+  <text class="bandlabel" fill="#a78bfa"  x="148" y="1447">코드·데이터 공개</text>
+
+  <!-- ================= 궤도 ================= -->
+  <text class="kicker" x="90" y="1570">궤도</text>
+  <text class="h2" x="90" y="1625">가설에서 논문까지,</text>
+  <text class="h2" x="90" y="1667">한 바퀴를 끝까지</text>
+  <text class="sub" x="90" y="1715">아이디어를 정리하고, 실험하여 논문으로 완성하는</text>
+  <text class="sub" x="90" y="1743">전 과정을 함께합니다.</text>
+  <text class="sub" x="90" y="1791">연구를 시작하면 가설 수립 · 실험 설계 · 실험 운영 ·</text>
+  <text class="sub" x="90" y="1819">실험 보고서 · 논문 초안까지 다섯 단계가 이어집니다.</text>
+  <text class="tiny" x="90" y="1863">— 연구 워크플로우</text>
+
+  <!-- 재합성된 흰 광선이 3시 방향 대포로 내려간다.
+       출발 제어점을 가운데 띠(초록)의 진행 방향(회전 후 84.6°) 위에 올려 접선을 맞췄다 —
+       프리즘에서 나오는 순간 꺾이지 않고 이어져 보이는 건 이 접선 일치 때문이다.
+       도착 제어점은 포구 바로 위에 둬서 포신 방향(수직)으로 들어간다. -->
+  <path id="p-descend" class="line" stroke="#ffffff" stroke-width="3" filter="url(#glow)"
+        d="M 410 1183 C 454 1651, 840 1950, 840 2174"/>
+
+  <!-- 지구 · 산 · 대포 (뉴턴 대포알 스케치, 3시 방향) -->
+  <circle class="earth" cx="500" cy="2300" r="230"/>
+  <!-- 궤도의 중심. 히어로 창구멍의 그 빛점이 여기로 되돌아온다 -->
+  <circle cx="500" cy="2300" r="7" fill="#fff" filter="url(#glow)"/>
+  <text class="stage-label" x="500" y="2336" text-anchor="middle">연구 주제 하나</text>
+  <path class="earth" d="M 726 2226 L 848 2300 L 726 2374"/>
+  <rect class="cannon" x="826" y="2174" width="28" height="108" rx="13"/>
+  <rect class="cannon" x="830" y="2282" width="20" height="18" rx="3"/>
+  <text class="tiny" x="866" y="2232" fill="#5c5c68">대포</text>
+
+  <!-- 탄도: 같은 대포를 속도를 올려가며 다시 쏜 것.
+       반지름을 165·225·283으로 균등하게 키웠다 — 285를 넘기면 지면을 아예 안 스치고
+       지나가버려(이미 궤도) 283이 "떨어지는 마지막 한 발"의 한계값이다.
+       셋 다 중심이 포구에서 수평으로만 밀려 있어 ① 포구를 정확히 아래로 떠나고
+       ② 가장 먼 점이 항상 340 — 마지막 닫힌 궤도에 안쪽에서 접한다. -->
+  <path id="t1" class="line" stroke="#ffffff" stroke-width="2.5" filter="url(#softglow)"
+        d="M 840 2300 A 165 165 0 0 1 661 2464"/>
+  <path id="t2" class="line" stroke="#ffffff" stroke-width="2.5" filter="url(#softglow)"
+        d="M 840 2300 A 225 225 0 0 1 567 2520"/>
+  <path id="t3" class="line" stroke="#ffffff" stroke-width="2.5" filter="url(#softglow)"
+        d="M 840 2300 A 283 283 0 0 1 290 2394"/>
+
+  <!-- 마지막 발이 한 바퀴를 돌아 포구로 되돌아온다 = 궤도가 닫힌다.
+       <circle>은 3시 방향에서 그리기 시작해 포구에서 출발하는 그림이 안 나온다 —
+       포구를 시작점으로 잡은 반원 두 개(A 명령)로 그린다. -->
+  <path id="t4" class="line" stroke="#ffffff" stroke-width="2.5" filter="url(#softglow)"
+        d="M 840 2300 A 340 340 0 0 1 160 2300 A 340 340 0 0 1 840 2300"/>
+
+  <!-- 닫힌 궤도 위의 워크플로우 5단계 (포구에서 시계방향) -->
+  <g id="stages" opacity="0">
+    <circle cx="760" cy="2518" r="5" fill="#e8e8ea"/>
+    <text class="stage-label" x="778" y="2523">가설 수립</text>
+    <circle cx="373" cy="2615" r="5" fill="#e8e8ea"/>
+    <text class="stage-label" x="373" y="2645" text-anchor="middle">실험 설계</text>
+    <circle cx="161" cy="2276" r="5" fill="#e8e8ea"/>
+    <text class="stage-label" x="143" y="2281" text-anchor="end">실험 운영</text>
+    <circle cx="418" cy="1970" r="5" fill="#e8e8ea"/>
+    <text class="stage-label" x="418" y="1950" text-anchor="middle">실험 보고서</text>
+    <circle cx="788" cy="2120" r="5" fill="#e8e8ea"/>
+    <text class="stage-label" x="770" y="2125" text-anchor="end">논문 초안</text>
+  </g>
+
+  <text class="tiny" x="500" y="2790" text-anchor="middle" fill="#6b6b73">
+    ↓ 이 아래에 기능 섹션(앱 화면 탭 — 기본 하나는 펼쳐진 채) + 다운로드
+  </text>
+</svg>
+</div>
+
+<script>
+// 스크롤 진행도(0~1)를 선 그리기로 바꾸는 것뿐이다.
+// stroke-dasharray를 선 길이만큼 주고 dashoffset을 그 길이에서 0으로 줄이면
+// 선이 그려지는 것처럼 보인다 — SVG에서 쓰는 표준 관용구다.
+const SEGMENTS = [
+  // [id, 시작 진행도, 끝 진행도, 완료 후 흐려지는지]
+  ["p-beam",    0.00, 0.18, false],
+  ["b1",        0.18, 0.40, false],
+  ["b2",        0.18, 0.40, false],
+  ["b3",        0.18, 0.40, false],
+  ["b4",        0.18, 0.40, false],
+  ["b5",        0.18, 0.40, false],
+  ["p-descend", 0.40, 0.62, false],
+  ["t1",        0.62, 0.71, true],
+  ["t2",        0.71, 0.80, true],
+  ["t3",        0.80, 0.89, true],
+  ["t4",        0.89, 1.00, false],
+];
+
+const nodes = SEGMENTS.map(([id, s, e, fades]) => {
+  const el = document.getElementById(id);
+  const len = el.getTotalLength();
+  el.style.strokeDasharray = len;
+  el.style.strokeDashoffset = len;
+  return { el, len, s, e, fades };
+});
+const stages = document.getElementById("stages");
+
+const clamp = (v) => Math.max(0, Math.min(1, v));
+const pct = document.getElementById("pct");
+
+function render() {
+  const max = document.body.scrollHeight - window.innerHeight;
+  const p = max > 0 ? clamp(window.scrollY / max) : 0;
+  pct.textContent = Math.round(p * 100) + "%";
+
+  for (const n of nodes) {
+    const local = clamp((p - n.s) / (n.e - n.s));
+    n.el.style.strokeDashoffset = n.len * (1 - local);
+    // 떨어진 탄도는 지우지 않고 흐린 자국으로 남긴다
+    if (n.fades) {
+      const after = clamp((p - n.e) / 0.06);
+      n.el.style.opacity = 1 - after * 0.75;
+    }
+  }
+  // 궤도가 닫히고 나서야 단계 라벨이 올라온다
+  stages.style.opacity = clamp((p - 0.93) / 0.05);
+  ticking = false;
+}
+
+let ticking = false;
+addEventListener("scroll", () => {
+  if (!ticking) { ticking = true; requestAnimationFrame(render); }
+}, { passive: true });
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>

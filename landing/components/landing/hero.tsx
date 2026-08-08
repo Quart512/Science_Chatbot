@@ -6,10 +6,10 @@ import { useLanguage } from "@/lib/i18n"
 import { buttonVariants } from "@/components/ui/button"
 import { PrismVisual } from "@/components/landing/prism-visual"
 
+// 08-08 — 3칸에서 2칸으로. "지원 플랫폼"은 다운로드 버튼 바로 위(CTA)로 옮겼다.
 const metrics = [
   { labelKey: "hero.metric.1.label", valueKey: "hero.metric.1.value" },
   { labelKey: "hero.metric.2.label", valueKey: "hero.metric.2.value" },
-  { labelKey: "hero.metric.3.label", valueKey: "hero.metric.3.value" },
 ] as const
 
 export function Hero() {
@@ -25,15 +25,20 @@ export function Hero() {
             {t("hero.status")}
           </span>
 
+          {/* 08-08 — 두 줄이 한 문장("아이작 뉴턴의 1665년을 / 당신의 컴퓨터
+              안에서.")이라 아랫줄만 흐리게 두면 문장이 끊겨 읽힌다. 옛 슬로건은
+              3동사 + 별도 부제 구조여서 색을 달리한 것이었다. */}
           <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
             {t("hero.title.a")}
             <br />
-            <span className="text-muted-foreground">{t("hero.title.b")}</span>
+            {t("hero.title.b")}
           </h1>
 
           <p className="mt-6 max-w-xl text-pretty leading-relaxed text-muted-foreground">
             {t("hero.desc")}
           </p>
+
+          <p className="mt-4 font-mono text-sm text-muted-foreground/80">{t("hero.tagline")}</p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
@@ -52,7 +57,7 @@ export function Hero() {
             </a>
           </div>
 
-          <dl className="mt-12 grid w-full max-w-lg grid-cols-3 gap-px overflow-hidden rounded-lg border border-border bg-border">
+          <dl className="mt-12 grid w-full max-w-lg grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border">
             {metrics.map((m) => (
               <div key={m.labelKey} className="bg-card p-4">
                 <dt className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
@@ -65,7 +70,12 @@ export function Hero() {
         </div>
 
         <div className="relative">
-          <div className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm">
+          {/* 08-08 ④ — lg 이상에서는 이 자리를 광선 장면의 "골방"이 채운다(BeamScene이
+              `data-beam`으로 이 박스를 재서 좌표를 잡는다). 박스는 자리만 잡고 그림은
+              래퍼 뒤 SVG 레이어가 그린다 — 그래야 광선이 섹션 경계를 넘어 이어진다.
+              lg 미만에서는 장면을 안 그리므로 원래 프리즘 카드를 그대로 쓴다. */}
+          <div data-beam="room" className="hidden aspect-[4/5] w-full lg:block" />
+          <div className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm lg:hidden">
             <div className="mb-3 flex items-center justify-between font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
               <span>{t("prism.beam.label")}</span>
               <span className="text-accent">λ 380–750nm</span>

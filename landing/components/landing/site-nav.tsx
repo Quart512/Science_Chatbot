@@ -28,7 +28,7 @@ export function SiteNav() {
   const links: { key: Parameters<typeof t>[0]; href: string }[] = [
     { key: "nav.prism", href: "/#prism" },
     { key: "nav.orbit", href: "/#orbit" },
-    { key: "nav.darkside", href: "/#darkside" },
+    { key: "nav.screens", href: "/#screens" },
   ]
 
   return (

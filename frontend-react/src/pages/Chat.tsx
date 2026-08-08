@@ -63,7 +63,7 @@ export function Chat() {
 
       <div className="chat-page-messages">
         {chat.messages.length === 0 && !chat.isStreaming && (
-          <p className="chat-page-empty">물리에 대해 궁금한 걸 물어보세요.</p>
+          <p className="chat-page-empty">과학에 대해 궁금한 걸 물어보세요.</p>
         )}
         {groupMessagesIntoTurns(chat.messages).map((turn, ti) => (
           <div className="chat-turn" key={turn[0].id ?? `turn-${ti}`}>
@@ -99,7 +99,7 @@ export function Chat() {
         <input
           value={chat.input}
           onChange={(e) => chat.setInput(e.target.value)}
-          placeholder="물리에 대해 궁금한 걸 물어보세요"
+          placeholder="과학에 대해 궁금한 걸 물어보세요"
           disabled={chat.isStreaming}
         />
         <button type="submit" disabled={chat.isStreaming || !chat.input.trim()}>
