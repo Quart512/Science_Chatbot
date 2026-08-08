@@ -287,13 +287,13 @@ function LibraryImportCard() {
             가져오기 완료 — 논문 {result.papers}편, 관심사 {result.interests}건, 실험도구 {result.equipment}건, 노트{' '}
             {result.notes}건
           </p>
-          {/* 검색 인덱스(chroma_db)를 같이 가져왔으면 재시작 전까지 검색·요약이 깨진다
+          {/* 검색 인덱스(chroma_db)를 같이 가져왔으면 재시작 전까지 검색·추출이 깨진다
               (main.py import_library() 주석 — 실제로 재현·확인한 근거). 논문·관심사·
               실험도구·노트 목록 자체는 재시작 없이 바로 반영된다(RDB는 매 요청마다
               새 연결이라 이 문제가 없음). */}
           {result.restart_required && (
             <p className="settings-warning">
-              검색 인덱스를 같이 가져왔습니다 — 논문 검색·요약이 정상 동작하려면 앱을 재시작해주세요.
+              검색 인덱스를 같이 가져왔습니다 — 논문 검색·추출이 정상 동작하려면 앱을 재시작해주세요.
             </p>
           )}
         </>

@@ -108,24 +108,27 @@
 .dark {
   color-scheme: dark;
 
-  /* Dark side of the moon — deep space instrument panel */
-  --background: oklch(0.17 0.015 265);
-  --foreground: oklch(0.96 0.004 250);
-  --card: oklch(0.21 0.018 265);
-  --card-foreground: oklch(0.96 0.004 250);
-  --popover: oklch(0.21 0.018 265);
-  --popover-foreground: oklch(0.96 0.004 250);
-  --primary: oklch(0.96 0.004 250);
-  --primary-foreground: oklch(0.19 0.02 265);
-  --secondary: oklch(0.26 0.02 265);
-  --secondary-foreground: oklch(0.96 0.004 250);
-  --muted: oklch(0.26 0.02 265);
-  --muted-foreground: oklch(0.68 0.02 262);
+  /* 08-08 — 남색 계열 패널(L 0.17)에서 딥 블랙(L 0.06, 스케치의 #050506에 맞춘 값)으로
+     교체. "골방은 원래 어둡다"는 결정이라 취향이 아니라 스크롤 광선 장면의 배경이
+     이거여야 한다(RoadMap "08-08 결론" 참고) — 옛 주석의 "달의 뒷면" 표현은 그 은유
+     자체를 랜딩에서 뺐으니(darkside-section.tsx 삭제) 같이 지운다. */
+  --background: oklch(0.06 0.005 265);
+  --foreground: oklch(0.97 0.004 250);
+  --card: oklch(0.11 0.012 265);
+  --card-foreground: oklch(0.97 0.004 250);
+  --popover: oklch(0.11 0.012 265);
+  --popover-foreground: oklch(0.97 0.004 250);
+  --primary: oklch(0.97 0.004 250);
+  --primary-foreground: oklch(0.08 0.01 265);
+  --secondary: oklch(0.14 0.014 265);
+  --secondary-foreground: oklch(0.97 0.004 250);
+  --muted: oklch(0.14 0.014 265);
+  --muted-foreground: oklch(0.6 0.02 262);
   --accent: oklch(0.62 0.2 292);
-  --accent-foreground: oklch(0.15 0.02 265);
+  --accent-foreground: oklch(0.08 0.01 265);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.3 0.02 265);
-  --input: oklch(0.3 0.02 265);
+  --border: oklch(0.18 0.016 265);
+  --input: oklch(0.18 0.016 265);
   --ring: oklch(0.62 0.2 292);
 
   --spectrum-violet: oklch(0.62 0.22 300);
@@ -142,13 +145,13 @@
   --chart-4: oklch(0.76 0.19 55);
   --chart-5: oklch(0.68 0.23 27);
 
-  --sidebar: oklch(0.19 0.017 265);
-  --sidebar-foreground: oklch(0.96 0.004 250);
+  --sidebar: oklch(0.08 0.008 265);
+  --sidebar-foreground: oklch(0.97 0.004 250);
   --sidebar-primary: oklch(0.62 0.2 292);
-  --sidebar-primary-foreground: oklch(0.15 0.02 265);
-  --sidebar-accent: oklch(0.26 0.02 265);
-  --sidebar-accent-foreground: oklch(0.96 0.004 250);
-  --sidebar-border: oklch(0.3 0.02 265);
+  --sidebar-primary-foreground: oklch(0.08 0.01 265);
+  --sidebar-accent: oklch(0.14 0.014 265);
+  --sidebar-accent-foreground: oklch(0.97 0.004 250);
+  --sidebar-border: oklch(0.18 0.016 265);
   --sidebar-ring: oklch(0.62 0.2 292);
 }
 
@@ -164,6 +167,11 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* 08-08 — 좁은 화면에서 제목이 "아이작 뉴턴 / 의 1665년을"처럼 낱말 중간에서
+       잘렸다. 브라우저 기본값(`word-break: normal`)은 한국어를 글자 단위로 끊을 수
+       있다고 보기 때문이다. `keep-all`이면 띄어쓰기에서만 줄이 바뀐다 — 영어는
+       원래 낱말 중간에서 안 끊기므로 EN 카피에는 영향이 없다. */
+    word-break: keep-all;
   }
 }
 

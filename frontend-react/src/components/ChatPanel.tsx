@@ -145,7 +145,7 @@ export function ChatPanel() {
         <input
           value={chat.input}
           onChange={(e) => chat.setInput(e.target.value)}
-          placeholder="물리에 대해 궁금한 걸 물어보세요"
+          placeholder="과학에 대해 궁금한 걸 물어보세요"
           disabled={chat.isStreaming}
         />
         <button type="submit" disabled={chat.isStreaming || !chat.input.trim()}>

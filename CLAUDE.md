@@ -53,7 +53,7 @@ Claude Code는 이 파일을 자동으로 읽는다. 채팅 협업으로 쓸 때
 
 물리 연구 어시스턴트. **표면(UI) / 능력(호출당하는 그래프·함수) / 데이터 서비스** 3층 구조다. 상시 챗봇은 메인 챗 하나뿐이고, 나머지 기능은 챗봇이 아니라 능력이나 배치 파이프라인으로 존재한다. 전체 그림은 `README.md`의 "목표 아키텍처"를 볼 것.
 
-**구현된 것**: 물리 QA 능력(Self-RAG 그래프, `graph.py`) · 오케스트레이터(`orchestrator.py`, `AsyncSqliteSaver`로 대화 영속화 — 6-4) · 스트리밍 API(`main.py`, SSE) · arXiv 어댑터(`arxiv_api.py`, journal_ref/doi 포함) · 논문 요약기 ②a(`paper/` 패키지: 등록 시 전문 인코딩 + lazy 요약 생성·캐시 + abstract 확보·제목 검증) · 관심사 서비스 ①(`interests.py` RDB + `orchestrator.py`의 제안·초안·중복검사 훅 + `POST /interests`) · 추천 검색 파이프라인 ③+스크리닝②b(`paper_catalog.py`/`paper_search.py`/`paper_screening.py`/`paper_recommend.py` + `POST /interests/{id}/search`)
+**구현된 것**: 과학 Q&A 능력(Self-RAG 그래프, `graph.py`, 내부 식별자는 `physics_qa` — 08-06에 스코프를 과학·수학으로 넓혔을 때 코드 식별자는 그대로 두기로 함, RoadMap 참고) · 오케스트레이터(`orchestrator.py`, `AsyncSqliteSaver`로 대화 영속화 — 6-4) · 스트리밍 API(`main.py`, SSE) · arXiv 어댑터(`arxiv_api.py`, journal_ref/doi 포함) · 논문 추출기 ②a(`paper/` 패키지: 등록 시 전문 인코딩 + lazy 추출 생성·캐시 + abstract 확보·제목 검증) · 관심사 서비스 ①(`interests.py` RDB + `orchestrator.py`의 제안·초안·중복검사 훅 + `POST /interests`) · 추천 검색 파이프라인 ③+스크리닝②b(`paper_catalog.py`/`paper_search.py`/`paper_screening.py`/`paper_recommend.py` + `POST /interests/{id}/search`)
 
 **다음 순서**: `docs/RoadMap.md`의 "📅 예정"과 Obsidian To Do List가 정본이다. 작업을 시작하기 전에 항상 확인한다.
 
@@ -63,14 +63,16 @@ Claude Code는 이 파일을 자동으로 읽는다. 채팅 협업으로 쓸 때
 
 | 문서 | 담는 것 | 갱신 시점 |
 |---|---|---|
-| `README.md` | **일반 사용자 관점** — 사용에 필요한 정보(아키텍처 개요, 실행법, API). "왜"는 안 담는다 | 사실이 바뀔 때만 |
+| `README.md` | **앱을 쓰려는 사람 관점** — 무엇을 하는 앱인가, 내려받아 실행하는 법, 구조 개요. "왜"도 개발자용 세부도 안 담는다 | 사실이 바뀔 때만 |
+| `docs/USAGE.md` | **최종 사용자** — 화면별 사용법(무엇을 누르면 무엇이 되는가). 챗봇의 `read_usage_guide` tool이 이 파일을 정본으로 읽는다 | 화면 UI가 바뀔 때 |
+| `docs/DEVELOPMENT.md` | **코드를 고치는 사람** — 소스 실행법, 파일 구조, API 레퍼런스, 테스트·평가 | 실행법·API·구조가 바뀔 때 |
+| `docs/OPERATIONS.md` | **저자(배포 담당)** — 번들 빌드, 릴리즈 절차, GitHub Actions 지도, 랜딩 페이지 운영 (08-07에 폐기된 `DEPLOY.md`를 대체) | 배포 방식이 바뀔 때 |
 | `docs/RoadMap.md` | 개발 이력·계획 — **디테일한 구현법, tradeoff 선택(결론+근거), 중대한 버그, 개선사항.** 사소한 버그 나열이나 그 결론에 이른 탐색 과정 자체는 안 담는다 | 상시 |
-| `docs/DEPLOY.md` | 배포 절차 | 배포 방식이 바뀔 때 |
 | `docs/README_NN.md` | **RoadMap이 못 다룬 것** — tradeoff **선택 과정**(검토한 대안, 실측 수치, 기각한 안, 대화로 도달한 논의 흐름), 나중에 참고할 것 같은 세부 | 해당 주차 마무리 시 |
 | Obsidian To Do List | **실행 순서만** (저장소 밖, 한 줄 요약) | 상시(RoadMap과 짝) |
 
 - **세부 내용의 정본은 `docs/RoadMap.md`다.** To Do List는 저장소 밖(Obsidian)에 있어 Claude가 읽지 못하고, 순서만 짧게 적는 칸반이다 — 항목 내용이 궁금하면 RoadMap의 같은 이름 행을 본다.
-- 평소엔 **RoadMap ↔ To Do List만** 동기화한다. README/DEPLOY는 현황이 실제로 바뀔 때만 건드린다.
+- 평소엔 **RoadMap ↔ To Do List만** 동기화한다. README·USAGE·DEVELOPMENT·OPERATIONS는 현황이 실제로 바뀔 때만 건드린다.
 - **설계 결정을 내렸으면 코드보다 먼저 RoadMap 설계 노트에 근거를 남긴다.** 이 프로젝트에서 가장 값어치 있는 산출물이 그 기록이다.
 - **RoadMap/README는 매 단계·매 명령마다 갱신하지 않는다** (07-31 피드백 — 세션 하나에서 작은 단계마다 계속 갱신했더니 과했음). 여러 단계를 묶어 **하나의 의미 있는 변경점**이 됐을 때(기능 하나 완성, 설계 결정 하나 확정, 로드맵 항목 하나 종료)만 정리해서 한 번에 반영한다. 세션 중간중간 "이것도 적을까요"로 매번 안 물어봐도 됨 — 단위 작업이 끝나고 다음 화제로 넘어가기 전에 알아서 정리한다.
 - **RoadMap vs README_NN의 경계는 "결론"과 "과정"이다** (08-06 정리). 완료 표·설계 노트 둘 다 같은 기준으로 나눈다 — 무엇을 왜 했는지(결정+핵심 근거)는 RoadMap에 한 문단으로 남기고, 거기 이르는 탐색·실측 수치·기각한 대안·대화로 도달한 논의 흐름은 README_NN으로 옮긴 뒤 RoadMap에서 링크만 건다. 단, **아직 열려있는 예정 항목이 참조하는 노트는 옮기지 않는다** — 참조가 끊기지 않는지 먼저 확인 후 이관.
@@ -86,7 +88,7 @@ Claude Code는 이 파일을 자동으로 읽는다. 채팅 협업으로 쓸 때
 - **단순 경로부터.** 실제로 걸리는 걸 확인한 뒤에 복잡한 경로를 추가한다. 거의 실행되지 않는 기계를 미리 만들지 않는다.
 - **교체 가능하게 어댑터 뒤에 격리.** (`pdf_parse.py`, `arxiv_api.py`) 결정을 되돌릴 수 있게 만드는 것이 결정을 잘 하는 것보다 중요할 때가 많다.
 - **모델 정책은 `models.py` 단일 지점.** 모델별 예산·fallback 정책을 다른 파일에 흩뿌리지 않는다.
-- **캐시되는 공유 산출물은 그 순간의 사용자 선택을 따라가지 않는다.** (요약 생성 모델을 `state.model`이 아니라 고정 상수로 둔 이유)
+- **캐시되는 공유 산출물은 그 순간의 사용자 선택을 따라가지 않는다.** (추출 생성 모델을 `state.model`이 아니라 고정 상수로 둔 이유)
 
 ---
 

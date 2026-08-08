@@ -214,8 +214,12 @@ export function PaperRow({
               {retryMutation.isError && <p>재시도 요청 실패: {(retryMutation.error as Error).message}</p>}
             </div>
           )}
-          {!inProgress && !failed && isLoading && <p>요약 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
-          {!inProgress && !failed && isError && <p style={{ color: 'crimson' }}>요약 조회 실패: {(error as Error).message}</p>}
+          {/* 08-08 — "요약"에서 "추출 결과"로. "요약"은 압축(모으는 방향)을 뜻하는데
+              `PaperExtraction`이 실제로 하는 건 필드 다섯 개로 가르는 분리다
+              (RoadMap "08-08 결론" 참고). 함수·엔드포인트 이름(`get_paper_summary`,
+              `/summary`)은 그대로 둔다 — 한국어 명칭만 바꾸는 개명이다. */}
+          {!inProgress && !failed && isLoading && <p>추출 결과 불러오는 중... (처음 조회면 LLM 호출이라 시간이 걸릴 수 있습니다)</p>}
+          {!inProgress && !failed && isError && <p style={{ color: 'crimson' }}>추출 결과 조회 실패: {(error as Error).message}</p>}
           {!inProgress && data && (
             <>
               <h4>핵심 주장</h4>

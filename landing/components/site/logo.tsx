@@ -18,6 +18,9 @@ const ARTWORK_ASPECT_RATIO = 257 / 309
 // 겪고 실측 비교 후 확정한 값(#c8ccd4, 흰 프리즘과는 갈리면서 최대한 밝은 회색)을
 // 그대로 재사용해 브랜드 톤을 통일한다. ③ 크기를 키움(기본 28→36) — 위 두 수정으로
 // 여백이 생기면서 nav 높이(h-16=64px)에 비해 작아 보이는 걸 상쇄.
+// 08-08 — 배지를 한 단계 더 어둡게(#c8ccd4 → #b4b8c0, 사용자 지적). frontend-react
+// Logo.css는 여전히 #c8ccd4다 — 이번 요청이 랜딩 한정이라 그쪽은 안 건드렸다.
+// 두 화면 톤을 다시 맞추려면 frontend-react 쪽도 같이 갱신해야 한다.
 export function Logo({
   className,
   size = 36,
@@ -31,7 +34,7 @@ export function Logo({
     <span className={cn("inline-flex items-center gap-2.5", className)}>
       <span
         aria-hidden="true"
-        className="inline-block shrink-0 overflow-hidden rounded-[30%] bg-[#c8ccd4]"
+        className="inline-block shrink-0 overflow-hidden rounded-[30%] bg-[#b4b8c0]"
         style={{
           width: size * ARTWORK_ASPECT_RATIO,
           height: size,
