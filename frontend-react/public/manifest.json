@@ -1,7 +1,7 @@
 {
   "name": "AIsaac",
   "short_name": "AIsaac",
-  "description": "물리 연구를 돕는 개인용 AI 어시스턴트",
+  "description": "과학 연구를 돕는 개인용 AI 어시스턴트",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0e0f13",

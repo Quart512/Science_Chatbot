@@ -1991,3 +1991,67 @@ def test_save_research_note_with_empty_string_clears_it(monkeypatch):
 
     assert resp.status_code == 200
     assert captured["note"] == ""
+
+
+# --- POST /query 스트리밍 중 예외 (08-08) ---
+# v0.1.0 실사용에서 "챗이 조용히 죽고 방금 친 질문 블럭까지 사라진다"로 드러난 버그의
+# 회귀 테스트. StreamingResponse는 헤더(200)를 먼저 보내고 제너레이터를 돌리므로 그
+# 안에서 난 예외는 상태 코드로 알릴 방법이 없다 — 에러를 SSE 본문에 실어 보내는 것이
+# 백엔드↔프론트 계약이고(api/chat.ts의 QueryChunk.error), 여기서 그 계약만 검증한다.
+# 그래프 자체가 아니라 app.state.graph를 통째로 가짜로 바꾼다(LLM·체크포인터 무관).
+
+class _RaisingGraph:
+    """astream()이 돌기 시작한 뒤 예외를 던지는 가짜 그래프."""
+
+    def __init__(self, exc: Exception):
+        self._exc = exc
+
+    def astream(self, *args, **kwargs):
+        exc = self._exc
+
+        async def _gen():
+            raise exc
+            yield  # pragma: no cover — 제너레이터로 만들기 위한 unreachable yield
+
+        return _gen()
+
+
+def _sse_payloads(text: str) -> list[dict]:
+    import json as _json
+    return [
+        _json.loads(block[len("data: "):])
+        for block in text.split("\n\n")
+        if block.startswith("data: ")
+    ]
+
+
+def test_query_stream_reports_all_models_failed_as_error_payload(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "get_session", lambda *a, **k: {"thread_id": "t"})
+    monkeypatch.setattr(chat_sessions, "touch_session", lambda *a, **k: None)
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _RaisingGraph(RuntimeError("tried [...] but all failed"))
+        resp = client.post("/api/query", json={"prompt": "테스트", "thread_id": "t"})
+
+    # 상태 코드는 200이다 — 헤더가 이미 나간 뒤라 바꿀 수 없고, 그래서 본문으로 알린다.
+    assert resp.status_code == 200
+    payloads = _sse_payloads(resp.text)
+    assert payloads, "에러가 SSE 이벤트로 전혀 안 나왔다 — 스트림이 조용히 끊긴 그 버그"
+    last = payloads[-1]
+    assert last["final"] is True
+    # 모델 전부 실패는 다른 엔드포인트와 같은 문구를 쓴다(models.all_models_failed_message)
+    assert "API 키" in last["error"]
+
+
+def test_query_stream_reports_unexpected_exception_as_error_payload(monkeypatch):
+    monkeypatch.setattr(chat_sessions, "get_session", lambda *a, **k: {"thread_id": "t"})
+    monkeypatch.setattr(chat_sessions, "touch_session", lambda *a, **k: None)
+
+    with TestClient(main.app) as client:
+        main.app.state.graph = _RaisingGraph(ValueError("예상 못 한 오류"))
+        resp = client.post("/api/query", json={"prompt": "테스트", "thread_id": "t"})
+
+    payloads = _sse_payloads(resp.text)
+    assert payloads[-1]["final"] is True
+    # 원인을 감추지 않는다("조용히 자르지 말고 정직하게 실패" — CLAUDE.md §3)
+    assert "예상 못 한 오류" in payloads[-1]["error"]

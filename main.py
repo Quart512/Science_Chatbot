@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +35,11 @@ import research_sessions
 import research_workflow
 import retrieval
 from models import ContextBudgetExceeded, all_models_failed_message
+
+# 08-08 — 챗 스트리밍이 조용히 죽던 걸 고치면서 추가(아래 /api/query 참고). uvicorn이
+# 자기 로거를 이미 설정해두므로 여기선 basicConfig 없이 이름만 잡는다 — 번들 실행 시
+# logs/server.err.log로 그대로 흘러간다.
+logger = logging.getLogger("aisaac")
 
 # AsyncSqliteSaver로 대화를 디스크에 영속화(재시작에도 살아남음) — 동기 SqliteSaver는
 # astream() 아래서 예외가 나 비동기 버전이 필수. 컨텍스트 매니저를 요청마다 여닫을 수
@@ -135,8 +141,31 @@ async def query(request: Request, body: Query):
     inputs = {"question": body.prompt, "model": body.model, "effort": body.effort}
 
     async def event_stream():
-        async for chunk in request.app.state.graph.astream(inputs, config=config, stream_mode="custom"):
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        # 08-08 — 여기만 에러 처리가 없어서 챗 실패가 **전부 조용히 죽고 있었다**
+        # (v0.1.0 Windows 실사용에서 발견). 다른 엔드포인트는 전부
+        # `except RuntimeError -> 503 + all_models_failed_message`로 감싸는데,
+        # StreamingResponse는 **헤더(200)를 이미 보낸 뒤** 제너레이터가 도는 구조라
+        # 여기서 HTTPException을 던져봐야 상태 코드를 못 바꾼다 — 스트림이 그냥
+        # 끊기고, 프론트의 `for await`는 예외 없이 정상 종료돼 성공으로 오해한다.
+        # 그 뒤 프론트가 성공 경로로 들어가 체크포인트 목록으로 화면을 통째로
+        # 교체하는데, 그래프가 아무것도 저장 못 했으니 **방금 친 질문까지 사라졌다**
+        # (사용자가 본 "블럭 전체가 사라짐"의 정체).
+        #
+        # 그래서 상태 코드가 아니라 **SSE 이벤트 본문에 에러를 실어 보낸다** —
+        # 프론트가 `chunk.error`를 실패로 처리한다(api/chat.ts, useChatThread.ts).
+        try:
+            async for chunk in request.app.state.graph.astream(inputs, config=config, stream_mode="custom"):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        except RuntimeError as e:
+            # 모델 전부 실패(API 키 없음·쿼터 소진 등) — 다른 엔드포인트와 같은 문구.
+            payload = {"final": True, "error": all_models_failed_message(e)}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            # 그 외는 원인을 감추지 말고 그대로 보여준다("조용히 자르지 말고 정직하게
+            # 실패" — CLAUDE.md §3). 로그에도 스택을 남겨야 서버 쪽에서 추적된다.
+            logger.exception("챗 스트리밍 중 예외")
+            payload = {"final": True, "error": f"답변 생성 중 오류가 발생했습니다: {e}"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

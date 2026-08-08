@@ -208,9 +208,16 @@ objShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hid
 Set-Content -Path (Join-Path $Bundle "AIsaac.vbs") -Value $LauncherVbs -Encoding ASCII
 
 $ReadmeTxt = @'
-AIsaac - 물리 연구 어시스턴트
+AIsaac - 과학 연구 어시스턴트
 
-중요: 이 AIsaac 폴더는 바탕화면 다운로드 폴더 안에 두지 말고, 사용자 폴더
+중요 1: 내려받을 때와 실행할 때 Windows가 경고를 띄웁니다.
+아직 코드 서명 인증서를 붙이지 않아 생기는 정상적인 경고입니다.
+  - 브라우저에서 "안전하지 않은 다운로드" 경고가 뜨면 "계속" 또는 "유지"를 선택
+  - 실행할 때 "Windows의 PC 보호" 파란 창이 뜨면
+    "추가 정보" -> "실행" 버튼을 누르세요
+한 번만 허용하면 다음부터는 그냥 실행됩니다.
+
+중요 2: 이 AIsaac 폴더는 바탕화면 다운로드 폴더 안에 두지 말고, 사용자 폴더
 바로 밑이나 별도 폴더로 옮긴 뒤 실행하세요.
 
 실행: AIsaac.vbs 를 더블클릭하세요(콘솔 창이 뜨지 않습니다).

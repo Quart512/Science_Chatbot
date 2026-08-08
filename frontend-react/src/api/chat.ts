@@ -15,6 +15,10 @@ export interface QueryChunk {
   final?: boolean
   answer?: string
   comment?: string
+  // 08-08 — 스트리밍 도중 발생한 에러. StreamingResponse는 헤더(200)를 이미 보낸 뒤라
+  // 상태 코드로는 실패를 못 알리므로 백엔드가 본문에 실어 보낸다(main.py /api/query).
+  // 이게 없던 동안엔 챗 실패가 전부 "빈 스트림"으로 보여 성공으로 오해됐다.
+  error?: string
 }
 
 // POST /query는 text/event-stream을 응답한다 — EventSource는 GET 전용이라 못 쓰고,

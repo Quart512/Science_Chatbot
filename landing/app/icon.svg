@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <!--
-    AIsaac 파비콘 — 프리즘 삼각형 + 무지개 궤도 링.
+    AIsaac 랜딩 파비콘 — 앱(frontend-react/public/favicon.svg)과 같은 마크를 그대로 쓴다.
 
     08-08 — 여기 있던 파일은 v0.app 템플릿이 남긴 **보라색(#863bff) 번개 모양
     플레이스홀더**였다(v0.1.0 Windows 실사용에서 "작업표시줄에 보라색 ㅋ 모양"으로

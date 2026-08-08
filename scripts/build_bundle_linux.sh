@@ -219,7 +219,7 @@ DESKTOP
 chmod +x "$BUNDLE/AIsaac.desktop"
 
 cat > "$BUNDLE/README.txt" <<'READMEEOF'
-AIsaac — 물리 연구 어시스턴트
+AIsaac — 과학 연구 어시스턴트
 
 실행: AIsaac.desktop을 더블클릭하세요.
   - 처음 실행할 땐 파일 관리자가 "신뢰할 수 없는 실행 파일"이라며 확인을 요구할

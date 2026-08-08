@@ -1,8 +1,8 @@
-# AIsaac — 물리 연구 어시스턴트
+# AIsaac — 과학 연구 어시스턴트
 
 > 골방의 질문을 논문으로 — 아이디어의 궤도를 끝까지 함께 돈다.
 
-물리 연구를 돕는 개인용 AI 어시스턴트. 내려받아 자기 컴퓨터에서 실행한다.
+과학 연구를 돕는 개인용 AI 어시스턴트. 내려받아 자기 컴퓨터에서 실행한다.
 
 - **묻고 답하기** — 과학·수학 질문에 등록해둔 자료와 웹 검색을 근거로 답한다
 - **논문 관리** — PDF나 DOI·arXiv 번호로 논문을 등록하면 핵심 주장·근거·한계를 자동으로 뽑아 정리해주고, 관심사를 등록해두면 관련 논문을 찾아 추천한다
@@ -143,6 +143,5 @@ AI 모델은 **본인 API 키**로 돌아간다(서버 비용이 없는 대신 �
 
 ## 데이터 & 감사
 
-- 코퍼스: [The Feynman Lectures on Physics](https://www.feynmanlectures.caltech.edu/) — Caltech이 무료 공개한 파인만의 물리학 강의록. *"I learned very early the difference between knowing the name of something and knowing something."*
-- 참고(랭체인 RAG 챗봇): [Notion](https://app.notion.com/p/adapterz/fab394a4806183f78b20013d0fa13dd4?source=copy_link)
+- 코퍼스: [The Feynman Lectures on Physics](https://www.feynmanlectures.caltech.edu/) — Caltech이 무료 공개한 파인만의 물리학 강의록. 
 - Thank you to arXiv for use of its open access interoperability.

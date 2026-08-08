@@ -116,10 +116,24 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
           trace = chunk.trace
           setProgress(chunk.trace)
         }
+        // 08-08 — 백엔드가 본문으로 보낸 에러(main.py /api/query 참고). 여기서 안 잡으면
+        // 빈 스트림으로 끝나 succeeded=true가 되고, 아래 성공 경로가 체크포인트 목록으로
+        // 화면을 통째로 교체하면서 **방금 친 질문까지 사라진다**(v0.1.0에서 실제로 겪음).
+        if (chunk.error) {
+          succeeded = false
+          answer = chunk.error
+          break
+        }
         if (chunk.final) {
           answer = chunk.answer ?? ''
           comment = chunk.comment ?? ''
         }
+      }
+      // 에러도 아니고 답변도 못 받은 채 스트림이 끝난 경우 — 서버가 죽었거나 연결이
+      // 끊긴 상황이다. 이때도 성공으로 두면 위와 같은 "질문이 사라지는" 증상이 난다.
+      if (succeeded && !answer) {
+        succeeded = false
+        answer = '답변을 받지 못했습니다. 연결이 끊겼거나 서버가 응답하지 않았습니다.'
       }
     } catch (e) {
       succeeded = false

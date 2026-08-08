@@ -56,7 +56,7 @@ export function Home() {
         <Logo size={88} showWordmark={false} />
         <div>
           <h1>AIsaac</h1>
-          <p className="home-tagline">물리 연구를 돕는 개인용 AI 어시스턴트</p>
+          <p className="home-tagline">과학 연구를 돕는 개인용 AI 어시스턴트</p>
         </div>
       </div>
 
