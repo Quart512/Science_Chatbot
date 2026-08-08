@@ -197,7 +197,13 @@ Wait-Process -Id $browserProc.Id -ErrorAction SilentlyContinue
 Stop-Process -Id $serverProc.Id -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $Profile -ErrorAction SilentlyContinue
 '@
-Set-Content -Path (Join-Path $Bundle "run.ps1") -Value $RunPs1 -Encoding UTF8
+# 08-08 — BOM 있는 UTF-8이어야 한다(v0.1.1 실사용에서 대화상자 한글이 깨져서 발견).
+# 이 빌드는 pwsh(PowerShell 7)로 도는데 거기서 `-Encoding UTF8`은 **BOM 없는** UTF-8을
+# 쓴다. 그런데 실행은 AIsaac.vbs가 `powershell.exe`(Windows PowerShell 5.1)로 하고,
+# 5.1은 BOM이 없으면 파일을 ANSI(한국어 Windows = cp949)로 읽어 한글이 전부 깨진다.
+# BOM을 넣으면 5.1도 UTF-8로 인식한다. (`utf8BOM` 값은 PowerShell 6+ 전용 —
+# 이 스크립트는 OPERATIONS.md·CI 모두 pwsh로 돌리는 걸 전제한다.)
+Set-Content -Path (Join-Path $Bundle "run.ps1") -Value $RunPs1 -Encoding utf8BOM
 
 # AIsaac.vbs — 더블클릭 진입점. WindowStyle=0(숨김)으로 PowerShell 자체도 콘솔 없이 뜬다.
 $LauncherVbs = @'
@@ -230,7 +236,9 @@ AIsaac - 과학 연구 어시스턴트
 AI 모델 API 키는 앱 안의 "설정" 화면에서 입력합니다.
 데이터(논문, 노트, 대화 기록)는 이 폴더의 chroma_db\ 와 data\ 에 저장됩니다.
 '@
-Set-Content -Path (Join-Path $Bundle "README.txt") -Value $ReadmeTxt -Encoding UTF8
+# README.txt도 같은 이유로 BOM을 넣는다 — 메모장은 최근 버전이면 BOM 없는 UTF-8도
+# 알아보지만, 구버전이나 다른 편집기에서 열면 한글이 깨진다.
+Set-Content -Path (Join-Path $Bundle "README.txt") -Value $ReadmeTxt -Encoding utf8BOM
 
 Write-Host "==> 검증: 번들이 스스로 import되는지"
 # 화이트리스트가 틀리면 사용자가 실행했을 때야 ModuleNotFoundError로 드러난다(macOS

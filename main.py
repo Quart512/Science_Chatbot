@@ -2,9 +2,26 @@ import asyncio
 import io
 import json
 import logging
+import sys
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# 08-08 — Windows 한국어 로캘에서 챗이 통째로 죽던 버그의 근본 수정(v0.1.1 실사용에서
+# 발견). 증상: "'cp949' codec can't encode character '—'".
+#
+# 원인: 번들 런처가 서버 stdout/stderr를 logs/*.log로 리다이렉트하는데, 리다이렉트된
+# 스트림에 Python은 **로캘 인코딩**을 쓴다(한국어 Windows = cp949). 그런데 cp949에는
+# em dash(—, U+2014)가 **아예 없다**(KS X 1001엔 U+2015는 있어도 U+2014는 없다).
+# graph.py가 LLM 답변을 print()로 찍는데 답변에 em dash가 섞이는 순간 UnicodeEncodeError로
+# 죽었다 — 연구 워크플로우는 되고 챗만 안 되던 이유가 이거다.
+#
+# errors="replace"까지 주는 이유: 인코딩을 UTF-8로 바꾸면 이 문제는 사라지지만,
+# **로그를 찍다가 앱이 죽는 일 자체가 다시는 없어야 한다**. 어떤 문자가 와도 로그는
+# 최선을 다해 남기고 요청은 계속 처리되는 쪽이 맞다.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import os
 

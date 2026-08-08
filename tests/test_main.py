@@ -2055,3 +2055,39 @@ def test_query_stream_reports_unexpected_exception_as_error_payload(monkeypatch)
     assert payloads[-1]["final"] is True
     # 원인을 감추지 않는다("조용히 자르지 말고 정직하게 실패" — CLAUDE.md §3)
     assert "예상 못 한 오류" in payloads[-1]["error"]
+
+
+# --- stdout 인코딩 (08-08) ---
+# v0.1.1 Windows 실사용에서 챗이 통째로 죽던 버그의 회귀 테스트.
+# 한국어 Windows에서 리다이렉트된 stdout은 cp949인데 cp949엔 em dash(—)가 없어서,
+# graph.py가 LLM 답변을 print()로 찍다가 UnicodeEncodeError로 죽었다.
+# main.py가 import 시점에 stdout/stderr를 UTF-8 + errors="replace"로 재설정한다.
+
+def test_stdout_is_utf8_and_never_raises_on_encoding():
+    import sys
+
+    # main은 이미 import돼 있다(파일 상단) — 그 부수효과를 확인하는 것이 이 테스트다.
+    assert sys.stdout.encoding.lower().replace("-", "") == "utf8"
+    # errors="replace"가 핵심이다: 인코딩을 UTF-8로 바꾼 것만으로도 이번 버그는 사라지지만,
+    # "로그를 찍다가 앱이 죽는" 부류의 사고가 다시는 안 나게 하는 건 이쪽이다.
+    assert sys.stdout.errors == "replace"
+
+
+def test_em_dash_survives_cp949_style_stream_after_reconfigure(tmp_path):
+    # 실제 Windows 없이 그 조건만 재현한다 — cp949로 연 스트림에 em dash를 쓰면 죽지만,
+    # main.py와 같은 reconfigure를 거치면 죽지 않는다.
+    path = tmp_path / "server.log"
+    answer = "빛은 전자기파 — 동시에 입자입니다"
+
+    with open(path, "w", encoding="cp949") as f:
+        try:
+            f.write(answer)
+            raised = False
+        except UnicodeEncodeError:
+            raised = True
+    assert raised, "cp949에서 em dash가 통과했다 — 이 테스트의 전제가 깨졌다"
+
+    with open(path, "w", encoding="cp949") as f:
+        f.reconfigure(encoding="utf-8", errors="replace")
+        f.write(answer)
+    assert path.read_text(encoding="utf-8") == answer

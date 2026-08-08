@@ -143,8 +143,14 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
     setProgress([])
     setIsStreaming(false)
 
+    // 08-08 — 세션 목록 갱신은 성공/실패와 무관하게 한다. 백엔드는 **스트리밍을 시작하기
+    // 전에** chat_sessions 행을 만들므로(main.py /api/query), 답변이 실패해도 세션 자체는
+    // 이미 존재한다. 예전엔 이 줄이 성공 경로 안에만 있어서, 실패하면 왼쪽 사이드바에
+    // 새 대화가 안 나타났다(v0.1.1 실사용에서 실제로 겪음 — 답변은 실패했는데 세션이
+    // 사라진 것처럼 보였다).
+    queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
+
     if (succeeded) {
-      queryClient.invalidateQueries({ queryKey: ['chat-sessions'] })
       // 실제 체크포인트 목록으로 교체해 메시지별 id를 확보한다(메시지 삭제에 필요 —
       // 08-13 메시지 트리밍 2단계). comment·trace(08-07)는 이제 final_answer가
       // AIMessage.additional_kwargs에 심어 체크포인트에 남기므로, 서버가 돌려주는 값을
