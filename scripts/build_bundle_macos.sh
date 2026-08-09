@@ -273,6 +273,18 @@ on run
 end run
 APPLESCRIPT
 
+# 커스텀 아이콘 적용(08-09) — osacompile이 만든 기본 AppleScript 아이콘("메모지+화살표")을
+# 우리 로고로 바꾼다. Contents/Resources/applet.icns만 바꿔서는 부족하다: macOS Sequoia+의
+# osacompile은 Assets.car(레이어드 벡터 아이콘 카탈로그)에 "applet"이라는 이름으로 실제
+# 아이콘을 같이 굽고, Info.plist의 CFBundleIconName이 그걸 가리킨다 — 이 asset catalog
+# 항목이 CFBundleIconFile(.icns)보다 우선한다(assetutil로 Assets.car 안에 실제로
+# "applet"이라는 IconGroup이 들어있는 것까지 확인). 그래서 Assets.car를 지우고
+# CFBundleIconName을 빼서 고전적인 .icns 조회 경로로 되돌린 뒤 우리 아이콘을 넣는다.
+# 소스 SVG와 재생성 방법은 scripts/assets/aisaac-icon-source.svg 참고.
+rm -f "$APP/Contents/Resources/Assets.car"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$APP/Contents/Info.plist" 2>/dev/null || true
+cp "$REPO_ROOT/scripts/assets/AIsaac.icns" "$APP/Contents/Resources/applet.icns"
+
 cat > "$BUNDLE/README.txt" <<'READMEEOF'
 AIsaac — 과학 연구 어시스턴트
 

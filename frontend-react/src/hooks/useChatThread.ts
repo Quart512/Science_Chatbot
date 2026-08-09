@@ -69,6 +69,7 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
   const [progress, setProgress] = useState<TraceStep[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [draftError, setDraftError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
   const hasSentRef = useRef(false)
 
   useEffect(() => {
@@ -174,8 +175,27 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
   }
 
   async function deleteMessage(id: string) {
-    await deleteQueryMessage(threadId, id)
-    setMessages((m) => m.filter((msg) => msg.id !== id))
+    setDeleteError('')
+    try {
+      await deleteQueryMessage(threadId, id)
+      setMessages((m) => m.filter((msg) => msg.id !== id))
+    } catch (e) {
+      // 08-09 — 챗 페이지와 오른쪽 패널이 각자 독립된 messages 상태를 들고 있어서(훅을
+      // 따로 호출), 한쪽에서 지운 메시지가 다른 쪽엔 여전히 남아 보일 수 있다. 그 상태에서
+      // 같은 메시지를 또 지우려 하면 서버가 진짜로 거부한다 — LangGraph의 RemoveMessage는
+      // 이미 없는 id를 지우려 하면 예외를 던진다(langgraph/graph/message.py, add_messages
+      // 리듀서 확인). 예전엔 이 예외를 안 잡아서 catch 밑의 setMessages가 아예 안 불려
+      // "눌러도 안 사라짐"으로만 보였다. 지금은 실패해도 서버에서 다시 받아와 이 화면을
+      // 서버 상태로 맞춘다 — 이미 지워진 거였다면 재조회 결과에 없어 화면에서도 사라지고,
+      // 진짜 실패(네트워크 등)면 에러 문구로 원인을 알린다.
+      setDeleteError(`삭제 실패: ${(e as Error).message}`)
+      try {
+        const { messages: fromServer } = await getQueryMessages(threadId)
+        setMessages(fromServer.map(fromServerMessage))
+      } catch {
+        // 재조회까지 실패하면 최소한 지금 화면을 그대로 둔다 — 더 나쁘게 만들지 않음
+      }
+    }
   }
 
   return {
@@ -186,6 +206,7 @@ export function useChatThread(threadId: string, options?: { hydrateOnMount?: boo
     progress,
     isStreaming,
     draftError,
+    deleteError,
     send,
     deleteMessage,
     registerAsInterest,

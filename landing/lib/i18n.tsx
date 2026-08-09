@@ -234,11 +234,35 @@ export const dict = {
   // Intel Mac처럼 감지가 틀리면 바로 안 되는 파일을 받게 되는 문제가 있었다 —
   // 중간에 전용 페이지(/download)를 두고 nav·hero·CTA 버튼을 전부 이 페이지로
   // 보낸 뒤, 실제 다운로드는 이 페이지 안에서 하게 함.
+  //
+  // 08-09 재구성 — 터미널 설치(curl)가 파일 직접 다운로드보다 **먼저** 나와야 한다는
+  // 사용자 지적. 예전엔 "OS별 큰 버튼"이 최상단이라 그게 권장 경로처럼 보였는데, 실제
+  // 권장은 터미널 쪽이다(macOS 보안 경고가 아예 안 뜸). 그래서 /download는 터미널
+  // 설치 전용으로 좁히고, 파일 직접 받기(+ OS별 보안 경고 넘기는 법)는 /download/manual로
+  // 분리했다. 두 페이지가 서로를 가리킨다 — /download 하단엔 "안 되면 수동 다운로드",
+  // /download/manual 상단엔 "Mac·Linux라면 터미널이 더 간단합니다".
   "download.title": { ko: "다운로드", en: "Download" },
   "download.subtitle": {
+    ko: "Mac·Linux는 터미널 한 줄로 설치합니다 — 보안 경고 없이 바로 끝납니다.",
+    en: "On Mac and Linux, install with one terminal command — no security warnings.",
+  },
+  "download.fallback.title": { ko: "터미널을 쓸 수 없나요?", en: "Can't use the terminal?" },
+  "download.fallback.desc": {
+    ko: "Windows를 사용 중이거나 압축 파일을 직접 받고 싶다면 아래에서 받을 수 있습니다. 다만 이 경우 macOS·Windows 둘 다 보안 경고를 넘기는 절차가 필요합니다.",
+    en: "If you're on Windows or prefer downloading a file directly, you can do that below. Note that this path requires clicking through a security warning on macOS and Windows.",
+  },
+  "download.fallback.button": { ko: "수동 다운로드로 이동", en: "Go to manual download" },
+
+  "download.manual.title": { ko: "수동 다운로드", en: "Manual download" },
+  "download.manual.subtitle": {
     ko: "운영체제에 맞는 버전을 받아 압축을 풀고 실행하세요. 설치 프로그램은 따로 없습니다 — 폴더 안의 실행 파일을 더블클릭하면 바로 시작됩니다.",
     en: "Download the build for your OS, unzip it, and run it. There's no separate installer — just double-click the launcher inside the folder.",
   },
+  "download.manual.backToCli": {
+    ko: "Mac · Linux를 쓰신다면 터미널 설치가 더 간단합니다",
+    en: "On Mac or Linux, the terminal install is simpler",
+  },
+  "download.manual.backToCliButton": { ko: "터미널 설치 보기 →", en: "See terminal install →" },
   "download.detected.none": {
     ko: "운영체제를 자동으로 인식하지 못했습니다. 아래에서 직접 선택해주세요.",
     en: "We couldn't detect your OS automatically. Please choose one below.",
@@ -275,12 +299,49 @@ export const dict = {
   "download.cli.inspect": { ko: "실행되는 내용 먼저 읽어보기", en: "Read the script first" },
   "download.cli.copy": { ko: "복사", en: "Copy" },
   "download.cli.copied": { ko: "복사됨", en: "Copied" },
-  "download.install.title": { ko: "설치 방법 (파일로 직접 받는 경우)", en: "How to install (direct download)" },
+  // 터미널 설치 자체의 주의사항(사용자 요청 — "먼저 보여주는 터미널 설치할 때의
+  // 주의사항도 같은 페이지에 설명"). install.sh가 실제로 하는 일 그대로.
+  "download.cli.note1": {
+    ko: "설치 위치는 자동으로 정해집니다 (홈 폴더 아래 AIsaac).",
+    en: "The install location is chosen automatically (AIsaac, right under your home folder).",
+  },
+  "download.cli.note2": {
+    ko: "이미 설치돼 있다면 논문·노트·대화 기록은 그대로 두고 앱만 새 버전으로 바꿉니다.",
+    en: "If AIsaac is already installed, your papers, notes, and chat history are kept — only the app is updated.",
+  },
+  "download.cli.note3": {
+    ko: "Intel Mac과 Windows는 아직 지원하지 않습니다 — 아래에서 수동 다운로드를 이용해주세요.",
+    en: "Intel Mac and Windows aren't supported yet — please use the manual download below.",
+  },
+  "download.install.title": { ko: "설치 방법", en: "How to install" },
   "download.install.step1": { ko: "위 버튼으로 압축 파일(.zip)을 받습니다.", en: "Download the .zip with the button above." },
   "download.install.step2": { ko: "압축을 풉니다 — 별도 설치 프로그램은 없습니다.", en: "Unzip it — there's no separate installer to run." },
   "download.install.step3": {
     ko: "풀린 폴더 안의 실행 파일을 더블클릭하면 바로 시작됩니다 (macOS: AIsaac.app · Windows: start.bat · Linux: run.sh).",
     en: "Double-click the launcher inside the unzipped folder to start (macOS: AIsaac.app · Windows: start.bat · Linux: run.sh).",
+  },
+  // OS별 보안 경고 넘기는 법(08-09, /download/manual 신설과 함께). README.md
+  // "처음 실행할 때 뜨는 보안 경고 넘기기" 절을 랜딩 톤으로 축약 — 전체 절차는
+  // README/번들 안 README.txt가 정본이고, 여기는 "무엇을 왜 눌러야 하는지"만.
+  "download.caveats.title": { ko: "주의할 점", en: "Things to know" },
+  "download.caveats.macos.title": { ko: "macOS", en: "macOS" },
+  "download.caveats.macos.body": {
+    ko: "서명 인증서가 아직 없어 \"확인되지 않은 개발자\" 경고가 뜹니다. 시스템 설정 → 개인정보 보호 및 보안 → 보안 항목의 \"그래도 열기\"를 누르면 한 번만 승인하면 됩니다.",
+    en: "There's no code-signing certificate yet, so you'll see an \"unidentified developer\" warning. Go to System Settings → Privacy & Security → Security, and click \"Open Anyway\" — this is a one-time approval.",
+  },
+  "download.caveats.macos.warning": {
+    ko: "이 승인은 지금 있는 위치의 파일에 대한 것입니다 — 승인한 뒤 폴더를 다른 곳으로 옮기면 승인이 풀려 다시 막힐 수 있습니다. 옮길 계획이라면 옮긴 뒤에 승인하세요.",
+    en: "The approval is tied to the file's current location — moving the folder afterward can invalidate it and block the app again. If you plan to move it, do that first.",
+  },
+  "download.caveats.windows.title": { ko: "Windows", en: "Windows" },
+  "download.caveats.windows.body": {
+    ko: "\"Windows에서 PC를 보호했습니다\"가 뜨면 추가 정보 → 실행을 누르세요. 백신(특히 알약 등)이 실행 파일을 격리하는 경우 그 프로그램의 예외 목록에 AIsaac 폴더를 추가해주세요.",
+    en: "If you see \"Windows protected your PC\", click More info → Run anyway. If your antivirus quarantines the executable, add the AIsaac folder to its exclusion list.",
+  },
+  "download.caveats.linux.title": { ko: "Linux", en: "Linux" },
+  "download.caveats.linux.body": {
+    ko: "AIsaac.desktop이 반응 없으면 파일 관리자에서 속성 → 실행 허용을 체크하세요. 안 되면 터미널에서 폴더로 이동해 ./run.sh를 직접 실행합니다.",
+    en: "If AIsaac.desktop doesn't respond, check Properties → Allow executing in your file manager. Otherwise, run ./run.sh directly from a terminal inside the folder.",
   },
   "download.older.title": { ko: "이전 버전이 필요하신가요?", en: "Need an older version?" },
   "download.older.desc": {

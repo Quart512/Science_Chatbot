@@ -113,6 +113,7 @@ export function ChatPanel() {
         💡 이 대화를 관심사로 등록
       </button>
       {chat.draftError && <p className="chat-panel-error">{chat.draftError}</p>}
+      {chat.deleteError && <p className="chat-panel-error">{chat.deleteError}</p>}
 
       <div className="chat-panel-messages">
         {groupMessagesIntoTurns(chat.messages).map((turn, ti) => (

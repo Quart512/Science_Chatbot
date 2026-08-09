@@ -1,29 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { ArrowRight, Check, Copy, Download as DownloadIcon } from "lucide-react"
+import { ArrowRight, Check, Copy } from "lucide-react"
 import { useLanguage } from "@/lib/i18n"
 import { SiteNav } from "@/components/landing/site-nav"
 import { SiteFooter } from "@/components/landing/site-footer"
 import { buttonVariants } from "@/components/ui/button"
-import { useDownloadUrl, useIsLikelyIntelMac, PLATFORMS, RELEASES_PAGE_URL } from "@/lib/download"
 
-// 08-07 신설 — 사용자 요청으로 hero·nav·CTA의 다운로드 버튼이 zip을 바로 받는
-// 대신 이 페이지로 먼저 오게 함. 감지된 OS용 버튼을 크게 하나 보여주고, 그 아래
-// 4개 플랫폼 전체와 GitHub Releases(이전 버전) 링크를 둔다 — RoadMap "portable
-// 파이썬 번들" 항목 실측대로 macOS는 Apple Silicon 전용·Windows/Linux는 x86_64
-// 전용이라, 자동 감지가 틀렸을 때(특히 Intel Mac) 안 도는 파일을 주지 않도록
-// 정적 안내문 + 최선-노력 Client Hints 경고를 같이 둔다.
-const detectedCtaKey = {
-  macos: "download.cta.macos",
-  windows: "download.cta.windows",
-  linux: "download.cta.linux",
-} as const
-
-// 08-09 신설 — 터미널 설치 경로. 브라우저로 zip을 받으면 macOS가 파일에 "인터넷에서
-// 받음" 표시를 붙이고, 그것 때문에 Gatekeeper 승인 3단계를 사람이 통과시켜야 한다.
-// curl은 그 표시를 안 붙여서 경고 자체가 안 뜬다(실측 확인). Windows는 PowerShell용
-// 스크립트를 아직 안 만들어서 여기 안 띄운다 — 안 되는 걸 보여주지 않는다.
+// 08-09 재구성 — 터미널 설치(curl)가 파일 직접 다운로드보다 먼저 보여야 한다는
+// 지적(사용자) 반영. 예전엔 이 페이지 최상단이 "OS별 큰 다운로드 버튼"이라 파일
+// 직접 받기가 권장 경로처럼 보였다 — 실제 권장은 반대다(macOS 보안 경고가 curl
+// 경로에선 아예 안 뜬다, scripts/install.sh 참고). 그래서 이 페이지는 터미널
+// 설치 하나만 다루고, 파일 직접 받기 + OS별 보안 경고 넘기는 법은 /download/manual로
+// 분리했다(lib/i18n.tsx의 같은 날짜 주석 참고).
 const INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/Quart512/AIsaac/main/scripts/install.sh | bash"
 const INSTALL_SCRIPT_URL = "https://github.com/Quart512/AIsaac/blob/main/scripts/install.sh"
@@ -32,27 +21,49 @@ function InstallCommand() {
   const { t } = useLanguage()
   const [copied, setCopied] = useState(false)
 
+  // navigator.clipboard(Clipboard API)는 "보안 컨텍스트"(HTTPS 또는 localhost)에서만
+  // 존재한다 — 랜딩이 아직 도메인이 없어 HTTPS 없이 순수 HTTP로 서빙되는 동안은(08-06
+  // RoadMap "도메인 사기" 항목, 무기한 연기) 실사용자에게 `navigator.clipboard` 자체가
+  // undefined다. 그래서 버튼을 눌러도 조용히 아무 일도 안 일어났다(08-09 실사용자 보고
+  // — .catch가 그 실패를 삼키고 있었다). HTTPS가 생길 때까지는 인프라를 바꾸는 대신,
+  // 보안 컨텍스트 제약이 없는 옛 방식(document.execCommand)을 폴백으로 둔다 — deprecated
+  // API지만 Chrome 등 주요 브라우저가 여전히 지원하고, HTTP 사이트의 복사 버튼에 흔히
+  // 쓰이는 표준 우회다.
+  const copyWithExecCommand = () => {
+    const textarea = document.createElement("textarea")
+    textarea.value = INSTALL_COMMAND
+    textarea.style.position = "fixed" // 스크롤 위치가 안 튀도록 뷰포트 밖으로 안 밀어냄
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(textarea)
+    return ok
+  }
+
   const copy = async () => {
+    let ok = false
     try {
       await navigator.clipboard.writeText(INSTALL_COMMAND)
+      ok = true
+    } catch {
+      ok = copyWithExecCommand()
+    }
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // 클립보드 접근이 막힌 브라우저·컨텍스트가 있다 — 명령어 자체는 화면에 그대로
-      // 보이므로 직접 선택해 복사하면 된다. 실패를 에러로 띄울 일이 아니다.
     }
+    // 둘 다 실패하면(아주 오래된 브라우저 등) 조용히 넘어간다 — 명령어 자체가 화면에
+    // 그대로 보이므로 직접 선택해 복사하면 된다.
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5 text-left">
-      <h2 className="font-semibold">{t("download.cli.title")}</h2>
-      <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-        {t("download.cli.desc")}
-      </p>
+    <div className="rounded-xl border border-border bg-card p-6 text-left">
       {/* 가로 스크롤은 코드에만 건다 — 바깥 flex에 걸면 복사 버튼까지 같이 밀려나가
           화면 밖으로 사라진다(08-09 실기 확인). min-w-0이 있어야 flex 자식이 실제로
           줄어들어 스크롤이 생긴다(기본값 min-width:auto는 내용 폭만큼 버틴다). */}
-      <div className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-background p-3">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-background p-3">
         <div className="min-w-0 flex-1 overflow-x-auto">
           <code className="whitespace-nowrap font-mono text-xs sm:text-sm">{INSTALL_COMMAND}</code>
         </div>
@@ -65,11 +76,18 @@ function InstallCommand() {
           {copied ? t("download.cli.copied") : t("download.cli.copy")}
         </button>
       </div>
+
+      <ul className="mt-5 space-y-2 text-pretty text-sm leading-relaxed text-muted-foreground">
+        <li>· {t("download.cli.note1")}</li>
+        <li>· {t("download.cli.note2")}</li>
+        <li>· {t("download.cli.note3")}</li>
+      </ul>
+
       <a
         href={INSTALL_SCRIPT_URL}
         target="_blank"
         rel="noreferrer noopener"
-        className="mt-3 inline-block text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        className="mt-4 inline-block text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
       >
         {t("download.cli.inspect")} →
       </a>
@@ -79,102 +97,40 @@ function InstallCommand() {
 
 export default function DownloadPage() {
   const { t } = useLanguage()
-  const { url: detectedUrl, platform } = useDownloadUrl()
-  const isLikelyIntelMac = useIsLikelyIntelMac()
 
   return (
     <div className="min-h-screen bg-background">
       <SiteNav />
       <main>
         <section className="border-b border-border">
-          <div className="mx-auto max-w-3xl px-5 py-16 text-center md:py-24">
+          <div className="mx-auto max-w-2xl px-5 py-16 text-center md:py-24">
             <h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl">
               {t("download.title")}
             </h1>
             <p className="mx-auto mt-5 max-w-xl text-pretty leading-relaxed text-muted-foreground">
               {t("download.subtitle")}
             </p>
-
-            <div className="mt-10 flex flex-col items-center gap-3">
-              {platform ? (
-                <a
-                  href={detectedUrl}
-                  className={buttonVariants({ size: "lg", className: "group rounded-full px-8 text-base" })}
-                >
-                  <DownloadIcon className="size-4" />
-                  {t(detectedCtaKey[platform])}
-                  <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
-                </a>
-              ) : (
-                <p className="font-mono text-sm text-muted-foreground">{t("download.detected.none")}</p>
-              )}
-
-              {isLikelyIntelMac && (
-                <p className="max-w-md text-pretty text-sm text-destructive">{t("download.intel.warning")}</p>
-              )}
-            </div>
           </div>
         </section>
 
         <section className="border-b border-border">
-          <div className="mx-auto max-w-3xl px-5 py-12">
+          <div className="mx-auto max-w-2xl px-5 py-12">
             <InstallCommand />
           </div>
         </section>
 
-        <section className="border-b border-border">
-          <div className="mx-auto max-w-4xl px-5 py-16 md:py-20">
-            <h2 className="text-center font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              {t("download.all.title")}
-            </h2>
-
-            <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {PLATFORMS.map((p) => (
-                <a
-                  key={p.id}
-                  href={p.url}
-                  className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-accent"
-                >
-                  <div className="font-semibold">{t(p.labelKey as Parameters<typeof t>[0])}</div>
-                  <div className="font-mono text-xs text-muted-foreground">
-                    {t(p.archKey as Parameters<typeof t>[0])}
-                  </div>
-                  <span className={buttonVariants({ variant: "outline", size: "sm", className: "mt-1 rounded-full" })}>
-                    <DownloadIcon className="size-3.5" />
-                    {t("download.card.button")}
-                  </span>
-                </a>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="border-b border-border">
-          <div className="mx-auto max-w-4xl px-5 py-16 md:py-20">
-            <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              {t("download.install.title")}
-            </h2>
-            <ol className="mt-4 space-y-2 text-pretty leading-relaxed text-muted-foreground">
-              <li>1. {t("download.install.step1")}</li>
-              <li>2. {t("download.install.step2")}</li>
-              <li>3. {t("download.install.step3")}</li>
-            </ol>
-          </div>
-        </section>
-
         <section>
-          <div className="mx-auto max-w-4xl px-5 py-16 text-center md:py-20">
-            <h2 className="text-xl font-semibold tracking-tight">{t("download.older.title")}</h2>
+          <div className="mx-auto max-w-2xl px-5 py-16 text-center md:py-20">
+            <h2 className="text-xl font-semibold tracking-tight">{t("download.fallback.title")}</h2>
             <p className="mx-auto mt-3 max-w-md text-pretty leading-relaxed text-muted-foreground">
-              {t("download.older.desc")}
+              {t("download.fallback.desc")}
             </p>
             <a
-              href={RELEASES_PAGE_URL}
-              target="_blank"
-              rel="noreferrer"
-              className={buttonVariants({ variant: "outline", size: "lg", className: "mt-6 rounded-full px-6" })}
+              href="/download/manual"
+              className={buttonVariants({ variant: "outline", size: "lg", className: "group mt-6 rounded-full px-6" })}
             >
-              {t("download.older.button")}
+              {t("download.fallback.button")}
+              <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
             </a>
           </div>
         </section>

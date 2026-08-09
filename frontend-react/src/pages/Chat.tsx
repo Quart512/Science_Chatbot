@@ -64,6 +64,7 @@ export function Chat() {
         💡 이 대화를 관심사로 등록
       </button>
       {chat.draftError && <p className="chat-page-error">{chat.draftError}</p>}
+      {chat.deleteError && <p className="chat-page-error">{chat.deleteError}</p>}
 
       <div className="chat-page-messages">
         {chat.messages.length === 0 && !chat.isStreaming && (

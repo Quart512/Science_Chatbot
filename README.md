@@ -19,11 +19,6 @@
 curl -fsSL https://raw.githubusercontent.com/Quart512/AIsaac/main/scripts/install.sh | bash
 ```
 
-> **왜 이게 더 간단한가** — macOS의 "확인되지 않은 개발자" 경고는 **브라우저가 파일에
-> 붙이는 표시** 때문에 생긴다. `curl`은 그 표시를 안 붙이므로 경고 자체가 안 뜨고,
-> 시스템 설정을 오갈 일도 없다. 이미 설치돼 있으면 논문·노트·대화 기록·받아둔 모델을
-> 그대로 두고 앱만 새 버전으로 바꾼다.
->
 > 실행되는 내용이 궁금하면 [scripts/install.sh](scripts/install.sh)를 먼저 읽어봐도 된다.
 
 ### 방법 B — 파일 직접 받기

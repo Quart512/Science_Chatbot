@@ -296,8 +296,12 @@ def generate(state: State) -> dict:
             "generated_by": generated_by,
             "disabled_models": disabled_models,
             "tokens_used": add_tokens(state.tokens_used, tokens_used),
+            # verify의 trace(아래 verify() 참고)는 "{verified_by} 모델로 verify됨"을 detail
+            # 맨 앞에 넣는데, generate는 정작 어떤 모델이 답을 만들었는지가 안 실려 있었다
+            # (08-09 사용자 지적) — API 키가 없어 gemini→claude가 차례로 실패하고 Qwen까지
+            # 밀려나는 경로에서 특히 눈에 띄는 공백이었다. verify와 같은 문구 패턴으로 맞춘다.
             "trace": [TraceStep(node="generate", label=f"{state.try_count+1}번째 generate 결과",
-                detail=f"""{"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n {set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}""")]
+                detail=f"""{generated_by} 모델로 생성됨\n{"tool 요청: " + str([tc["name"] for tc in response.tool_calls]) if response.tool_calls else answer}{f"\n{set(disabled_models) - set(state.disabled_models)} 제외됨" if set(disabled_models) - set(state.disabled_models) else ""}""")]
             }
 
 
