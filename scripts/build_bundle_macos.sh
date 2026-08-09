@@ -159,13 +159,27 @@ elif [ -x "$EDGE" ]; then
 fi
 
 # 창모드 브라우저를 새로 연다. Chrome/Edge 둘 다 없으면 일반 탭으로 폴백(반환값 1).
+#
+# 매번 쿼리 문자열을 다르게 붙인다(08-09) — 안 붙이면 실사용자 환경에서 3연속 재현된
+# 버그의 원인이 된다: 항상 같은 주소(http://127.0.0.1:$PORT)로 열기 때문에, 그 프로필의
+# Chrome 백그라운드 프로세스가 어떤 이유로든 안 죽고 남아있으면(정상 종료 폴링 루프를
+# 못 거치고 macOS 잠자기·강제 종료 등으로 프로세스만 남는 경우) 다음 실행이 **새로
+# 탐색(navigate)하지 않고 이미 열려있던 그 창을 그대로 재사용**한다. server.log로 실측
+# 확인: 그 창이 실제로 낸 요청에 index.html·JS 번들 요청이 아예 없고 곧장
+# `/api/chat/sessions` 같은 API 호출부터 시작한다 — 예전 JS가 여전히 메모리에서 돌면서
+# react-query의 "포커스 시 재조회"만 작동해 API는 성공하고, 화면(예전 JS가 그리는 UI)만
+# 몇 버전 전 그대로 보인다. 쿼리 문자열이 매번 다르면 Chrome이 "다른 페이지"로 보고
+# 실제 네트워크 요청을 새로 한다 — 백엔드는 쿼리 문자열을 안 보고 경로만 보므로
+# (main.py의 SPA 폴백) 응답은 항상 똑같이 최신 index.html이다.
 open_window() {
   local url="$1"
+  local cache_bust
+  cache_bust="$(date +%s)"
   if [ -z "$BROWSER_APP" ]; then
-    open "$url"
+    open "${url}?t=${cache_bust}"
     return 1
   fi
-  "$BROWSER_BIN" --app="$url" --user-data-dir="$PROFILE_DIR" \
+  "$BROWSER_BIN" --app="${url}?t=${cache_bust}" --user-data-dir="$PROFILE_DIR" \
     --no-first-run --no-default-browser-check >> logs/browser.log 2>&1 &
   return 0
 }
