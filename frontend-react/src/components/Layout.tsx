@@ -6,7 +6,21 @@ import { ResearchSessionNav } from './ResearchSessionNav'
 import { useScrollbarAutoHide } from '../hooks/useScrollbarAutoHide'
 import { LogoMark } from './Logo'
 import { ChatIcon, ResearchIcon, PaperIcon, InterestIcon, EquipmentIcon, NoteIcon } from './NavIcons'
+import { WelcomeModal } from './WelcomeModal'
+import { EmbeddingProgressBanner } from './EmbeddingProgress'
 import './Layout.css'
+
+// 첫 실행 안내창과 모델 준비 배너는 어느 화면에 있든 보여야 해서 셸에 붙인다(08-09).
+// App.tsx가 아니라 여기인 이유: Layout은 라우터 하위라 필요해지면 useNavigate 같은
+// 라우팅 훅을 쓸 수 있고, 네비를 접은 상태(아래 early return)에도 같이 따라간다.
+function GlobalOverlays() {
+  return (
+    <>
+      <WelcomeModal />
+      <EmbeddingProgressBanner />
+    </>
+  )
+}
 
 // 셸 — 왼쪽 네비게이션 + 가운데 라우팅된 메인 콘텐츠 + 오른쪽 항상-떠-있는 챗 패널.
 // 08-04 사용자 지적으로 두 가지 복원/변경: ① Streamlit app.py에 있던 "메인/연구/
@@ -37,6 +51,7 @@ export function Layout() {
           <Outlet />
         </main>
         <ChatPanel />
+        <GlobalOverlays />
       </div>
     )
   }
@@ -123,6 +138,7 @@ export function Layout() {
         <Outlet />
       </main>
       <ChatPanel />
+      <GlobalOverlays />
     </div>
   )
 }

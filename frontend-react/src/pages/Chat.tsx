@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
+import { CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
+import { useAvailableChatModels } from '../hooks/useLocalModel'
 import { ChatIcon } from '../components/NavIcons'
 import { Markdown } from '../components/Markdown'
 import { StreamProgress } from '../components/StreamProgress'
@@ -25,6 +26,9 @@ export function Chat() {
     },
   })
 
+  // 설치 안 한 로컬 모델은 드롭다운에 안 띄운다(08-09) — 고르면 100% 접속 실패였다.
+  const availableModels = useAvailableChatModels()
+
   // 오른쪽 패널(ChatPanel.tsx)이 "마지막으로 답변을 요청한" 챗 대신 "마지막으로 본" 챗을
   // 열 수 있게, 실제로 URL을 가진 스레드를 열람할 때만 기록한다(RoadMap 항목 참고 — 여기
   // 조건이 urlThreadId인 이유: 이 화면이 새 대화 초안 단계(`/chat/new`, 아직 아무 응답도
@@ -40,7 +44,7 @@ export function Chat() {
         <h1><ChatIcon size={22} /> 챗</h1>
         <div className="chat-page-controls">
           <select value={chat.model} onChange={(e) => chat.setModel(e.target.value)}>
-            {CHAT_MODELS.map((m) => (
+            {availableModels.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>

@@ -82,6 +82,10 @@ cp -R frontend-react/dist "$BUNDLE/frontend-react/dist"
 mkdir -p "$BUNDLE/docs"
 cp -R docs/releases "$BUNDLE/docs/releases"
 
+# 지인 테스트 사용 데이터 공유 동의(telemetry.py 참고)용 — mac 스크립트와 같은 이유
+# (없어도 정상, telemetry.py가 파일 없으면 동의해도 조용히 무시).
+[ -f LANGSMITH_KEY ] && cp LANGSMITH_KEY "$BUNDLE/LANGSMITH_KEY" || true
+
 echo "==> 5/5 조용한 런처 생성"
 cat > "$BUNDLE/run.sh" <<'LAUNCHER'
 #!/bin/bash
@@ -235,8 +239,9 @@ AIsaac — 과학 연구 어시스턴트
 종료: 열린 브라우저 창을 닫으면 서버도 함께 종료됩니다.
 로그: 문제가 있으면 logs/server.log 를 확인하세요.
 
-처음 실행할 때는 AI 임베딩 모델(약 2GB)을 내려받으므로 몇 분 걸립니다.
-두 번째부터는 바로 뜹니다.
+앱 창은 바로 열리지만, 처음 한 번은 검색용 AI 모델(약 2GB)을 내려받습니다.
+진행률이 화면 아래에 표시되며, 다 받을 때까지 질문·검색은 응답을 기다립니다.
+그동안 설정 화면에서 API 키를 넣어두면 됩니다. 두 번째부터는 이 과정이 없습니다.
 
 AI 모델 API 키는 앱 안의 "설정" 화면에서 입력합니다.
 데이터(논문·노트·대화 기록)는 이 폴더의 chroma_db/ 와 data/ 에 저장됩니다.

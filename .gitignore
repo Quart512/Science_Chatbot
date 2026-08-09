@@ -47,6 +47,12 @@ Thumbs.db
 .env
 .env.local
 
+# release.yml이 빌드 시점에 만드는 파일 — telemetry.py 참고. LANGSMITH_KEY는 저자 본인
+# LangSmith 키라 실수로도 커밋되면 안 됨(VERSION은 비밀값이 아니라 안 걸어도 되지만
+# 로컬 테스트 중 실수로 남는 걸 막기 위해 같이 걸어둠).
+VERSION
+LANGSMITH_KEY
+
 # Logs
 *.log
 

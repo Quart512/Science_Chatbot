@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { listChatSessions } from '../api/chat'
-import { CHAT_MODELS, CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
+import { CHAT_EFFORTS, groupMessagesIntoTurns, useChatThread } from '../hooks/useChatThread'
+import { useAvailableChatModels } from '../hooks/useLocalModel'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import { getLastViewedChatThreadId } from '../lib/lastViewedChat'
 import { ChatIcon } from './NavIcons'
@@ -67,6 +68,9 @@ export function ChatPanel() {
 
   const chat = useChatThread(threadId, { hydrateOnMount: mostRecent !== undefined })
 
+  // 설치 안 한 로컬 모델은 드롭다운에 안 띄운다(08-09) — 고르면 100% 접속 실패였다.
+  const availableModels = useAvailableChatModels()
+
   if (isChatRoute(pathname)) {
     return null
   }
@@ -90,7 +94,7 @@ export function ChatPanel() {
 
       <div className="chat-panel-controls">
         <select value={chat.model} onChange={(e) => chat.setModel(e.target.value)}>
-          {CHAT_MODELS.map((m) => (
+          {availableModels.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>

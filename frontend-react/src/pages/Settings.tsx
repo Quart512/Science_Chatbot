@@ -1,7 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { deleteApiKey, getVersion, listApiKeyStatus, saveApiKey, type ApiKeyStatus } from '../api/settings'
+import {
+  deleteApiKey,
+  deleteLocalModel,
+  getTelemetryConsent,
+  getVersion,
+  installLocalModel,
+  listApiKeyStatus,
+  saveApiKey,
+  setTelemetryConsent,
+  type ApiKeyStatus,
+} from '../api/settings'
 import { exportLibrary, importLibrary } from '../api/library'
+import { TELEMETRY_CONSENT_TEXT } from '../lib/telemetryCopy'
+import { useLocalModel } from '../hooks/useLocalModel'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
 import { Markdown } from '../components/Markdown'
@@ -124,6 +136,151 @@ function VersionCard() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+// 08-09 신설 — 로드맵 "텔레메트리 + 동의" 항목(08-05에 "무기한 연기, 후순위"로 미뤄뒀던
+// 것)을 지인 테스트 목적으로 다시 꺼내 구현(telemetry.py 참고). 무엇을 보내는지 항상
+// 보이는 문장으로 명시하는 게 그때 이 기능을 미룬 이유(옵트인 동의 UI 필요)를 지키는
+// 핵심이라, 토글 버튼 옆이 아니라 그 위에 먼저 둔다 — 읽고 나서 누르게.
+function TelemetryConsentCard() {
+  const queryClient = useQueryClient()
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['telemetry-consent'],
+    queryFn: getTelemetryConsent,
+  })
+  const mutation = useMutation({
+    mutationFn: (consent: boolean) => setTelemetryConsent(consent),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['telemetry-consent'] }),
+  })
+
+  const consent = data?.consent ?? false
+
+  return (
+    <div className="settings-card">
+      <h3>사용 데이터 공유</h3>
+      {/* 문구는 lib/telemetryCopy.ts가 정본 — 첫 실행 안내창과 반드시 같은 문장이어야
+          한다(동의를 받은 문구와 설정에 표시되는 문구가 달라지면 안 되므로). */}
+      <p className="settings-card-meta">{TELEMETRY_CONSENT_TEXT}</p>
+      {isLoading && <p className="settings-card-meta">불러오는 중...</p>}
+      {isError && <p className="settings-error">조회 실패: {(error as Error).message}</p>}
+      {data && (
+        <div className="settings-card-actions">
+          <button
+            className={consent ? 'settings-theme-active' : undefined}
+            onClick={() => mutation.mutate(true)}
+            disabled={consent || mutation.isPending}
+            aria-pressed={consent}
+          >
+            공유 켜기
+          </button>
+          <button
+            className={!consent ? 'settings-theme-active' : undefined}
+            onClick={() => mutation.mutate(false)}
+            disabled={!consent || mutation.isPending}
+            aria-pressed={!consent}
+          >
+            공유 끄기
+          </button>
+        </div>
+      )}
+      {mutation.isError && (
+        <p className="settings-error">변경 실패: {(mutation.error as Error).message}</p>
+      )}
+    </div>
+  )
+}
+
+// 08-09 신설 — 로컬 모델(Qwen-tuned) 선택 설치(local_model.py 참고).
+//
+// **품질 경고를 받기 버튼 "위"에 둔다.** 이 모델은 자체 평가 0.132점으로(같은 기준
+// claude-haiku 0.915) 실용 수준이 아니다. 1GB를 받고 나서 실망하는 것보다, 받기 전에
+// 무엇을 받는지 알고 누르는 게 맞다 — 사용자 지시("돌아가기만 한다는 뉘앙스로 매우
+// 조악하다는 설명을 다운로드 옵션 위에")를 그대로 따른다.
+function LocalModelCard() {
+  const queryClient = useQueryClient()
+  const { data, isLoading } = useLocalModel()
+
+  const install = useMutation({
+    mutationFn: installLocalModel,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local-model'] }),
+  })
+  const remove = useMutation({
+    mutationFn: deleteLocalModel,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local-model'] }),
+  })
+
+  const downloading = data?.state === 'downloading'
+  const hasTotal = (data?.total_bytes ?? 0) > 0
+  const percent = hasTotal
+    ? Math.min(100, Math.round(((data?.downloaded_bytes ?? 0) / (data?.total_bytes ?? 1)) * 100))
+    : 0
+
+  return (
+    <div className="settings-card">
+      <h3>로컬 모델 (API 키 없이 사용)</h3>
+      <p className="settings-card-meta">
+        받아두면 API 키 없이도 챗 질문이 동작합니다. 약 1GB를 내려받고, 앱이 켜져 있는
+        동안 메모리를 약 1.2GB 더 씁니다.
+      </p>
+      <p className="settings-warning">
+        ⚠️ 품질이 매우 낮습니다. API 키 없이도 앱이 도는지 확인하는 용도이고, 실제 연구에
+        쓸 수준이 아닙니다. 자체 평가 0.132점(같은 기준에서 Claude Haiku는 0.915).
+        <b>질문한 언어와 다른 언어(중국어 등)로 답하는 경우가 잦고</b>, 논문 분석·추천
+        기능은 정상 동작하지 않을 수 있습니다.
+      </p>
+
+      {isLoading && <p className="settings-card-meta">불러오는 중...</p>}
+
+      {data && !data.supported && (
+        <p className="settings-card-meta">
+          이 컴퓨터(운영체제·CPU 조합)에서는 지원하지 않습니다.
+        </p>
+      )}
+
+      {downloading && (
+        <div className="settings-card-meta">
+          {data?.phase}
+          {hasTotal && ` — ${percent}%`}
+        </div>
+      )}
+
+      {data?.state === 'failed' && data.error && (
+        <p className="settings-error">받기 실패: {data.error}</p>
+      )}
+
+      {data && data.supported && (
+        <div className="settings-card-actions">
+          {data.installed ? (
+            <button onClick={() => remove.mutate()} disabled={remove.isPending}>
+              삭제 (약 1GB 확보)
+            </button>
+          ) : (
+            <button onClick={() => install.mutate()} disabled={downloading || install.isPending}>
+              {downloading ? '받는 중...' : '받기 (약 1GB)'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {install.isError && <p className="settings-error">{(install.error as Error).message}</p>}
+      {remove.isError && <p className="settings-error">{(remove.error as Error).message}</p>}
+    </div>
+  )
+}
+
+// 08-09 신설 — 사용자 요청("설정에서 깃헙 주소 연결되게 하자"). 소스·이슈·라이선스를
+// 보고 싶을 때 화면 밖에서 URL을 찾을 필요 없게.
+function GitHubLinkCard() {
+  return (
+    <div className="settings-card">
+      <h3>GitHub</h3>
+      <p className="settings-card-meta">
+        <a href="https://github.com/Quart512/AIsaac" target="_blank" rel="noreferrer noopener">
+          github.com/Quart512/AIsaac
+        </a>
+      </p>
     </div>
   )
 }
@@ -382,6 +539,9 @@ export function Settings() {
       <ChatPanelAutoShowCard />
       <ConnectionInfoCard />
       <VersionCard />
+      <LocalModelCard />
+      <GitHubLinkCard />
+      <TelemetryConsentCard />
 
       <p className="settings-intro">
         여기서 입력한 키는 이 컴퓨터에 저장되고, 다음 질문부터(서버 재시작 없이) 바로

@@ -51,7 +51,7 @@ export const dict = {
   // 1665를 해명하는 역사 설명(흑사병·시골 본가)은 일부러 안 넣었다 —
   // 서비스 설명이 그 자리를 대신하면 1665는 수수께끼가 아니라 분위기가 된다.
   "hero.desc": {
-    ko: "AIsaac(아이삭)은 골방의 대학원생, 연구실의 전문 연구자, 밤하늘을 보며 의문을 품는 취미 과학자를 위한 AI 연구 어시스턴트입니다. 혼자 붙잡고 있던 질문을 끝까지 밀고 나가도록 돕습니다.",
+    ko: "AIsaac(아이작)은 골방의 대학원생, 연구실의 전문 연구자, 밤하늘을 보며 의문을 품는 취미 과학자를 위한 AI 연구 어시스턴트입니다. 혼자 붙잡고 있던 질문을 끝까지 밀고 나가도록 돕습니다.",
     en: "AIsaac is an AI research assistant for the graduate student working alone, the researcher in the lab, and the hobbyist who looks up at the night sky and wonders. It helps you carry a question you've been holding onto all the way through.",
   },
   "hero.tagline": {

@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import sys
+import threading
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -39,9 +40,11 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import api_keys
 import chat_sessions
+import embeddings
 import equipment
 import interests
 import knowledge_notes
+import local_model
 import orchestrator
 import paper.paper_ingest as paper_ingest
 import paper_catalog
@@ -51,6 +54,7 @@ import research_notes
 import research_sessions
 import research_workflow
 import retrieval
+import telemetry
 from models import ContextBudgetExceeded, all_models_failed_message
 
 # 08-08 — 챗 스트리밍이 조용히 죽던 걸 고치면서 추가(아래 /api/query 참고). uvicorn이
@@ -74,6 +78,18 @@ async def lifespan(app: FastAPI):
     stale = paper_catalog.reset_stale_analysis_status()
     if stale:
         print(f"이전 실행에서 멈춘 논문 분석 {len(stale)}건을 failed로 되돌림: {stale}")
+    # bge-m3(2.1GB) 준비를 배경에서 시작한다(08-09). 서버 기동을 막지 않는 게 핵심 —
+    # 예전엔 이 다운로드가 `import retrieval` 안에서 끝나야 FastAPI가 떠서, 첫 실행이
+    # 몇 분간 빈 화면이었고 run.sh의 360초 헬스 폴링을 넘기면 실패로 끝났다
+    # (embeddings.py 모듈 docstring 참고). 진행률은 /api/embedding-status로 나간다.
+    #
+    # daemon=True — 서버를 끌 때 이 스레드를 기다리지 않는다. 논문 분석 스레드와 달리
+    # 중간에 죽어도 정리할 상태가 없다: huggingface_hub가 부분 파일을 캐시에 남겨
+    # 다음 실행이 이어받는다.
+    threading.Thread(target=embeddings.prefetch, daemon=True, name="bge-m3-prefetch").start()
+    # 로컬 모델(Qwen-tuned)을 받아둔 사용자면 llama-server를 같이 띄운다(08-09).
+    # 설치 안 했으면 아무 일도 안 한다 — 대부분의 사용자에겐 비용이 0이다.
+    local_model.start_server()
     async with (
         AsyncSqliteSaver.from_conn_string(orchestrator.CHECKPOINT_DB_PATH) as checkpointer,
         AsyncSqliteSaver.from_conn_string(research_workflow.CHECKPOINT_DB_PATH) as research_checkpointer,
@@ -81,6 +97,9 @@ async def lifespan(app: FastAPI):
         app.state.graph = orchestrator.graph.compile(checkpointer=checkpointer)
         app.state.research_graph = research_workflow.graph.compile(checkpointer=research_checkpointer)
         yield
+        # 앱이 꺼지면 llama-server도 같이 끈다 — 안 그러면 1.2GB를 물고 있는 프로세스가
+        # 화면 없이 남는다(사용자가 찾아서 죽일 방법이 사실상 없다).
+        local_model.stop_server()
     # async with 블록을 빠져나가면(서버 종료) 커넥션이 자동으로 닫힘
 
 # fastapi
@@ -121,6 +140,14 @@ async def no_cache_for_api(request: Request, call_next):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# 첫 실행 진행률(08-09). 검색·논문 기능은 bge-m3가 준비돼야 동작하므로, 준비 중이라는
+# 사실과 남은 양을 화면이 알아야 한다 — 안 그러면 사용자에겐 "질문했는데 한참 멈춤"으로만
+# 보인다. state: idle | downloading | loading | ready | failed (embeddings.py 참고).
+@app.get("/api/embedding-status")
+def embedding_status():
+    return embeddings.get_status()
 
 # 설정 화면의 버전·릴리즈 노트 표시용. VERSION은 배포판에서만 존재한다 — 빌드 스크립트
 # 3종(scripts/build_bundle_*)이 release.yml이 태그로 써둔 파일을 번들에 복사해 넣는다.
@@ -183,8 +210,9 @@ async def query(request: Request, body: Query):
         # 그래서 상태 코드가 아니라 **SSE 이벤트 본문에 에러를 실어 보낸다** —
         # 프론트가 `chunk.error`를 실패로 처리한다(api/chat.ts, useChatThread.ts).
         try:
-            async for chunk in request.app.state.graph.astream(inputs, config=config, stream_mode="custom"):
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            with telemetry.tracing_scope():
+                async for chunk in request.app.state.graph.astream(inputs, config=config, stream_mode="custom"):
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
         except RuntimeError as e:
             # 모델 전부 실패(API 키 없음·쿼터 소진 등) — 다른 엔드포인트와 같은 문구.
             payload = {"final": True, "error": all_models_failed_message(e)}
@@ -847,6 +875,53 @@ def delete_api_key(provider: Literal["gemini", "claude"]):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"저장된 {provider} 키가 없습니다")
     return {"provider": provider, "action": "deleted"}
+
+
+# 지인 테스트 참여 시 사용 데이터 공유 동의(08-09, telemetry.py 참고). install_id는
+# 화면에 안 보여준다 — 사용자가 신경 쓸 값이 아니라 서버 내부적으로 트레이스를
+# 구분하는 용도라 GET 응답에도 안 실음.
+class TelemetryConsent(BaseModel):
+    consent: bool
+
+
+@app.get("/api/settings/telemetry")
+def get_telemetry_consent():
+    # asked — 첫 실행 안내창을 띄울지 판단하는 값(08-09). consent=False만으로는 "아직
+    # 안 물어봄"과 "물어봤는데 거부함"이 구분되지 않아 거부한 사용자에게 매번 다시 뜬다.
+    status = telemetry.get_status()
+    return {"consent": status["consent"], "asked": status["asked"]}
+
+
+@app.post("/api/settings/telemetry")
+def set_telemetry_consent(body: TelemetryConsent):
+    status = telemetry.set_consent(body.consent)
+    return {"consent": status["consent"], "asked": status["asked"]}
+
+
+# 로컬 모델(Qwen-tuned) 선택 설치(08-09, local_model.py 참고). API 키 없이도 앱이 도는
+# 경로를 원하는 사용자만 받는다 — 배포판에는 안 실린다(1GB).
+@app.get("/api/local-model")
+def get_local_model_status():
+    return local_model.get_status()
+
+
+@app.post("/api/local-model/install")
+def install_local_model():
+    # 설치는 배경 스레드로 던지고 즉시 반환한다 — 1GB를 요청 안에서 받으면 HTTP
+    # 타임아웃에 걸린다. 프론트는 위 GET을 폴링해 진행률을 그린다.
+    if not local_model.get_status()["supported"]:
+        raise HTTPException(
+            status_code=400,
+            detail="이 환경에서는 로컬 모델을 지원하지 않습니다(지원: macOS·Windows·Linux의 x64/arm64).",
+        )
+    local_model.install_in_background()
+    return local_model.get_status()
+
+
+@app.delete("/api/local-model")
+def delete_local_model():
+    local_model.remove()
+    return local_model.get_status()
 
 
 # 연구 워크플로우(⑥) 세션 목록 — 챗 사이드바와 같은 패턴(thread_id는 프론트가 새 연구를

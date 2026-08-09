@@ -97,6 +97,11 @@ cp -R frontend-react/dist "$BUNDLE/frontend-react/dist"
 mkdir -p "$BUNDLE/docs"
 cp -R docs/releases "$BUNDLE/docs/releases"
 
+# 지인 테스트 사용 데이터 공유 동의(telemetry.py 참고)용 — release.yml이 GitHub Actions
+# 시크릿에서 꺼내둔 저자 본인 LangSmith 키. VERSION과 달리 없어도 정상이다(시크릿을 아직
+# 안 등록했거나 로컬 단독 빌드) — telemetry.py가 파일이 없으면 동의해도 조용히 무시한다.
+[ -f LANGSMITH_KEY ] && cp LANGSMITH_KEY "$BUNDLE/LANGSMITH_KEY" || true
+
 echo "==> 5/5 조용한 .app 런처 생성"
 # 손으로 만든 bash-as-.app(Info.plist + Contents/MacOS/<bash 스크립트>)은 08-06 실기
 # 테스트에서 "응답하지 않습니다"로 거부당했다 — LaunchServices가 살아있는지 확인하는
@@ -114,6 +119,23 @@ cat > "$BUNDLE/run.sh" <<'LAUNCHER'
 set -uo pipefail
 
 cd "$(dirname "$0")"
+
+# 격리 속성 자가 제거(08-09) — 이게 없으면 앱이 아예 못 뜬다. 브라우저가 zip에 붙인
+# com.apple.quarantine을 압축 해제 프로그램이 **풀어낸 파일 전부에** 복사하는데, 사용자가
+# "그래도 열기"로 승인하는 대상은 AIsaac.app 하나뿐이라 .app 밖에 있는 runtime/lib의
+# 네이티브 확장(.so)들은 승인 범위 밖에 남는다. 그 결과 python3가 그것들을 dlopen할 때마다
+# Gatekeeper가 개별적으로 막고("library load disallowed by system policy"), pydantic_core·
+# numpy·onnxruntime·chromadb 등 수백 개라 시스템 설정에서 하나씩 허용해도 끝이 안 난다
+# (08-09 실사용자 환경에서 재현 → 폴더 전체 xattr로 한 번에 풀리는 것까지 확인).
+#
+# 사용자가 이미 .app을 명시적으로 승인해 실행된 코드가 자기 형제 파일의 딱지를 떼는
+# 것이므로 승인 우회가 아니다(Homebrew cask의 --no-quarantine과 같은 성격). 이 동작은
+# 아래 README.txt에 명시한다 — 조용히 하면 안 되는 종류의 일이다.
+#
+# -c(전부 삭제)가 아니라 -d(지정 속성만): -c는 다운로드 출처 URL 같은 다른 속성까지
+# 지운다. 재실행 때는 지울 속성이 없어 xattr이 에러를 내는데, 정상 상황이라 버린다.
+xattr -dr com.apple.quarantine . 2>/dev/null
+
 mkdir -p logs
 
 # 격리 프로필 — 고정 경로를 쓴다(재실행해도 로그인 세션이 유지됨). 같은 프로필로
@@ -268,14 +290,24 @@ macOS 보안 정책 때문에 그 세 폴더 밑에서는 첫 실행이 멈추�
   3. 확인 대화상자가 한 번 더 뜨면 "열기"를 누릅니다.
 (우클릭 → 열기로 넘기던 예전 방법은 macOS Sequoia부터 막혔습니다 —
  위 방법만 됩니다.)
-한 번만 허용하면 다음부터는 그냥 더블클릭으로 열립니다.
+이 승인 한 번이면 됩니다. AIsaac은 실행될 때 이 폴더에 붙은 "인터넷에서
+받은 파일" 표시를 스스로 지웁니다 — 이게 없으면 폴더 안의 라이브러리
+파일 수백 개가 하나씩 따로 차단되어, 시스템 설정에서 아무리 허용해도
+끝이 나지 않기 때문입니다. 파일을 지우거나 바꾸는 동작은 아니며,
+대상은 이 AIsaac 폴더 안뿐입니다.
+
+중요 3: 처음 실행할 때 "'applet'에서 'Google Chrome'을 제어하려고 합니다"
+라는 창이 한 번 뜹니다 — 허용을 눌러주세요. 앱 화면을 브라우저 창으로
+띄우고 그 창을 닫았을 때 서버도 같이 끄기 위해 필요한 권한입니다.
+거부하면 앱 창을 닫아도 서버가 계속 남습니다.
 
 실행: AIsaac.app 을 더블클릭하세요(Terminal 창이 뜨지 않습니다).
 종료: 열린 앱 창을 닫으면 서버도 함께 종료됩니다.
 로그: 문제가 있으면 logs/server.log 를 확인하세요.
 
-처음 실행할 때는 AI 임베딩 모델(약 2GB)을 내려받으므로 몇 분 걸립니다.
-두 번째부터는 바로 뜹니다.
+앱 창은 바로 열리지만, 처음 한 번은 검색용 AI 모델(약 2GB)을 내려받습니다.
+진행률이 화면 아래에 표시되며, 다 받을 때까지 질문·검색은 응답을 기다립니다.
+그동안 설정 화면에서 API 키를 넣어두면 됩니다. 두 번째부터는 이 과정이 없습니다.
 
 AI 모델 API 키는 앱 안의 "설정" 화면에서 입력합니다.
 데이터(논문·노트·대화 기록)는 이 폴더의 chroma_db/ 와 data/ 에 저장됩니다.

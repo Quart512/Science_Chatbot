@@ -10,14 +10,18 @@ import zipfile
 from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage
 
 import api_keys
+import embeddings
+import telemetry
 import chat_sessions
 import equipment
 import interests
 import knowledge_notes
+import local_model
 import main
 import orchestrator
 import paper.paper_ingest as paper_ingest
@@ -28,6 +32,21 @@ import research_notes
 import research_sessions
 import research_workflow
 import retrieval
+
+
+@pytest.fixture(autouse=True)
+def no_embedding_prefetch(monkeypatch):
+    """lifespan이 띄우는 bge-m3 배경 준비를 테스트에선 막는다(08-09).
+
+    이 파일의 모든 테스트가 `TestClient(main.app)`으로 앱을 띄우는데, lifespan이
+    embeddings.prefetch()를 스레드로 던지므로 그대로 두면 **테스트마다 2.1GB 모델을
+    실제로 내려받으려 한다** — 캐시가 없는 CI에선 치명적이다. conftest.py가 retrieval을
+    가짜로 막아둔 것과 같은 이유·같은 성격의 차단이다.
+
+    embeddings 모듈 자체의 동작은 tests/test_embeddings.py가 따로 검증한다(거기선
+    진짜 prefetch를 부르되 다운로드 함수를 몽키패치한다).
+    """
+    monkeypatch.setattr(embeddings, "prefetch", lambda: None)
 
 
 # --- GET/DELETE /query/{thread_id}/messages (08-13 메시지 트리밍 2단계, 수동 삭제) ---
@@ -2168,3 +2187,93 @@ def test_version_endpoint_version_without_matching_notes_file(tmp_path, monkeypa
 
     assert resp.status_code == 200
     assert resp.json() == {"version": "v9.9.9", "release_notes": None}
+
+
+def test_embedding_status_endpoint_exposes_progress(monkeypatch):
+    """첫 실행 진행률(08-09) — 프론트가 이 값으로 '모델 받는 중 n%'를 그린다."""
+    monkeypatch.setattr(
+        embeddings,
+        "get_status",
+        lambda: {"state": "downloading", "downloaded_bytes": 500, "total_bytes": 2_000, "error": None},
+    )
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/embedding-status")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "state": "downloading",
+        "downloaded_bytes": 500,
+        "total_bytes": 2_000,
+        "error": None,
+    }
+
+
+def test_local_model_status_reports_not_installed(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_model, "MODELS_DIR", tmp_path / "models")
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/local-model")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["installed"] is False
+    assert body["state"] == "not_installed"
+
+
+def test_local_model_install_returns_immediately(tmp_path, monkeypatch):
+    """1GB를 요청 안에서 받으면 HTTP 타임아웃에 걸린다 — 배경으로 던지고 즉시 응답해야 한다."""
+    monkeypatch.setattr(local_model, "MODELS_DIR", tmp_path / "models")
+    started: list = []
+    monkeypatch.setattr(local_model, "install_in_background", lambda: started.append(True))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/local-model/install")
+
+    assert resp.status_code == 200
+    assert started == [True]
+
+
+def test_local_model_install_rejects_unsupported_platform(tmp_path, monkeypatch):
+    """지원 안 하는 환경에서 '설치할 수 없음'을 조용히 성공으로 위장하면 안 된다."""
+    monkeypatch.setattr(local_model, "MODELS_DIR", tmp_path / "models")
+    monkeypatch.setattr(local_model, "asset_name", lambda: None)
+    monkeypatch.setattr(local_model, "install_in_background", lambda: pytest.fail("설치가 시작됐다"))
+
+    with TestClient(main.app) as client:
+        resp = client.post("/api/local-model/install")
+
+    assert resp.status_code == 400
+
+
+def test_telemetry_consent_defaults_to_false_and_unasked(tmp_path, monkeypatch):
+    monkeypatch.setattr(telemetry, "APP_DB_PATH", str(tmp_path / "app.db"))
+
+    with TestClient(main.app) as client:
+        resp = client.get("/api/settings/telemetry")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"consent": False, "asked": False}
+
+
+def test_telemetry_consent_can_be_turned_on_and_off(tmp_path, monkeypatch):
+    monkeypatch.setattr(telemetry, "APP_DB_PATH", str(tmp_path / "app.db"))
+
+    with TestClient(main.app) as client:
+        on_resp = client.post("/api/settings/telemetry", json={"consent": True})
+        assert on_resp.json() == {"consent": True, "asked": True}
+
+        off_resp = client.post("/api/settings/telemetry", json={"consent": False})
+        assert off_resp.json() == {"consent": False, "asked": True}
+
+
+def test_telemetry_declining_is_remembered_so_the_prompt_stops(tmp_path, monkeypatch):
+    """거부한 사용자에게 첫 실행 안내창이 다시 뜨지 않아야 한다 — 프론트는 asked만 보고
+    판단하므로, 거부 후 GET이 asked=True로 돌아오는 게 그 계약의 전부다."""
+    monkeypatch.setattr(telemetry, "APP_DB_PATH", str(tmp_path / "app.db"))
+
+    with TestClient(main.app) as client:
+        client.post("/api/settings/telemetry", json={"consent": False})
+        resp = client.get("/api/settings/telemetry")
+
+    assert resp.json() == {"consent": False, "asked": True}

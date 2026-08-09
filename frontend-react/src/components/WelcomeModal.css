@@ -1,0 +1,166 @@
+/* 첫 실행 안내창(08-09). FullscreenModal.css와 오버레이 모양은 비슷하지만 별도 파일로
+   둔다 — 그쪽은 "닫기 가능한 뷰어"용이고 여기는 "대답해야 닫히는 동의창"이라 동작이
+   반대다(WelcomeModal.tsx 주석 참고). 섞어두면 한쪽을 고치다 다른 쪽이 깨진다. */
+.welcome-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 1100; /* FullscreenModal(1000)보다 위 — 첫 실행에 다른 모달이 겹칠 일은
+                    없지만, 겹친다면 동의창이 위에 있어야 한다 */
+  overflow-y: auto;
+}
+
+.welcome-modal-panel {
+  width: 100%;
+  max-width: 34rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.6rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.welcome-modal-title {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--color-text);
+}
+
+.welcome-modal-lead {
+  margin: 0;
+  color: var(--color-text-muted-light);
+}
+
+.welcome-modal-callout {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--color-border-faint);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-bg-surface);
+}
+
+.welcome-modal-callout strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--color-text);
+}
+
+.welcome-modal-callout p,
+.welcome-modal-consent p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+}
+
+.welcome-modal-guide {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.welcome-modal-guide a {
+  color: var(--color-info);
+}
+
+.welcome-modal-divider {
+  width: 100%;
+  margin: 0.2rem 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.welcome-modal-consent strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--color-text);
+}
+
+.welcome-modal-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
+/* 두 버튼은 같은 폭·같은 색이어야 한다 — 한쪽을 강조하면 동의가 아니라 유도가 된다. */
+.welcome-modal-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.3rem;
+}
+
+.welcome-modal-actions button {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.welcome-modal-actions button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.welcome-modal-actions button:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .welcome-modal-actions {
+    flex-direction: column;
+  }
+}
+
+/* API 키 없이 둘러보려는 사람을 위한 로컬 모델 제안. 경고 톤이 필요하지만 API 키
+   콜아웃(accent)보다는 낮은 우선순위여야 해서, 강조 테두리 대신 옅은 경고색 배경을 쓴다. */
+.welcome-modal-local {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--color-border-faint);
+  border-radius: 6px;
+  background: var(--color-warning-bg);
+}
+
+.welcome-modal-local strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--color-text);
+}
+
+.welcome-modal-local p {
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+}
+
+.welcome-modal-local button {
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.welcome-modal-local button:hover:not(:disabled) {
+  border-color: var(--color-warning);
+}
+
+.welcome-modal-local-progress {
+  margin: 0 !important;
+  font-variant-numeric: tabular-nums;
+}

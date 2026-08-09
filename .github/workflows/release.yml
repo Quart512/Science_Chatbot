@@ -31,6 +31,12 @@ jobs:
       # 이미 진짜 소스라 그대로 파일로 떨어뜨린다 — workflow_dispatch 테스트 실행에서는
       # 브랜치명이 찍히는데, 이건 정식 릴리즈가 아니니 의도된 동작이다.
       - run: echo "${{ github.ref_name }}" > VERSION
+      # 지인 테스트 사용 데이터 공유 동의(telemetry.py 참고) — 저자 본인 LangSmith 키를
+      # 소스에 절대 안 박고 여기서만(GitHub Actions 시크릿) 꺼내 번들에 넣는다. 시크릿을
+      # 아직 안 등록했으면(빈 문자열) 파일 자체를 안 만든다 — telemetry.py가 파일이
+      # 없으면 동의해도 조용히 무시하고 넘어가게 설계돼 있어 안전하다.
+      - if: ${{ secrets.LANGSMITH_COMMUNITY_API_KEY != '' }}
+        run: echo "${{ secrets.LANGSMITH_COMMUNITY_API_KEY }}" > LANGSMITH_KEY
       - run: bash scripts/build_bundle_macos.sh
       - name: zip
         run: cd build && zip -r -q ../AIsaac-macos.zip AIsaac
@@ -51,6 +57,9 @@ jobs:
           node-version: "20"
       - shell: pwsh
         run: Set-Content -Path VERSION -NoNewline -Value "${{ github.ref_name }}"
+      - if: ${{ secrets.LANGSMITH_COMMUNITY_API_KEY != '' }}
+        shell: pwsh
+        run: Set-Content -Path LANGSMITH_KEY -NoNewline -Value "${{ secrets.LANGSMITH_COMMUNITY_API_KEY }}"
       - shell: pwsh
         run: ./scripts/build_bundle_windows.ps1
       - name: zip
@@ -72,6 +81,8 @@ jobs:
         with:
           node-version: "20"
       - run: echo "${{ github.ref_name }}" > VERSION
+      - if: ${{ secrets.LANGSMITH_COMMUNITY_API_KEY != '' }}
+        run: echo "${{ secrets.LANGSMITH_COMMUNITY_API_KEY }}" > LANGSMITH_KEY
       - run: bash scripts/build_bundle_linux.sh
       - name: zip
         run: cd build && zip -r -q ../AIsaac-linux.zip AIsaac
