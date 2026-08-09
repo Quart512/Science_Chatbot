@@ -273,10 +273,25 @@ if ! open_window "$APP_URL"; then
 fi
 
 # 창이 실제로 열릴 시간을 준 뒤, 우리 URL을 가진 창이 남아있는 동안 폴링한다.
-sleep 3
+#
+# 첫 대기를 5초로, "닫힘" 판정은 연속 2번(약 3초 간격)으로 늘렸다(08-09 실사용자
+# 재현으로 확정) — 바로 위에서 이 프로필의 Chrome을 방금 정리한 직후라, 새로 뜬 Chrome이
+# GPU·네트워크 서비스까지 완전히 올라오는 데 3초로는 부족할 수 있다. 그 사이엔 창이
+# 실제로 있어도 URL이 아직 AppleScript에 안 잡혀 count=0으로 오탐될 수 있는데, 예전엔
+# 이 오탐이 서버만 죽여서 창 자체는 남아 눈에 덜 띄었지만, 이제는 Chrome까지 같이
+# 죽이므로(아래) 오탐이 "열자마자 꺼짐"으로 그대로 드러난다 — browser.log에 GPU
+# 프로세스가 SIGTERM(exit_code=15)으로 죽는 게 실측으로 확인됐다. 한 번의 0 판독을
+# 더 이상 신뢰하지 않고, 연속으로 두 번 나와야만 "진짜 닫힘"으로 본다.
+sleep 5
+zero_count=0
 while true; do
   count=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:$PORT\"))" 2>/dev/null)
-  [ "${count:-0}" = "0" ] && break
+  if [ "${count:-0}" = "0" ]; then
+    zero_count=$((zero_count + 1))
+    [ "$zero_count" -ge 2 ] && break
+  else
+    zero_count=0
+  fi
   sleep 3
 done
 
