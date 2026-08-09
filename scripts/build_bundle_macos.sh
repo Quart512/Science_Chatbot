@@ -272,36 +272,77 @@ if ! open_window "$APP_URL"; then
   exit 0
 fi
 
-# 창이 실제로 열릴 시간을 준 뒤, 우리 URL을 가진 창이 남아있는 동안 폴링한다.
+# 창이 살아있는 동안 폴링한다 — 닫히면 서버·브라우저를 정리하려는 목적.
 #
-# 첫 대기를 5초로, "닫힘" 판정은 연속 2번(약 3초 간격)으로 늘렸다(08-09 실사용자
-# 재현으로 확정) — 바로 위에서 이 프로필의 Chrome을 방금 정리한 직후라, 새로 뜬 Chrome이
-# GPU·네트워크 서비스까지 완전히 올라오는 데 3초로는 부족할 수 있다. 그 사이엔 창이
-# 실제로 있어도 URL이 아직 AppleScript에 안 잡혀 count=0으로 오탐될 수 있는데, 예전엔
-# 이 오탐이 서버만 죽여서 창 자체는 남아 눈에 덜 띄었지만, 이제는 Chrome까지 같이
-# 죽이므로(아래) 오탐이 "열자마자 꺼짐"으로 그대로 드러난다 — browser.log에 GPU
-# 프로세스가 SIGTERM(exit_code=15)으로 죽는 게 실측으로 확인됐다. 한 번의 0 판독을
-# 더 이상 신뢰하지 않고, 연속으로 두 번 나와야만 "진짜 닫힘"으로 본다.
+# **조회 실패를 "창 없음"으로 해석하지 않는 게 이 로직의 핵심이다**(08-09, 실사용자
+# 환경에서 3번 릴리즈에 걸쳐 재현된 뒤 원인 확정). 예전 코드는
+# `count=$(osascript ... 2>/dev/null)` 뒤 `${count:-0}`로 판정했는데, osascript가
+# 실패하면 stdout이 비고 그 빈 값이 기본값 0(=창 없음)으로 둔갑해 **곧바로 종료 판정**이
+# 났다. 실패하는 이유가 실제로 있다: 이 osascript는 다른 앱(Chrome)을 제어하므로 macOS
+# Automation 권한(TCC)이 필요한데, 그 권한은 **호출한 앱** 기준으로 부여된다. 여기서
+# 호출자는 `AIsaac.app`(ad-hoc 서명 applet)이고, ad-hoc 서명은 바이너리가 바뀌면 다른
+# 앱으로 식별되므로 **릴리즈마다 권한이 초기화**된다 — 권한이 없으면 조회가 계속
+# 실패하고, 그럼 앱이 열리자마자 스스로 꺼진다(v0.1.9~v0.1.10에서 실제로 그랬다).
+# 개발 중 검증이 이걸 못 잡은 이유도 같다: 터미널에서 run.sh를 직접 돌리면 osascript가
+# 터미널의 Automation 권한을 쓰므로 항상 성공한다.
+#
+# 그래서 세 상태를 구분한다 — ① 조회 성공 & 창 있음 ② 조회 성공 & 창 없음 ③ 조회 실패.
+# 그리고 **창이 있는 걸 한 번이라도 실제로 본 적이 없으면 종료 판정을 아예 안 한다**
+# (`seen_open`). 감시가 작동하지 않는 환경이라고 판단되면 감시를 포기하고 서버를 그대로
+# 살려둔다 — 창을 닫아도 서버가 남는 건 불편하지만(다음 실행이 단일 인스턴스 가드로
+# 재사용한다), 멀쩡히 쓰고 있는 앱을 꺼버리는 것보다 훨씬 낫다.
 sleep 5
+seen_open=0
 zero_count=0
+watch_started_at=$(date +%s)
+watch_ok=1
 while true; do
-  count=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:$PORT\"))" 2>/dev/null)
-  if [ "${count:-0}" = "0" ]; then
-    zero_count=$((zero_count + 1))
-    [ "$zero_count" -ge 2 ] && break
+  # stderr까지 받아서 "실패"와 "0개"를 구분한다(옛 코드가 이걸 못 해서 생긴 버그).
+  count_raw=$(osascript -e "tell application \"$BROWSER_APP\" to count (windows whose (URL of active tab contains \"127.0.0.1:$PORT\"))" 2>&1)
+  if [ $? -eq 0 ] && printf '%s' "$count_raw" | grep -qE '^[0-9]+$'; then
+    if [ "$count_raw" -ge 1 ]; then
+      seen_open=1
+      zero_count=0
+    else
+      zero_count=$((zero_count + 1))
+      # 창이 실제로 열린 걸 확인한 뒤의 0만 신뢰한다. 연속 2회여야 종료로 본다.
+      [ "$seen_open" -eq 1 ] && [ "$zero_count" -ge 2 ] && break
+    fi
   else
-    zero_count=0
+    echo "[감시] 창 상태 조회 실패: $count_raw"
+  fi
+
+  # 20초가 지나도록 창을 한 번도 못 봤으면 이 환경에선 감시가 안 되는 것으로 본다
+  # (Automation 권한 미부여가 대표적). 앱을 죽이지 않고 감시만 포기한다.
+  if [ "$seen_open" -eq 0 ] && [ $(( $(date +%s) - watch_started_at )) -ge 20 ]; then
+    echo "[감시] 창 상태를 확인할 수 없어 자동 종료 감시를 끕니다."
+    echo "[감시] macOS 설정 → 개인정보 보호 및 보안 → 자동화에서 AIsaac이 Google Chrome을"
+    echo "[감시] 제어하도록 허용하면 창을 닫을 때 서버도 자동으로 종료됩니다."
+    watch_ok=0
+    break
   fi
   sleep 3
 done
 
-# 서버뿐 아니라 이 프로필의 Chrome도 같이 끈다(08-09, 사용자 지적) — 창을 닫는 것과
-# 앱을 끄는 것은 다르다. macOS는 창을 다 닫아도 프로세스를 자동으로 안 죽이므로, 여기서
-# 안 끄면 Chrome이 백그라운드에 남아 다음 실행이 그 창을 재사용하는 원인이 된다(바로
-# 위 PROFILE_DIR 설정부의 실측 기록 참고). 지금 감지한 이 창은 이미 닫혔으니 정상
-# 종료(SIGTERM)로 충분하다 — 아직 살아있는 다른 창을 강제로 뺏는 상황이 아니다.
+if [ "$watch_ok" -eq 0 ]; then
+  # 감시 불가 — 서버를 살려둔 채 이 스크립트만 빠진다(창을 닫아도 서버는 남는다).
+  disown "$SERVER_PID" 2>/dev/null
+  exit 0
+fi
+
+# 여기서는 서버만 끈다 — 브라우저는 안 건드린다(08-09 검증 중 결정).
+#
+# v0.1.9에서 "창을 닫으면 Chrome도 같이 끄기"를 여기 넣었다가 뺀다. 이유 둘:
+# ① **불필요하다** — 창 재사용 문제(같은 프로필의 남은 Chrome이 다음 실행에서 재사용돼
+#    화면이 옛 버전으로 보이던 버그)는 위쪽 "실행 시작 시 정리"가 이미 막는다. 여기서
+#    또 죽이는 건 같은 목적의 중복이다.
+# ② **위험하다** — 이 프로필은 고정 경로라 우리 창만 있으리라는 보장이 없다. 앱 화면의
+#    바깥 링크(사용법 가이드 등)를 누르면 같은 프로필에 새 창이 열리고, 실제로 검증 중
+#    이 프로필에 AIsaac과 무관한 창이 열려 있는 걸 발견했다. 프로세스를 통째로 죽이면
+#    그 창까지 같이 닫혀 사용자 작업이 날아간다. "무엇을 죽이는지" 정확히 가릴 방법이
+#    마땅치 않은데(AppleScript의 count windows는 사용자의 평소 Chrome까지 셀 수 있다)
+#    실패 시 대가가 큰 쪽이라, 안 하는 편을 택한다.
 kill "$SERVER_PID" 2>/dev/null
-pgrep -f -- "user-data-dir=$PROFILE_DIR" 2>/dev/null | xargs -r kill 2>/dev/null
 rm -f "$LOCK_FILE"
 LAUNCHER
 chmod +x "$BUNDLE/run.sh"
