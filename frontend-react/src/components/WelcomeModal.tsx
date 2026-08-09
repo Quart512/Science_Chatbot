@@ -23,7 +23,9 @@ function LocalModelOffer() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local-model'] }),
   })
 
-  if (!data || !data.supported || data.installed) return null
+  // 받는 중에는 이미 파일이 깔려도(installed=true) 계속 보여준다 — 모델을 메모리에
+  // 올리는 마지막 단계가 남아 있어서, 여기서 사라지면 진행 상황을 볼 곳이 없어진다.
+  if (!data || !data.supported || (data.installed && data.state !== 'downloading')) return null
 
   const downloading = data.state === 'downloading'
   const hasTotal = data.total_bytes > 0

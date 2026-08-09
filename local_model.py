@@ -123,6 +123,11 @@ def _add_downloaded(delta: int) -> None:
         _status["downloaded_bytes"] += delta
 
 
+def _add_total(delta: int) -> None:
+    with _status_lock:
+        _status["total_bytes"] += delta
+
+
 class _ProgressTqdm(hf_tqdm):
     """hf_hub_download의 바이트 진행률을 _status로 흘린다.
 
@@ -133,10 +138,18 @@ class _ProgressTqdm(hf_tqdm):
 
     disable=True면 tqdm이 self.unit을 설정하지 않고 __init__을 일찍 반환하므로 판별
     플래그를 super() 호출 전에 챙긴다(embeddings.py에 같은 주석).
+
+    **총량은 생성 시점에 받아둔다**(08-09 실기에서 잡은 버그). 원래 update()만 있어서
+    받은 바이트만 늘고 total_bytes는 실행 파일(11MB) 값에 머물렀다 — 그래서 화면이
+    2초 만에 100%를 찍고, 정작 1GB를 받는 40여 초 동안 100%에 멈춰 있었다.
+    hf_hub_download는 단일 파일이라 생성자 kwargs로 전체 크기를 넘겨준다.
     """
 
     def __init__(self, *args, **kwargs):
         self._tracks_bytes = kwargs.get("unit") == "B"
+        total = kwargs.get("total")
+        if self._tracks_bytes and total:
+            _add_total(total)
         super().__init__(*args, **kwargs)
 
     def update(self, n=1):
@@ -162,9 +175,7 @@ def _download_and_extract_runtime() -> None:
     archive = MODELS_DIR / name
 
     with urllib.request.urlopen(url) as response:  # noqa: S310 — 위 상수로 만든 고정 URL
-        total = int(response.headers.get("Content-Length") or 0)
-        with _status_lock:
-            _status["total_bytes"] += total
+        _add_total(int(response.headers.get("Content-Length") or 0))
         with open(archive, "wb") as out:
             while chunk := response.read(1024 * 256):
                 out.write(chunk)
@@ -209,7 +220,10 @@ def install() -> None:
             # 받는다**(08-09 실측 확인) — 저자처럼 GGUF를 직접 넣어둔 기계에서 "받기"를
             # 누르면 986MB를 헛되이 다시 받게 된다. 위 실행 파일 가드와 같은 이유·같은 모양.
             if not gguf_path().exists():
-                _set(phase="모델 받는 중 (약 1GB)")
+                # 단계가 바뀌면 카운터를 0으로 되돌린다 — 안 그러면 앞 단계(실행 파일
+                # 11MB)의 숫자가 남아 1GB 진행률에 섞여 퍼센트가 이상해진다. 지금 어느
+                # 단계인지는 phase 문구가 알려주므로 진행률은 단계별로 따로 센다.
+                _set(phase="모델 받는 중 (약 1GB)", downloaded_bytes=0, total_bytes=0)
                 # local_dir로 models/ 밑에 바로 떨어뜨린다 — HF 캐시(~/.cache)에 두면
                 # 사용자가 "삭제"를 눌렀을 때 앱 폴더 밖을 건드려야 하고, 앱을 지워도
                 # 1GB가 남는다. 이 파일은 앱에 속한 것이므로 앱 폴더 안에 둔다.
@@ -222,10 +236,15 @@ def install() -> None:
         except Exception as e:
             _set(state="failed", phase="", error=f"{type(e).__name__}: {e}")
             raise
-        _set(state="ready", phase="")
-    # 락 밖에서 띄운다 — start_server()가 install()을 다시 부르지는 않지만,
-    # 무거운 작업을 설치 락 안에 두면 "받기" 버튼의 재진입 가드가 필요 이상으로 오래 걸린다.
+    # 락 밖에서 띄운다 — start_server()가 install()을 다시 부르지는 않지만, 무거운
+    # 작업을 설치 락 안에 두면 "받기" 버튼의 재진입 가드가 필요 이상으로 오래 걸린다.
+    #
+    # **여기서도 state를 downloading으로 유지한다**(08-09 실기 피드백). llama-server가
+    # 1GB를 메모리로 올리는 데 5~10초가 걸리는데, 다운로드가 끝나자마자 ready로 바꾸면
+    # 그 사이 화면은 "쓸 준비 됨"으로 보이고 사용자가 Qwen을 고르면 접속 실패한다.
+    _set(state="downloading", phase="모델 불러오는 중", downloaded_bytes=0, total_bytes=0)
     start_server()
+    _set(state="ready", phase="")
 
 
 def install_in_background() -> None:

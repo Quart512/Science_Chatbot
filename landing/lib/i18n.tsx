@@ -263,7 +263,19 @@ export const dict = {
     en: "Any architecture · including Intel Mac",
   },
   "download.card.button": { ko: "다운로드", en: "Download" },
-  "download.install.title": { ko: "설치 방법", en: "How to install" },
+  // 터미널 설치(08-09) — Mac·Linux에서 권장하는 경로. macOS의 "확인되지 않은 개발자"
+  // 경고는 **브라우저가 파일에 붙이는 표시** 때문에 생기는데 curl은 그 표시를 안 붙여서
+  // 경고 자체가 안 뜬다(실측 확인). 설치 위치도 스크립트가 정하므로 "바탕화면·문서·
+  // 다운로드 폴더에 두지 마세요" 같은 지켜야 할 규칙이 사라진다.
+  "download.cli.title": { ko: "터미널 한 줄로 설치 (Mac · Linux, 권장)", en: "Install with one command (Mac · Linux, recommended)" },
+  "download.cli.desc": {
+    ko: "보안 경고 없이 설치되고, 위치도 알아서 정해집니다. 이미 설치돼 있으면 논문·노트·대화 기록을 그대로 두고 앱만 새 버전으로 바꿉니다.",
+    en: "Installs with no security warnings and picks the location for you. If AIsaac is already installed, your papers, notes, and chat history are kept and only the app is updated.",
+  },
+  "download.cli.inspect": { ko: "실행되는 내용 먼저 읽어보기", en: "Read the script first" },
+  "download.cli.copy": { ko: "복사", en: "Copy" },
+  "download.cli.copied": { ko: "복사됨", en: "Copied" },
+  "download.install.title": { ko: "설치 방법 (파일로 직접 받는 경우)", en: "How to install (direct download)" },
   "download.install.step1": { ko: "위 버튼으로 압축 파일(.zip)을 받습니다.", en: "Download the .zip with the button above." },
   "download.install.step2": { ko: "압축을 풉니다 — 별도 설치 프로그램은 없습니다.", en: "Unzip it — there's no separate installer to run." },
   "download.install.step3": {

@@ -1,6 +1,7 @@
 "use client"
 
-import { ArrowRight, Download as DownloadIcon } from "lucide-react"
+import { useState } from "react"
+import { ArrowRight, Check, Copy, Download as DownloadIcon } from "lucide-react"
 import { useLanguage } from "@/lib/i18n"
 import { SiteNav } from "@/components/landing/site-nav"
 import { SiteFooter } from "@/components/landing/site-footer"
@@ -18,6 +19,63 @@ const detectedCtaKey = {
   windows: "download.cta.windows",
   linux: "download.cta.linux",
 } as const
+
+// 08-09 신설 — 터미널 설치 경로. 브라우저로 zip을 받으면 macOS가 파일에 "인터넷에서
+// 받음" 표시를 붙이고, 그것 때문에 Gatekeeper 승인 3단계를 사람이 통과시켜야 한다.
+// curl은 그 표시를 안 붙여서 경고 자체가 안 뜬다(실측 확인). Windows는 PowerShell용
+// 스크립트를 아직 안 만들어서 여기 안 띄운다 — 안 되는 걸 보여주지 않는다.
+const INSTALL_COMMAND =
+  "curl -fsSL https://raw.githubusercontent.com/Quart512/AIsaac/main/scripts/install.sh | bash"
+const INSTALL_SCRIPT_URL = "https://github.com/Quart512/AIsaac/blob/main/scripts/install.sh"
+
+function InstallCommand() {
+  const { t } = useLanguage()
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(INSTALL_COMMAND)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // 클립보드 접근이 막힌 브라우저·컨텍스트가 있다 — 명령어 자체는 화면에 그대로
+      // 보이므로 직접 선택해 복사하면 된다. 실패를 에러로 띄울 일이 아니다.
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 text-left">
+      <h2 className="font-semibold">{t("download.cli.title")}</h2>
+      <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
+        {t("download.cli.desc")}
+      </p>
+      {/* 가로 스크롤은 코드에만 건다 — 바깥 flex에 걸면 복사 버튼까지 같이 밀려나가
+          화면 밖으로 사라진다(08-09 실기 확인). min-w-0이 있어야 flex 자식이 실제로
+          줄어들어 스크롤이 생긴다(기본값 min-width:auto는 내용 폭만큼 버틴다). */}
+      <div className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-background p-3">
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <code className="whitespace-nowrap font-mono text-xs sm:text-sm">{INSTALL_COMMAND}</code>
+        </div>
+        <button
+          type="button"
+          onClick={copy}
+          className={buttonVariants({ variant: "outline", size: "sm", className: "shrink-0 rounded-full" })}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? t("download.cli.copied") : t("download.cli.copy")}
+        </button>
+      </div>
+      <a
+        href={INSTALL_SCRIPT_URL}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="mt-3 inline-block text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+      >
+        {t("download.cli.inspect")} →
+      </a>
+    </div>
+  )
+}
 
 export default function DownloadPage() {
   const { t } = useLanguage()
@@ -55,6 +113,12 @@ export default function DownloadPage() {
                 <p className="max-w-md text-pretty text-sm text-destructive">{t("download.intel.warning")}</p>
               )}
             </div>
+          </div>
+        </section>
+
+        <section className="border-b border-border">
+          <div className="mx-auto max-w-3xl px-5 py-12">
+            <InstallCommand />
           </div>
         </section>
 

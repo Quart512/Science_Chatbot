@@ -176,3 +176,23 @@ def test_progress_tqdm_tracks_only_the_byte_bar(models_dir):
     file_bar.update(1)
 
     assert local_model.get_status()["downloaded_bytes"] == 4_096
+
+
+def test_progress_tqdm_records_total_from_constructor(models_dir):
+    """총량을 안 받아두면 진행률이 2초 만에 100%를 찍고 1GB를 받는 내내 거기 멈춘다
+    (08-09 실기에서 관측된 증상). hf_hub_download는 단일 파일이라 생성 시점에
+    전체 크기를 kwargs로 넘겨준다."""
+    local_model._ProgressTqdm(
+        disable=True, name="t", desc="", total=986_047_936, initial=0, unit="B", unit_scale=True
+    )
+
+    status = local_model.get_status()
+    assert status["total_bytes"] == 986_047_936
+    assert status["downloaded_bytes"] == 0  # 아직 아무것도 안 받았다
+
+
+def test_progress_tqdm_ignores_total_of_the_file_count_bar(models_dir):
+    """파일 개수 바(unit이 "B"가 아님)의 total이 섞이면 바이트 총량이 오염된다."""
+    local_model._ProgressTqdm(disable=True, name="t", desc="", total=8)
+
+    assert local_model.get_status()["total_bytes"] == 0

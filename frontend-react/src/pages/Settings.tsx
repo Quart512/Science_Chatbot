@@ -252,13 +252,18 @@ function LocalModelCard() {
 
       {data && data.supported && (
         <div className="settings-card-actions">
-          {data.installed ? (
+          {/* 진행 중일 때는 installed 여부와 무관하게 진행 표시를 우선한다 — 파일을 다
+              받은 뒤에도 llama-server가 모델을 메모리에 올리는 5~10초가 남아 있는데,
+              그때 "삭제" 버튼을 보여주면 쓸 준비가 된 것처럼 보인다(08-09 실기 피드백). */}
+          {downloading ? (
+            <button disabled>{data.phase || '받는 중...'}</button>
+          ) : data.installed ? (
             <button onClick={() => remove.mutate()} disabled={remove.isPending}>
               삭제 (약 1GB 확보)
             </button>
           ) : (
-            <button onClick={() => install.mutate()} disabled={downloading || install.isPending}>
-              {downloading ? '받는 중...' : '받기 (약 1GB)'}
+            <button onClick={() => install.mutate()} disabled={install.isPending}>
+              받기 (약 1GB)
             </button>
           )}
         </div>

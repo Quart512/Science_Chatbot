@@ -2209,6 +2209,25 @@ def test_embedding_status_endpoint_exposes_progress(monkeypatch):
     }
 
 
+def test_index_html_is_never_served_from_stale_cache():
+    """업데이트해도 화면이 옛 버전 그대로이던 버그의 회귀 방지(08-09 실기 재현).
+
+    배포판은 매번 같은 주소(127.0.0.1:8000)에서 열려 브라우저에겐 구버전과 신버전이
+    같은 사이트다. Cache-Control이 없으면 브라우저가 재검증 없이 캐시된 옛 index.html을
+    쓰고, 그게 이미 없어진 옛 해시 파일명을 가리켜 화면이 안 바뀌거나 깨진다.
+    """
+    if not main.FRONTEND_DIST.is_dir():
+        pytest.skip("frontend-react/dist가 없는 환경(SPA 폴백 라우트 자체가 없음)")
+
+    with TestClient(main.app) as client:
+        resp = client.get("/")
+
+    assert resp.status_code == 200
+    # no-store가 아니라 no-cache여야 한다 — 캐시는 하되 쓰기 전에 반드시 재검증(ETag로
+    # 304만 오가고 본문은 안 받음). no-store로 바꾸면 매번 전체를 다시 받게 된다.
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
 def test_local_model_status_reports_not_installed(tmp_path, monkeypatch):
     monkeypatch.setattr(local_model, "MODELS_DIR", tmp_path / "models")
 

@@ -1208,6 +1208,21 @@ FRONTEND_DIST = Path(__file__).parent / "frontend-react" / "dist"
 if FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
 
+    # index.html은 캐시하지 않는다(08-09, 실기에서 재현·확인).
+    #
+    # 앱을 업데이트해도 화면이 옛 버전 그대로인 버그의 원인이었다. 배포판은 매번
+    # http://127.0.0.1:8000에서 열리므로 브라우저에겐 v0.1.3도 v0.1.5도 **같은 사이트**다.
+    # FileResponse는 ETag/Last-Modified만 붙이고 Cache-Control은 안 붙이는데, 그러면
+    # 브라우저가 자체 판단(heuristic freshness)으로 재검증 없이 캐시를 재사용한다. 캐시된
+    # 옛 index.html은 이미 없어진 옛 해시 파일명(/assets/index-<해시>.js)을 가리키므로
+    # 화면이 안 바뀌거나 아예 깨진다.
+    #
+    # 표준 SPA 캐시 전략을 그대로 쓴다 — 파일명에 해시가 붙는 /assets/*는 장기 캐싱해도
+    # 안전하니 그대로 두고(위 mount), **진입점인 index.html만 매번 재검증**시킨다.
+    # no-store가 아니라 no-cache인 게 의도다: 캐시는 하되 쓰기 전에 반드시 서버에
+    # 물어보라는 뜻이라, 안 바뀌었으면 ETag로 304만 오가고 본문은 안 받는다.
+    INDEX_HEADERS = {"Cache-Control": "no-cache"}
+
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         # 정적 파일이 직접 요청되면(예: /favicon.ico, /manifest.json) 그 파일을 그대로
@@ -1216,4 +1231,4 @@ if FRONTEND_DIST.is_dir():
         candidate = FRONTEND_DIST / full_path
         if full_path and candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=INDEX_HEADERS)
