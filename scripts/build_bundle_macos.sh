@@ -79,7 +79,7 @@ echo "==> 4/5 앱 소스 복사"
 # 나머지는 전부 런타임 모듈이다. 목록이 틀리면 아래 5/5의 스모크 테스트가 잡는다.
 for item in main.py graph.py models.py orchestrator.py retrieval.py embeddings.py \
             tool.py interests.py knowledge_notes.py api_keys.py chat_sessions.py \
-            wikipedia_api.py \
+            wikipedia_api.py telemetry.py local_model.py \
             arxiv_api.py paper_catalog.py paper_search.py paper_screening.py \
             paper_recommend.py reference_recommender.py research_workflow.py \
             research_sessions.py research_branches.py research_notes.py \
