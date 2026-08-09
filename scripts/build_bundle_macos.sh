@@ -146,6 +146,17 @@ mkdir -p logs
 PROFILE_DIR="$HOME/Library/Application Support/AIsaac/chrome-profile"
 mkdir -p "$PROFILE_DIR"
 
+# 이 프로필에 남아있는 Chrome 프로세스를 실행마다 먼저 정리한다(08-09, 사용자 지적).
+# macOS는 창을 닫아도 앱을 자동으로 안 끈다 — Cmd+Q로 완전히 종료해야 하는데, 창-종료
+# 감지(아래)는 서버만 죽이고 브라우저는 안 건드렸다. 그 감지 자체가 잠자기·강제 종료
+# 등으로 못 도는 경우 Chrome이 서버 없이도 백그라운드에 계속 남을 수 있었다 — 실제로
+# 이 기계에서 서버가 하나도 안 떠 있는 상태로 이 프로필의 Chrome 프로세스 37개가
+# 살아있는 걸 pgrep으로 실측 확인했다. 다음 실행이 그 남은 창을 재사용하면
+# index.html을 다시 안 받아와 화면이 몇 버전 전 그대로 보인다(v0.1.8의 캐시 무력화
+# 버그 원인). --user-data-dir이 이 프로필 경로와 정확히 일치하는 프로세스만 골라
+# 죽이므로 사용자의 평소 Chrome(다른 프로필)은 안 건드린다.
+pgrep -f -- "user-data-dir=$PROFILE_DIR" 2>/dev/null | xargs -r kill 2>/dev/null
+
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 EDGE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
 
@@ -269,7 +280,13 @@ while true; do
   sleep 3
 done
 
+# 서버뿐 아니라 이 프로필의 Chrome도 같이 끈다(08-09, 사용자 지적) — 창을 닫는 것과
+# 앱을 끄는 것은 다르다. macOS는 창을 다 닫아도 프로세스를 자동으로 안 죽이므로, 여기서
+# 안 끄면 Chrome이 백그라운드에 남아 다음 실행이 그 창을 재사용하는 원인이 된다(바로
+# 위 PROFILE_DIR 설정부의 실측 기록 참고). 지금 감지한 이 창은 이미 닫혔으니 정상
+# 종료(SIGTERM)로 충분하다 — 아직 살아있는 다른 창을 강제로 뺏는 상황이 아니다.
 kill "$SERVER_PID" 2>/dev/null
+pgrep -f -- "user-data-dir=$PROFILE_DIR" 2>/dev/null | xargs -r kill 2>/dev/null
 rm -f "$LOCK_FILE"
 LAUNCHER
 chmod +x "$BUNDLE/run.sh"

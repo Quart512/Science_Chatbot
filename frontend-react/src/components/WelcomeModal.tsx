@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getTelemetryConsent, installLocalModel, setTelemetryConsent } from '../api/settings'
 import { useLocalModel } from '../hooks/useLocalModel'
 import { TELEMETRY_CONSENT_TEXT, TELEMETRY_CONSENT_REVERSIBLE } from '../lib/telemetryCopy'
+import { useWelcomeModalForceOpen } from '../lib/welcomeModalBus'
 import { EmbeddingProgress } from './EmbeddingProgress'
 import './WelcomeModal.css'
 
@@ -72,16 +73,22 @@ export function WelcomeModal() {
     queryKey: ['telemetry-consent'],
     queryFn: getTelemetryConsent,
   })
+  const [forceOpen, clearForceOpen] = useWelcomeModalForceOpen()
 
   const mutation = useMutation({
     mutationFn: (consent: boolean) => setTelemetryConsent(consent),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['telemetry-consent'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['telemetry-consent'] })
+      clearForceOpen() // 이미 asked=true였던 걸 수동으로 다시 연 경우, asked 값 자체는
+      // 안 바뀌므로(이미 true) 아래 조건만으로는 안 닫힌다 — 신호도 같이 지운다.
+    },
   })
 
-  // asked가 false일 때만 뜬다 — 거부한 사용자에게 매번 다시 묻지 않기 위한 값이다
-  // (api/settings.ts의 TelemetryConsent 주석 참고). 조회 전(data === undefined)에는
-  // 아무것도 안 그린다: 잠깐 떴다 사라지는 깜빡임을 막는다.
-  if (!data || data.asked) return null
+  // asked가 false일 때, 또는 설정 화면에서 수동으로 다시 열었을 때(forceOpen) 뜬다.
+  // 거부한 사용자에게 매번 다시 묻지 않기 위한 게 원래 조건이다(api/settings.ts의
+  // TelemetryConsent 주석 참고) — forceOpen은 그 규칙을 우회하는 명시적 예외.
+  // 조회 전(data === undefined)에는 아무것도 안 그린다: 잠깐 떴다 사라지는 깜빡임을 막는다.
+  if (!data || (data.asked && !forceOpen)) return null
 
   return (
     <div className="welcome-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="welcome-modal-title">

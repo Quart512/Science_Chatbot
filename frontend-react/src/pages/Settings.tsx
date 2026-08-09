@@ -13,6 +13,7 @@ import {
 } from '../api/settings'
 import { exportLibrary, importLibrary } from '../api/library'
 import { TELEMETRY_CONSENT_TEXT } from '../lib/telemetryCopy'
+import { openWelcomeModal } from '../lib/welcomeModalBus'
 import { useLocalModel } from '../hooks/useLocalModel'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { useChatPanelAutoShow } from '../hooks/useChatPanelAutoShow'
@@ -271,6 +272,26 @@ function LocalModelCard() {
 
       {install.isError && <p className="settings-error">{(install.error as Error).message}</p>}
       {remove.isError && <p className="settings-error">{(remove.error as Error).message}</p>}
+    </div>
+  )
+}
+
+// 08-09 신설 — 사용자 요청("처음 나오는 창을 설정에서 수동으로 띄울 수 있게").
+// asked=true 이후엔 WelcomeModal이 다시 안 뜨는 게 설계 의도(거부한 사용자에게 매번
+// 다시 묻지 않기 위함)라, 그 규칙과 별개로 "다시 보기"만 여는 통로가 필요했다 —
+// lib/welcomeModalBus.ts의 이벤트 신호로 연결한다(상태 전체를 다시 만들지 않고).
+function WelcomeModalReplayCard() {
+  return (
+    <div className="settings-card">
+      <h3>처음 안내 화면</h3>
+      <p className="settings-card-meta">
+        API 키 안내·사용법 가이드·사용 데이터 공유 동의를 처음 봤던 그 화면입니다.
+      </p>
+      <div className="settings-card-actions">
+        <button type="button" onClick={openWelcomeModal}>
+          다시 보기
+        </button>
+      </div>
     </div>
   )
 }
@@ -545,6 +566,7 @@ export function Settings() {
       <ConnectionInfoCard />
       <VersionCard />
       <LocalModelCard />
+      <WelcomeModalReplayCard />
       <GitHubLinkCard />
       <TelemetryConsentCard />
 
